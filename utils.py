@@ -346,6 +346,17 @@ def wake_display():
         ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
     )
     time.sleep(0.5)
+
+    # 解除 Windows 锁屏：屏幕唤醒后可能处于锁屏界面，
+    # 需要按 Space 键进入 Windows 桌面。
+    # 第1次 Space：响应屏幕点亮/唤起床；第2次 Space：进入桌面。
+    try:
+        pyautogui.press("Space")
+        time.sleep(1)
+        pyautogui.press("Space")
+    except Exception:
+        pass
+
     print("🖥️ 已尝试唤醒显示器")
 
 
@@ -377,15 +388,23 @@ def qq_quick_login(qq_number_img):
 
 def schedule_startup_task(time_str):
     """
-    使用 Windows Task Scheduler 创建每日开机唤醒任务。
-    在睡眠/休眠状态下可唤醒电脑；完全关机状态需 BIOS RTC 支持。
+    使用 Windows Task Scheduler 创建每日定时任务。
+    在睡眠/休眠状态下可唤醒电脑并启动本程序。
     time_str: "HH:MM" 格式
     """
-    import subprocess, json
+    import subprocess, sys
+    if getattr(sys, 'frozen', False):
+        exe_path = sys.executable
+        argument = '--auto-start'
+    else:
+        exe_path = sys.executable
+        script_path = os.path.abspath(sys.argv[0]) if sys.argv[0] else os.path.abspath(__file__)
+        argument = f'"{script_path}" --auto-start'
+
     ps_script = f'''
-    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c exit"
+    $action = New-ScheduledTaskAction -Execute "{exe_path}" -Argument "{argument}"
     $trigger = New-ScheduledTaskTrigger -Daily -At "{time_str}"
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -StartWhenAvailable
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     Register-ScheduledTask -TaskName "DeltaAutoTool_Wake" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
     '''
@@ -396,7 +415,7 @@ def schedule_startup_task(time_str):
         )
         return True
     except Exception as e:
-        print(f"⚠️ 设置开机唤醒任务失败: {e}")
+        print(f"⚠️ 设置定时开机任务失败: {e}")
         return False
 
 

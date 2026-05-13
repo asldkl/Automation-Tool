@@ -371,9 +371,14 @@ class SettingsWindow:
                  style='SettingsSmall.TLabel', wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
 
     def _add_time(self):
-        time_str = self.time_var.get().strip()
-        if re.match(r'^\d{1,2}:\d{2}$', time_str):
-            self.time_listbox.insert(tk.END, time_str)
+        raw = self.time_var.get().strip()
+        if re.match(r'^\d{1,2}:\d{2}$', raw):
+            h, m = map(int, raw.split(":"))
+            if h < 0 or h > 23 or m < 0 or m > 59:
+                messagebox.showwarning("格式错误", "时间超出范围，请输入 00:00 ~ 23:59")
+                return
+            normalized = f"{h:02d}:{m:02d}"
+            self.time_listbox.insert(tk.END, normalized)
             self.time_var.set("")
         else:
             messagebox.showwarning("格式错误", "请输入 HH:MM 格式的时间，例如 08:30")
@@ -474,9 +479,17 @@ class SettingsWindow:
         self.app.settings["run_mode"] = self.run_mode_var.get()
         self.app.settings["silent_mode"] = self.silent_var.get()
         times = [self.time_listbox.get(i) for i in range(self.time_listbox.size())]
-        self.app.settings["schedule_times"] = times
-        if times:
-            self.app.settings["start_time"] = times[0]
+        # 标准化时间格式（补零）
+        normalized_times = []
+        for t in times:
+            try:
+                h, m = map(int, t.split(":"))
+                normalized_times.append(f"{h:02d}:{m:02d}")
+            except Exception:
+                continue
+        self.app.settings["schedule_times"] = normalized_times
+        if normalized_times:
+            self.app.settings["start_time"] = normalized_times[0]
 
         # 执行操作
         ops = []

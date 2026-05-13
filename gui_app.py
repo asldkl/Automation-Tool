@@ -138,8 +138,8 @@ class App:
         if self.settings.get("qq_login_enabled", False) and self.qq_account_images and '--auto-start' in sys.argv:
             self.root.after(2000, self._auto_login_qq)
 
-        # 静默模式
-        if self.settings.get("silent_mode", False) and TRAY_AVAILABLE:
+        # 静默模式（仅开机自启动时生效，双击打开始终显示主界面）
+        if self.settings.get("silent_mode", False) and TRAY_AVAILABLE and '--auto-start' in sys.argv:
             self.root.withdraw()
 
         # 关闭按钮 → 最小化到托盘（而非退出）
@@ -274,16 +274,25 @@ class App:
 
     # ---------- 定时任务调度 ----------
     def _start_scheduler(self):
-        """启动定时检查线程"""
+        """启动定时检查线程，若线程已在运行则先停止再重启（以应用新设置）"""
         if self._schedule_thread and self._schedule_thread.is_alive():
-            return
+            self._stop_event.set()
+            self._schedule_thread.join(timeout=5)
         self._stop_event.clear()
         self._daily_loop = self.settings.get("run_mode") == "每日循环"
         times_str = self.settings.get("schedule_times", [])
         if not times_str:
             single = self.settings.get("start_time", "08:00")
             times_str = [single]
-        self._schedule_times = sorted(times_str)
+        # 标准化所有时间格式（补零）
+        normalized = []
+        for t in times_str:
+            try:
+                h, m = map(int, t.split(":"))
+                normalized.append(f"{h:02d}:{m:02d}")
+            except Exception:
+                continue
+        self._schedule_times = sorted(set(normalized))
         self._schedule_thread = threading.Thread(target=self._schedule_loop, daemon=True)
         self._schedule_thread.start()
         print(f"⏰ 已设置定时任务，时间点：{', '.join(self._schedule_times)}，"
@@ -340,13 +349,14 @@ class App:
             time.sleep(30)
 
     def _schedule_loop_single(self):
-        """单次模式：等待下一个时间点"""
+        """单次模式：等待下一个时间点（含 5 分钟容差，防止定时开机后略过目标时间）"""
         now = datetime.datetime.now()
         targets = []
         for t in self._schedule_times:
             h, m = map(int, t.split(":"))
             target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if target < now:
+            tolerance = datetime.timedelta(minutes=5)
+            if target + tolerance < now:
                 target += datetime.timedelta(days=1)
             targets.append(target)
         next_target = min(targets)
@@ -710,6 +720,10 @@ class App:
         if self.settings.get("auto_start", False):
             self._start_scheduler()
         else:
+            if self._schedule_thread and self._schedule_thread.is_alive():
+                self._stop_event.set()
+                self._schedule_thread.join(timeout=5)
+            self._schedule_thread = None
             print("⏰ 已取消定时执行")
             # 取消旧定时器
             if self._wake_timer_handle:
@@ -735,40 +749,24 @@ class App:
     # ---------- 原有功能 ----------
     def show_help(self):
         help_text = (
-            "【使用说明】\n\n"
-            "━━━ 基本操作 ━━━\n"
-            "1. WeGame 快捷登录：添加 QQ 号截图 → 点击运行，自动完成快捷登录。\n"
-            "2. QQ 自动登录：在设置中配置 QQ 路径和账号，仅在开机自启动时自动登录。\n"
-            "3. 点击主界面「QQ一键登录」按钮可随时手动执行 QQ 登录，运行中可暂停/继续。\n"
-            "4. 点击「开始运行」或按 F1 键启动脚本，按 F2 键或点击「停止」终止。\n"
-            "5. 可在设置中调整图像匹配置信度（0.50-0.95），值越高匹配越严格。\n\n"
-            "━━━ 定时执行 ━━━\n"
-            "6. 在「设置 → 自动任务设置」中启用定时执行。\n"
-            "7. 可设置多个时间点（HH:MM），支持「单次」和「每日循环」两种模式。\n"
-            "8. 勾选需要执行的操作（技术中心/工作台/防具台/制药台），可多选。\n"
-            "9. 支持静默运行（最小化到系统托盘），右键托盘图标可退出。\n\n"
-            "━━━ 运行提醒 ━━━\n"
-            "10. 在设置中开启「运行前提醒弹窗」，可选提前1~15分钟。\n"
-            "    到达提醒时间后弹出窗口，可「立即运行」或「取消本次」。\n"
-            "    【注意】取消本次运行后，不会影响后续时间点的定时任务。\n\n"
-            "━━━ 电源管理 ━━━\n"
-            "11. 唤醒电脑：定时运行前自动唤醒系统，并尝试点亮显示器。\n"
-            "    如果在唤醒后屏幕仍然黑屏，程序会自动发送按键/鼠标信号唤醒显示器。\n"
-            "12. 自动关机：设定关机时间，到达后自动关闭电脑。\n"
-            "13. 定时开机：设定开机时间，电脑在睡眠/休眠状态时可自动唤醒。\n"
-            "    完全关机需主板支持 RTC 唤醒，请在 BIOS 中启用「定时开机」功能。\n\n"
-            "━━━ QQ 自动登录 ━━━\n"
-            "14. 在设置 → 自动任务设置中配置 QQ 账号截图并勾选「开机时自动登录QQ」。\n"
-            "15. QQ 登录仅在程序通过【开机自启动】运行时自动触发，双击启动不会自动登录。\n"
-            "    登录过程中可点击「暂停」按钮暂停执行，点击「继续」恢复。\n"
-            "16. 也可点击主界面的「QQ一键登录」按钮随时手动触发 QQ 登录。\n\n"
-            "━━━ 注意事项 ━━━\n"
-            "17. 脚本依赖固定图片识别，请保持屏幕分辨率和缩放比例一致。\n"
-            "18. 若某个步骤超时，脚本会跳过当前账号并继续下一个。\n"
-            "19. 点击停止后，当前步骤完成后才会退出（或强制结束进程）。\n"
-            "20. 所有日志显示在下方区域，如遇问题可截图反馈。\n"
-            "21. 定时执行前5分钟程序会尝试唤醒系统和显示器，请确保电脑处于休眠/睡眠状态，\n"
-            "    而非完全关机。完全关机需主板支持 RTC 唤醒。"
+            "【基本操作】\n"
+            "F1 / 「开始运行」 → 执行已添加账号的 WeGame 快捷登录\n"
+            "F2 / 「停止」       → 终止当前运行\n"
+            "「QQ一键登录」       → 手动执行 QQ 自动登录\n\n"
+            "【定时执行】\n"
+            "设置 → 自动任务设置 → 启用定时，可设多个时间点（HH:MM）\n"
+            "支持「单次」和「每日循环」两种模式\n"
+            "可勾选需要执行的操作（技术中心/工作台/防具台/制药台）\n\n"
+            "【运行提醒】\n"
+            "开启后运行前弹窗提醒，可选择提前1~15分钟\n"
+            "取消本次不影响后续时间点\n\n"
+            "【电源管理】\n"
+            "自动唤醒系统显示器、自动关机、定时开机（需主板支持 RTC）\n\n"
+            "【注意】\n"
+            "• 图像识别依赖固定分辨率/缩放比例\n"
+            "• 步骤超时自动跳过当前账号，继续执行下一个\n"
+            "• 停止信号发出后，当前步骤完成才退出\n"
+            "• 定时执行前5分钟自动唤醒，请确保电脑处于休眠/睡眠状态"
         )
         messagebox.showinfo("使用说明", help_text)
 
