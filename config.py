@@ -30,6 +30,15 @@ DEFAULT_SETTINGS = {
     "silent_mode": False,             # 静默运行（最小化到托盘）
     "schedule_times": [],
     "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
+    # 运行前提醒
+    "reminder_enabled": False,        # 是否启用运行前提醒弹窗
+    "reminder_minutes": 5,            # 提前几分钟提醒（1-15）
+    # 电源管理
+    "wake_enabled": True,             # 运行前5分钟唤醒电脑（防休眠）
+    "auto_shutdown_enabled": False,   # 是否启用自动关机
+    "auto_shutdown_time": "22:00",    # 关机时间 (HH:MM)
+    "auto_startup_enabled": False,    # 是否启用定时开机（从睡眠/休眠唤醒）
+    "auto_startup_time": "07:00",     # 开机时间 (HH:MM)
 }
 
 def load_settings():

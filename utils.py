@@ -202,3 +202,150 @@ def close_window_by_title(title_contains, partial_match=True):
         win32gui.PostMessage(hwnd_target, win32con.WM_CLOSE, 0, 0)
         return True
     return False
+
+
+# ==================== 电源管理 ====================
+import ctypes
+import datetime as _dt
+
+_kernel32 = ctypes.windll.kernel32
+
+# SetThreadExecutionState flags
+ES_CONTINUOUS      = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+ES_AWAYMODE_REQUIRED = 0x00000040
+
+_prev_sleep_state = None
+_sleep_prevent_count = 0
+
+
+def prevent_sleep():
+    """阻止系统进入睡眠/休眠状态（运行关键操作时调用）"""
+    global _sleep_prevent_count, _prev_sleep_state
+    _sleep_prevent_count += 1
+    if _sleep_prevent_count == 1:
+        _kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        )
+
+
+def allow_sleep():
+    """恢复系统自动睡眠（与 prevent_sleep 配对调用）"""
+    global _sleep_prevent_count
+    if _sleep_prevent_count > 0:
+        _sleep_prevent_count -= 1
+    if _sleep_prevent_count == 0:
+        _kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+
+
+def _local_to_filetime(local_dt):
+    """
+    将本地 datetime 转换为 Windows FILETIME 格式
+    （自 1601-01-01 00:00 UTC 以来的 100 纳秒间隔数）
+    """
+    import calendar, time
+    timestamp = time.mktime(local_dt.timetuple())  # local → seconds since epoch
+    ft_offset = 11644473600  # seconds from 1601-01-01 to 1970-01-01
+    ft_seconds = timestamp + ft_offset
+    return int(ft_seconds * 10000000)
+
+
+def set_wake_timer(wake_local_dt):
+    """
+    设置系统唤醒定时器，使电脑在指定时间从睡眠/休眠中唤醒。
+    wake_local_dt: datetime 对象（本地时间）
+    返回 timer handle，需保持引用直至定时器触发或取消。
+    """
+    hundred_ns = _local_to_filetime(wake_local_dt)
+    timer_handle = _kernel32.CreateWaitableTimerW(None, True, None)
+    if not timer_handle:
+        return None
+    due_time = ctypes.c_longlong(hundred_ns)
+    result = _kernel32.SetWaitableTimer(
+        timer_handle,
+        ctypes.byref(due_time),
+        0,       # 单次触发
+        None,    # 无完成回调
+        None,    # 无参数
+        True     # fResume = True → 唤醒系统
+    )
+    if not result:
+        _kernel32.CloseHandle(timer_handle)
+        return None
+    return timer_handle
+
+
+def cancel_wake_timer(timer_handle):
+    """取消之前设置的唤醒定时器，并释放句柄"""
+    if timer_handle:
+        _kernel32.CancelWaitableTimer(timer_handle)
+        _kernel32.CloseHandle(timer_handle)
+
+
+def schedule_shutdown(delay_seconds=120):
+    """
+    安排系统在指定秒数后关机。
+    返回 True 表示成功。
+    """
+    import subprocess
+    try:
+        subprocess.run(
+            ["shutdown", "/s", "/t", str(int(delay_seconds))],
+            check=True, capture_output=True, timeout=5
+        )
+        return True
+    except Exception as e:
+        print(f"❌ 设置自动关机失败: {e}")
+        return False
+
+
+def cancel_shutdown():
+    """取消待执行的关机计划。返回 True 表示成功"""
+    import subprocess
+    try:
+        subprocess.run(
+            ["shutdown", "/a"],
+            check=True, capture_output=True, timeout=5
+        )
+        return True
+    except Exception:
+        return False
+
+
+def schedule_startup_task(time_str):
+    """
+    使用 Windows Task Scheduler 创建每日开机唤醒任务。
+    在睡眠/休眠状态下可唤醒电脑；完全关机状态需 BIOS RTC 支持。
+    time_str: "HH:MM" 格式
+    """
+    import subprocess, json
+    ps_script = f'''
+    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c exit"
+    $trigger = New-ScheduledTaskTrigger -Daily -At "{time_str}"
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName "DeltaAutoTool_Wake" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
+    '''
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_script],
+            check=True, capture_output=True, timeout=15
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ 设置开机唤醒任务失败: {e}")
+        return False
+
+
+def remove_startup_task():
+    """删除之前创建的定时开机唤醒任务"""
+    import subprocess
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Unregister-ScheduledTask -TaskName 'DeltaAutoTool_Wake' -Confirm:$false"],
+            check=True, capture_output=True, timeout=15
+        )
+        return True
+    except Exception:
+        return False

@@ -23,7 +23,7 @@ from settings_window import SettingsWindow
 # 尝试导入托盘所需库
 try:
     import pystray
-    from PIL import Image, ImageTk
+    from PIL import Image
     TRAY_AVAILABLE = True
 except ImportError:
     TRAY_AVAILABLE = False
@@ -73,6 +73,16 @@ class App:
         self._silent = False
         self._schedule_times = []
         self._settings_window = None
+        # 提醒相关
+        self._reminder_shown = False
+        self._reminder_cancelled = False
+        self._reminder_target = None
+        self._reminder_window = None
+        self._next_run_time_str = ""
+        # 唤醒定时器
+        self._wake_timer_handle = None
+        # 关机标志（每日只触发一次）
+        self._shutdown_handled_today = False
         # 窗口图标
         try:
             icon_path = config.resource_path("picture/icon.ico")
@@ -228,7 +238,9 @@ class App:
 
     def _show_window(self):
         self.root.after(0, self.root.deiconify)
-        self.root.after(0, self.root.lift)
+        self.root.after(0, lambda: (self.root.lift(), self.root.focus_force()))
+        self.root.after(0, lambda: self.root.attributes('-topmost', True))
+        self.root.after(100, lambda: self.root.attributes('-topmost', False))
 
     def _on_close(self):
         """关闭按钮：最小化到托盘（如果可用），否则退出"""
@@ -241,6 +253,12 @@ class App:
     def _quit_all(self):
         """真正退出程序"""
         self.stop()
+        # 清理唤醒定时器
+        if self._wake_timer_handle:
+            utils.cancel_wake_timer(self._wake_timer_handle)
+            self._wake_timer_handle = None
+        # 恢复睡眠设置
+        utils.allow_sleep()
         if self.tray_icon:
             self.tray_icon.stop()
         self.root.after(0, self.root.destroy)
@@ -261,37 +279,281 @@ class App:
         self._schedule_thread.start()
         print(f"⏰ 已设置定时任务，时间点：{', '.join(self._schedule_times)}，"
               f"模式：{'每日循环' if self._daily_loop else '单次'}")
+        # 设置唤醒定时器
+        self._set_next_wake_timer()
+        # 确保开机唤醒任务存在
+        if self.settings.get("auto_startup_enabled", False):
+            startup_time = self.settings.get("auto_startup_time", "07:00")
+            utils.schedule_startup_task(startup_time)
 
     def _schedule_loop(self):
-        """线程：每分钟检查一次时间，触发后执行 start()"""
+        """线程：每分钟检查一次时间，处理提醒、唤醒、触发执行和自动关机"""
         if self._daily_loop:
-            while not self._stop_event.is_set():
-                now = datetime.datetime.now().strftime("%H:%M")
-                if now in self._schedule_times:
-                    print(f"🚀 定时触发：{now}")
-                    self.start()
-                    time.sleep(60)
-                time.sleep(30)
+            self._schedule_loop_daily()
         else:
+            self._schedule_loop_single()
+
+    def _schedule_loop_daily(self):
+        """每日循环模式：持续检查时间点"""
+        while not self._stop_event.is_set():
             now = datetime.datetime.now()
-            targets = []
+            now_str = now.strftime("%H:%M")
+
+            # 1. 定时执行
+            if now_str in self._schedule_times and not self.running:
+                self._execute_scheduled_run(now_str)
+                time.sleep(60)
+                continue
+
+            # 在即将运行的时段阻止系统睡眠（唤醒后防止再次休眠）
+            if self._is_within_pre_run_window(now, minutes=10):
+                utils.prevent_sleep()
+            else:
+                if not self.running:
+                    utils.allow_sleep()
+
+            # 2. 运行前提醒
+            self._check_reminder_daily(now)
+
+            # 3. 自动关机（每天只触发一次）
+            self._check_shutdown(now)
+
+            time.sleep(30)
+
+    def _schedule_loop_single(self):
+        """单次模式：等待下一个时间点"""
+        now = datetime.datetime.now()
+        targets = []
+        for t in self._schedule_times:
+            h, m = map(int, t.split(":"))
+            target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if target < now:
+                target += datetime.timedelta(days=1)
+            targets.append(target)
+        next_target = min(targets)
+        print(f"⏰ 单次定时：将在 {next_target.strftime('%Y-%m-%d %H:%M')} 执行")
+
+        while not self._stop_event.is_set():
+            now = datetime.datetime.now()
+
+            # 在即将运行的时段阻止系统睡眠
+            pre_run_start = next_target - datetime.timedelta(minutes=10)
+            if pre_run_start <= now < next_target and not self.running:
+                utils.prevent_sleep()
+            elif now >= next_target or now < pre_run_start:
+                if not self.running:
+                    utils.allow_sleep()
+
+            # 提醒
+            if self.settings.get("reminder_enabled", False) and not self._reminder_shown and not self.running:
+                reminder_min = self.settings.get("reminder_minutes", 5)
+                reminder_time = next_target - datetime.timedelta(minutes=reminder_min)
+                if reminder_time <= now < next_target:
+                    self._next_run_time_str = next_target.strftime("%H:%M")
+                    self._reminder_shown = True
+                    self._reminder_target = next_target
+                    self.root.after(0, lambda: self._show_reminder(reminder_min))
+
+            # 执行
+            if now >= next_target:
+                if not self._reminder_cancelled:
+                    self._execute_scheduled_run(next_target.strftime("%H:%M"))
+                else:
+                    print(f"⏹ 用户取消了 {next_target.strftime('%H:%M')} 的定时运行")
+                self.settings["auto_start"] = False
+                config.save_settings(self.settings)
+                self.root.after(0, self._update_ui_after_single)
+                break
+
+            time.sleep(10)
+
+    def _check_reminder_daily(self, now):
+        """每日循环模式：检查是否需要弹出运行提醒"""
+        if not self.settings.get("reminder_enabled", False) or self._reminder_shown or self.running:
+            return
+
+        reminder_min = self.settings.get("reminder_minutes", 5)
+        reminder_sec_offset = reminder_min * 60
+
+        for t in self._schedule_times:
+            h, m = map(int, t.split(":"))
+            scheduled_sec = h * 3600 + m * 60
+            remind_sec = scheduled_sec - reminder_sec_offset
+
+            # 处理跨天提醒（如 00:10 运行，23:55 提醒）
+            current_sec = now.hour * 3600 + now.minute * 60 + now.second
+            if remind_sec < 0:
+                remind_sec += 86400
+                scheduled_sec += 86400
+
+            if remind_sec <= current_sec < scheduled_sec:
+                self._next_run_time_str = t
+                self._reminder_target = t
+                self._reminder_shown = True
+                self.root.after(0, lambda m=reminder_min: self._show_reminder(m))
+                break
+
+        # 如果目标时间已过，重置提醒标志
+        if self._reminder_shown and self._reminder_target:
+            h, m = map(int, self._reminder_target.split(":"))
+            target_sec = h * 3600 + m * 60
+            current_sec = now.hour * 3600 + now.minute * 60 + now.second
+            if current_sec >= target_sec:
+                self._reminder_shown = False
+                self._reminder_target = None
+
+    def _check_shutdown(self, now):
+        """检查是否需要触发自动关机"""
+        if not self.settings.get("auto_shutdown_enabled", False) or self._shutdown_handled_today:
+            return
+
+        shutdown_time_str = self.settings.get("auto_shutdown_time", "22:00")
+        try:
+            h, m = map(int, shutdown_time_str.split(":"))
+            shutdown_sec = h * 3600 + m * 60
+            current_sec = now.hour * 3600 + now.minute * 60 + now.second
+
+            # 在关机时间后的2分钟内触发
+            if shutdown_sec <= current_sec < shutdown_sec + 120:
+                if self.running:
+                    print("⏳ 任务正在运行，延迟关机...")
+                    return
+                delay = 90
+                utils.schedule_shutdown(delay)
+                print(f"🔌 已到达关机时间 {shutdown_time_str}，系统将在 {delay} 秒后关机")
+                self._shutdown_handled_today = True
+
+            # 每日重置
+            if current_sec < 60 and now.hour == 0:
+                self._shutdown_handled_today = False
+        except Exception as e:
+            print(f"⚠️ 自动关机检查失败: {e}")
+
+    def _is_within_pre_run_window(self, now, minutes=10):
+        """检查当前时间是否在某个定时运行点的前N分钟窗口内（用于唤醒保持）"""
+        if not self._schedule_times:
+            return False
+        for t in self._schedule_times:
+            h, m = map(int, t.split(":"))
+            scheduled_sec = h * 3600 + m * 60
+            window_start = scheduled_sec - minutes * 60
+            current_sec = now.hour * 3600 + now.minute * 60 + now.second
+            # 处理跨天
+            if window_start < 0:
+                window_start += 86400
+                scheduled_sec += 86400
+            if window_start <= current_sec < scheduled_sec:
+                return True
+        return False
+
+    def _execute_scheduled_run(self, time_str):
+        """执行定时运行（关闭提醒窗口、确保唤醒状态、启动脚本）"""
+        print(f"🚀 定时触发：{time_str}")
+        # 关闭提醒窗口
+        if self._reminder_window:
+            try:
+                self._reminder_window.destroy()
+            except Exception:
+                pass
+            self._reminder_window = None
+        self._reminder_shown = False
+        self._reminder_cancelled = False
+        # 防止系统在运行时睡眠
+        utils.prevent_sleep()
+        self.start()
+
+    def _set_next_wake_timer(self):
+        """计算下一个运行时间，提前5分钟设置唤醒定时器"""
+        if not self.settings.get("wake_enabled", True):
+            return
+        try:
+            # 取消旧定时器
+            if self._wake_timer_handle:
+                utils.cancel_wake_timer(self._wake_timer_handle)
+                self._wake_timer_handle = None
+
+            now = datetime.datetime.now()
+            next_run = None
             for t in self._schedule_times:
                 h, m = map(int, t.split(":"))
-                target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                if target < now:
-                    target += datetime.timedelta(days=1)
-                targets.append(target)
-            next_target = min(targets)
-            print(f"⏰ 单次定时：将在 {next_target} 执行")
-            while not self._stop_event.is_set():
-                if datetime.datetime.now() >= next_target:
-                    print(f"🚀 单次定时触发：{next_target}")
-                    self.start()
-                    self.settings["auto_start"] = False
-                    config.save_settings(self.settings)
-                    self.root.after(0, self._update_ui_after_single)
-                    break
-                time.sleep(10)
+                run_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                if run_time <= now:
+                    run_time += datetime.timedelta(days=1)
+                if next_run is None or run_time < next_run:
+                    next_run = run_time
+
+            if next_run:
+                wake_time = next_run - datetime.timedelta(minutes=5)
+                # 只设置未来的唤醒时间（至少1分钟后）
+                min_gap = datetime.timedelta(seconds=60)
+                if wake_time > now + min_gap:
+                    handle = utils.set_wake_timer(wake_time)
+                    if handle:
+                        self._wake_timer_handle = handle
+                        print(f"🔔 已设置唤醒定时器：{wake_time.strftime('%H:%M')}")
+        except Exception as e:
+            print(f"⚠️ 设置唤醒定时器失败: {e}")
+
+    def _show_reminder(self, minutes):
+        """显示运行前提醒弹窗"""
+        if self._reminder_window and self._reminder_window.winfo_exists():
+            return
+
+        self._reminder_window = tk.Toplevel(self.root)
+        self._reminder_window.title("⏰ 运行提醒")
+        self._reminder_window.geometry("380x200")
+        self._reminder_window.resizable(False, False)
+        self._reminder_window.transient(self.root)
+        self._reminder_window.attributes('-topmost', True)
+
+        # 居中
+        self._reminder_window.update_idletasks()
+        x = (self._reminder_window.winfo_screenwidth() - 380) // 2
+        y = (self._reminder_window.winfo_screenheight() - 200) // 2
+        self._reminder_window.geometry(f"380x200+{x}+{y}")
+
+        frame = ttk.Frame(self._reminder_window, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text=f"程序即将在 {minutes} 分钟后运行",
+                 font=('Microsoft YaHei UI', 14, 'bold')).pack(pady=(10, 5))
+        ttk.Label(frame, text=f"将于 {self._next_run_time_str} 开始执行任务",
+                 font=('Microsoft YaHei UI', 9)).pack(pady=(0, 15))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=tk.X)
+
+        ttk.Button(btn_frame, text="立即运行", style='Success.TButton',
+                  command=self._reminder_run_now, width=12).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(btn_frame, text="取消本次", style='Danger.TButton',
+                  command=self._reminder_cancel, width=12).pack(side=tk.LEFT)
+
+        self._reminder_window.protocol("WM_DELETE_WINDOW", self._reminder_cancel)
+
+    def _reminder_run_now(self):
+        """提醒窗口：立即运行"""
+        if self._reminder_window:
+            try:
+                self._reminder_window.destroy()
+            except Exception:
+                pass
+            self._reminder_window = None
+        self._reminder_cancelled = False
+        self._reminder_shown = False
+        if not self.running:
+            utils.prevent_sleep()
+            self.start()
+
+    def _reminder_cancel(self):
+        """提醒窗口：取消本次运行"""
+        if self._reminder_window:
+            try:
+                self._reminder_window.destroy()
+            except Exception:
+                pass
+            self._reminder_window = None
+        self._reminder_cancelled = True
+        print(f"⏹ 用户取消了 {self._next_run_time_str} 的定时运行")
 
     def _update_ui_after_single(self):
         self.settings["auto_start"] = False
@@ -308,20 +570,9 @@ class App:
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
         ttk.Label(header, text="v2.0  |  多账号轮换 · 定时执行", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
-        # ===== 主内容区（带背景图片） =====
-        main_container = tk.Frame(self.root, bg='#1a1a2e')
+        # ===== 主内容区 =====
+        main_container = ttk.Frame(self.root, style='TFrame')
         main_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(8, 12))
-
-        # 背景图片
-        self._bg_canvas = tk.Canvas(main_container, highlightthickness=0, bd=0)
-        self._bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
-        try:
-            bg_path = config.resource_path("picture/background.jpg")
-            bg_pil = Image.open(bg_path)
-            self._bg_photo = ImageTk.PhotoImage(bg_pil)
-            self._bg_canvas.create_image(0, 0, image=self._bg_photo, anchor='nw')
-        except Exception:
-            pass
 
         # ----- 账号管理 -----
         account_frame = ttk.LabelFrame(main_container, text=" 账号管理（截图顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
@@ -425,12 +676,14 @@ class App:
 
     def apply_auto_settings_from_window(self):
         """从设置窗口保存后应用自动任务设置"""
-        if self._schedule_thread and self._schedule_thread.is_alive():
-            pass
         if self.settings.get("auto_start", False):
             self._start_scheduler()
         else:
             print("⏰ 已取消定时执行")
+            # 取消旧定时器
+            if self._wake_timer_handle:
+                utils.cancel_wake_timer(self._wake_timer_handle)
+                self._wake_timer_handle = None
 
     def open_settings(self):
         if self._settings_window and self._settings_window.win.winfo_exists():
@@ -452,15 +705,29 @@ class App:
     def show_help(self):
         help_text = (
             "【使用说明】\n\n"
+            "━━━ 基本操作 ━━━\n"
             "1. 确保 QQ 已在电脑登录，WeGame 将使用快捷登录。\n"
-            "2. 点击「添加账号」选择提前截好的 QQ 号截图。\n"
-            "3. 点击「开始运行」或按 F1 键启动多账号轮换。\n"
-            "4. 按 F2 键或点击「停止」立即终止脚本。\n"
-            "5. 脚本依赖固定图片，请保持屏幕分辨率和缩放一致。\n"
-            "6. 若某个步骤超时，脚本会跳过当前账号并继续下一个。\n"
-            "7. 所有日志显示在下方区域，如遇问题可截图反馈。\n"
-            "8. 点击「停止」后，当前步骤完成后才会退出（或强制结束进程）。\n"
-            "9. 可设置多个时间点每日自动执行，支持静默托盘。"
+            "2. 点击「添加账号」选择提前截好的 QQ 号截图（支持多账号轮换）。\n"
+            "3. 点击「开始运行」或按 F1 键启动脚本，按 F2 键或点击「停止」终止。\n"
+            "4. 可在设置中调整图像匹配置信度（0.50-0.95），值越高匹配越严格。\n\n"
+            "━━━ 定时执行 ━━━\n"
+            "5. 在「设置 → 自动任务设置」中启用定时执行。\n"
+            "6. 可设置多个时间点（HH:MM），支持「单次」和「每日循环」两种模式。\n"
+            "7. 勾选需要执行的操作（技术中心/工作台/防具台/制药台），可多选。\n"
+            "8. 支持静默运行（最小化到系统托盘），右键托盘图标可退出。\n\n"
+            "━━━ 运行提醒（新增）━━━\n"
+            "9. 在设置中开启「运行前提醒弹窗」，可选提前1~15分钟。\n"
+            "   到达提醒时间后弹出窗口，可「立即运行」或「取消本次」。\n\n"
+            "━━━ 电源管理（新增）━━━\n"
+            "10. 唤醒电脑：定时运行前5分钟自动唤醒（防止休眠/睡眠导致任务跳过）。\n"
+            "11. 自动关机：设定关机时间，到达后自动关闭电脑。\n"
+            "12. 定时开机：设定开机时间，电脑在睡眠/休眠状态时可自动唤醒。\n"
+            "    完全关机需主板支持 RTC 唤醒，请在 BIOS 中启用相关功能。\n\n"
+            "━━━ 注意事项 ━━━\n"
+            "13. 脚本依赖固定图片识别，请保持屏幕分辨率和缩放比例一致。\n"
+            "14. 若某个步骤超时，脚本会跳过当前账号并继续下一个。\n"
+            "15. 点击停止后，当前步骤完成后才会退出（或强制结束进程）。\n"
+            "16. 所有日志显示在下方区域，如遇问题可截图反馈。"
         )
         messagebox.showinfo("使用说明", help_text)
 
@@ -605,6 +872,8 @@ class App:
         self.log_area.configure(state='normal')
         self.log_area.delete('1.0', tk.END)
         self.log_area.configure(state='disabled')
+        # 阻止系统睡眠，确保脚本执行不中断
+        utils.prevent_sleep()
         self.work_thread = threading.Thread(target=self.run_script_main, daemon=True)
         self.work_thread.start()
 
@@ -856,6 +1125,12 @@ class App:
         self.stop_btn.config(state='disabled')
         self.progress['value'] = self.progress['maximum']
 
+        # 恢复系统睡眠设置
+        utils.allow_sleep()
+
+        # 设置下一次唤醒定时器
+        self._set_next_wake_timer()
+
         # 显示运行统计
         stats = self.run_stats
         elapsed = time.time() - stats["start_time"] if stats["start_time"] else 0
@@ -923,6 +1198,10 @@ def main():
 
     root = tk.Tk()
     App(root)
+    # 窗口显示到前台
+    root.after(50, lambda: (root.lift(), root.focus_force()))
+    root.after(50, lambda: root.attributes('-topmost', True))
+    root.after(200, lambda: root.attributes('-topmost', False))
     root.mainloop()
 
 

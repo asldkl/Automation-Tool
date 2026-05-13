@@ -18,13 +18,13 @@ class SettingsWindow:
         self.app = app
         self.win = tk.Toplevel(parent)
         self.win.title("设置")
-        self.win.geometry("600x560")
+        self.win.geometry("660x660")
         self.win.resizable(False, False)
         # 窗口居中
         self.win.update_idletasks()
-        x = (self.win.winfo_screenwidth() - 600) // 2
-        y = (self.win.winfo_screenheight() - 560) // 2
-        self.win.geometry(f"600x560+{x}+{y}")
+        x = (self.win.winfo_screenwidth() - 660) // 2
+        y = (self.win.winfo_screenheight() - 660) // 2
+        self.win.geometry(f"660x660+{x}+{y}")
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
@@ -53,6 +53,17 @@ class SettingsWindow:
         self.op_bench = tk.BooleanVar(value="tool_bench" in selected)
         self.op_armor = tk.BooleanVar(value="armor_station" in selected)
         self.op_pharmacy = tk.BooleanVar(value="pharmacy_station" in selected)
+
+        # 运行提醒变量
+        self.reminder_enable_var = tk.BooleanVar(value=app.settings.get("reminder_enabled", False))
+        self.reminder_minutes_var = tk.IntVar(value=app.settings.get("reminder_minutes", 5))
+
+        # 电源管理变量
+        self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
+        self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
+        self.shutdown_time_var = tk.StringVar(value=app.settings.get("auto_shutdown_time", "22:00"))
+        self.startup_enable_var = tk.BooleanVar(value=app.settings.get("auto_startup_enabled", False))
+        self.startup_time_var = tk.StringVar(value=app.settings.get("auto_startup_time", "07:00"))
 
         self._setup_styles()
         self._build_ui()
@@ -90,6 +101,11 @@ class SettingsWindow:
         notebook.add(auto_tab, text="  自动任务设置  ")
         self._build_auto_tab(auto_tab)
 
+        # ----- Tab 3: 电源管理 -----
+        power_tab = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(power_tab, text="  电源管理  ")
+        self._build_power_tab(power_tab)
+
         # ----- 底部操作按钮 -----
         btn_frame = ttk.Frame(main_frame, style='Settings.TFrame')
         btn_frame.pack(fill=tk.X)
@@ -109,7 +125,7 @@ class SettingsWindow:
         ttk.Label(f1, text="WeGame.exe 位置：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f1, text="浏览", command=self._browse_wegame, width=10).pack(side=tk.LEFT)
+        ttk.Button(f1, text="  浏览  ", command=self._browse_wegame, width=12).pack(side=tk.LEFT)
 
         # ----- 三角洲路径 -----
         frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=12)
@@ -120,7 +136,7 @@ class SettingsWindow:
         ttk.Label(f2, text="启动程序：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         delta_entry = ttk.Entry(f2, textvariable=self.delta_var, width=45)
         delta_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f2, text="浏览", command=self._browse_delta, width=10).pack(side=tk.LEFT)
+        ttk.Button(f2, text="浏览", command=self._browse_delta, width=12).pack(side=tk.LEFT)
 
         # ----- 图像识别置信度 -----
         frame3 = ttk.LabelFrame(parent, text="  图像识别设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -157,7 +173,7 @@ class SettingsWindow:
         ttk.Label(f4, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
         log_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f4, text="浏览", command=self._browse_log, width=10).pack(side=tk.LEFT)
+        ttk.Button(f4, text="浏览", command=self._browse_log, width=12).pack(side=tk.LEFT)
 
         # ----- 开机自启动 -----
         frame5 = ttk.LabelFrame(parent, text="  其他设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -231,6 +247,73 @@ class SettingsWindow:
         ttk.Checkbutton(ops_inner, text="工作台", variable=self.op_bench).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Checkbutton(ops_inner, text="防具台", variable=self.op_armor).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Checkbutton(ops_inner, text="制药台", variable=self.op_pharmacy).pack(side=tk.LEFT)
+
+        # ----- 运行提醒 -----
+        reminder_frame = ttk.LabelFrame(parent, text="  运行提醒  ", style='SettingsCard.TLabelframe', padding=10)
+        reminder_frame.pack(fill=tk.X, pady=(8, 0))
+
+        reminder_inner = ttk.Frame(reminder_frame, style='SettingsInner.TFrame')
+        reminder_inner.pack(fill=tk.X)
+        ttk.Checkbutton(reminder_inner, text="启用运行前提醒弹窗",
+                       variable=self.reminder_enable_var).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(reminder_inner, text="提前", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        reminder_combo = ttk.Combobox(reminder_inner, textvariable=self.reminder_minutes_var,
+                                      values=[1, 2, 3, 5, 10, 15],
+                                      state="readonly", width=5)
+        reminder_combo.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(reminder_inner, text="分钟弹出提示", style='Settings.TLabel').pack(side=tk.LEFT)
+
+    def _build_power_tab(self, parent):
+        """电源管理选项卡"""
+        # ----- 唤醒设置 -----
+        frame1 = ttk.LabelFrame(parent, text="  唤醒设置  ", style='SettingsCard.TLabelframe', padding=12)
+        frame1.pack(fill=tk.X, pady=(0, 8))
+
+        f1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
+        f1.pack(fill=tk.X)
+        ttk.Checkbutton(f1, text="运行前5分钟唤醒电脑（防止休眠 / 睡眠状态）",
+                       variable=self.wake_var).pack(side=tk.LEFT, padx=5, pady=5)
+        note1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
+        note1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(note1, text="电脑挂机休眠时可自动唤醒，确保定时任务正常执行",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
+
+        # ----- 自动关机 -----
+        frame2 = ttk.LabelFrame(parent, text="  自动关机  ", style='SettingsCard.TLabelframe', padding=12)
+        frame2.pack(fill=tk.X, pady=(0, 8))
+
+        f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
+        f2.pack(fill=tk.X)
+        ttk.Checkbutton(f2, text="启用自动关机",
+                       variable=self.shutdown_enable_var).pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Label(f2, text="关机时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        shutdown_entry = ttk.Entry(f2, textvariable=self.shutdown_time_var, width=8)
+        shutdown_entry.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f2, text="(HH:MM)", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+        # 说明文字另起一行
+        note2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
+        note2.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(note2, text="到达设定时间后系统将自动关机（任务运行中会等待完成后执行）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
+
+        # ----- 自动开机（唤醒） -----
+        frame3 = ttk.LabelFrame(parent, text="  定时开机（从睡眠/休眠唤醒）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame3.pack(fill=tk.X, pady=(0, 8))
+
+        f3 = ttk.Frame(frame3, style='SettingsInner.TFrame')
+        f3.pack(fill=tk.X)
+        ttk.Checkbutton(f3, text="启用定时开机唤醒",
+                       variable=self.startup_enable_var).pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Label(f3, text="开机时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        startup_entry = ttk.Entry(f3, textvariable=self.startup_time_var, width=8)
+        startup_entry.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f3, text="(HH:MM)", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        note_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
+        note_frame.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(note_frame,
+                 text="💡 定时开机功能可在电脑处于睡眠/休眠状态时将其唤醒。\n    若电脑为完全关机状态，需主板支持 RTC 唤醒并在 BIOS 中启用【定时开机】或「RTC Alarm」功能。",
+                 style='SettingsSmall.TLabel', wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
 
     def _add_time(self):
         time_str = self.time_var.get().strip()
@@ -318,6 +401,17 @@ class SettingsWindow:
         if self.op_pharmacy.get(): ops.append("pharmacy_station")
         self.app.settings["selected_operations"] = ops
 
+        # 运行提醒
+        self.app.settings["reminder_enabled"] = self.reminder_enable_var.get()
+        self.app.settings["reminder_minutes"] = self.reminder_minutes_var.get()
+
+        # 电源管理
+        self.app.settings["wake_enabled"] = self.wake_var.get()
+        self.app.settings["auto_shutdown_enabled"] = self.shutdown_enable_var.get()
+        self.app.settings["auto_shutdown_time"] = self.shutdown_time_var.get()
+        self.app.settings["auto_startup_enabled"] = self.startup_enable_var.get()
+        self.app.settings["auto_startup_time"] = self.startup_time_var.get()
+
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)
         config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
@@ -326,6 +420,14 @@ class SettingsWindow:
 
         # 应用定时设置
         self.app.apply_auto_settings_from_window()
+
+        # 更新定时开机任务
+        if self.startup_enable_var.get():
+            import utils
+            utils.schedule_startup_task(self.startup_time_var.get())
+        else:
+            import utils
+            utils.remove_startup_task()
 
         messagebox.showinfo("提示", "设置已保存。")
         self.win.destroy()
