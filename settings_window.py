@@ -18,13 +18,13 @@ class SettingsWindow:
         self.app = app
         self.win = tk.Toplevel(parent)
         self.win.title("设置")
-        self.win.geometry("660x660")
+        self.win.geometry("660x720")
         self.win.resizable(False, False)
         # 窗口居中
         self.win.update_idletasks()
         x = (self.win.winfo_screenwidth() - 660) // 2
-        y = (self.win.winfo_screenheight() - 660) // 2
-        self.win.geometry(f"660x660+{x}+{y}")
+        y = (self.win.winfo_screenheight() - 720) // 2
+        self.win.geometry(f"660x720+{x}+{y}")
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
@@ -57,6 +57,10 @@ class SettingsWindow:
         # 运行提醒变量
         self.reminder_enable_var = tk.BooleanVar(value=app.settings.get("reminder_enabled", False))
         self.reminder_minutes_var = tk.IntVar(value=app.settings.get("reminder_minutes", 5))
+
+        # QQ 路径 + 登录开关
+        self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
+        self.qq_login_var = tk.BooleanVar(value=app.settings.get("qq_login_enabled", False))
 
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
@@ -125,7 +129,7 @@ class SettingsWindow:
         ttk.Label(f1, text="WeGame.exe 位置：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f1, text="  浏览  ", command=self._browse_wegame, width=12).pack(side=tk.LEFT)
+        ttk.Button(f1, text="浏览", command=self._browse_wegame, width=24).pack(side=tk.LEFT)
 
         # ----- 三角洲路径 -----
         frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=12)
@@ -136,7 +140,18 @@ class SettingsWindow:
         ttk.Label(f2, text="启动程序：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         delta_entry = ttk.Entry(f2, textvariable=self.delta_var, width=45)
         delta_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f2, text="浏览", command=self._browse_delta, width=12).pack(side=tk.LEFT)
+        ttk.Button(f2, text="浏览", command=self._browse_delta, width=24).pack(side=tk.LEFT)
+
+        # ----- QQ 路径 -----
+        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径（自动登录用）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_qq.pack(fill=tk.X, pady=(0, 8))
+
+        f_qq = ttk.Frame(frame_qq, style='SettingsInner.TFrame')
+        f_qq.pack(fill=tk.X)
+        ttk.Label(f_qq, text="QQ.exe 位置：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        qq_entry = ttk.Entry(f_qq, textvariable=self.qq_path_var, width=45)
+        qq_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        ttk.Button(f_qq, text="浏览", command=self._browse_qq, width=24).pack(side=tk.LEFT)
 
         # ----- 图像识别置信度 -----
         frame3 = ttk.LabelFrame(parent, text="  图像识别设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -173,7 +188,7 @@ class SettingsWindow:
         ttk.Label(f4, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
         log_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f4, text="浏览", command=self._browse_log, width=12).pack(side=tk.LEFT)
+        ttk.Button(f4, text="浏览", command=self._browse_log, width=24).pack(side=tk.LEFT)
 
         # ----- 开机自启动 -----
         frame5 = ttk.LabelFrame(parent, text="  其他设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -263,6 +278,46 @@ class SettingsWindow:
         reminder_combo.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(reminder_inner, text="分钟弹出提示", style='Settings.TLabel').pack(side=tk.LEFT)
 
+        # ----- QQ 自动登录（账号管理） -----
+        qq_frame = ttk.LabelFrame(parent, text="  QQ 自动登录  ", style='SettingsCard.TLabelframe', padding=12)
+        qq_frame.pack(fill=tk.X, pady=(8, 0))
+
+        qq_inner1 = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
+        qq_inner1.pack(fill=tk.X, pady=(0, 6))
+        ttk.Checkbutton(qq_inner1, text="开机时自动登录QQ（程序启动后自动登录所有已添加账号）",
+                       variable=self.qq_login_var).pack(anchor=tk.W, padx=5, pady=2)
+
+        # QQ 账号管理
+        qq_btn_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
+        qq_btn_frame.pack(fill=tk.X, pady=(4, 6))
+        ttk.Button(qq_btn_frame, text="＋ 添加QQ账号",
+                  command=self._add_qq_account, width=16).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(qq_btn_frame, text="－ 删除选中",
+                  command=self._delete_qq_account, width=10).pack(side=tk.LEFT, padx=4)
+        ttk.Button(qq_btn_frame, text="× 清空列表",
+                  command=self._clear_qq_accounts, width=10).pack(side=tk.LEFT, padx=4)
+
+        # QQ 列表
+        qq_list_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
+        qq_list_frame.pack(fill=tk.X)
+        qq_scrollbar = ttk.Scrollbar(qq_list_frame, orient=tk.VERTICAL)
+        self.qq_listbox = tk.Listbox(qq_list_frame, height=3,
+                                     yscrollcommand=qq_scrollbar.set,
+                                     selectmode=tk.SINGLE,
+                                     font=('Microsoft YaHei UI', 9),
+                                     bg='#fafbfc', fg='#2c3e50',
+                                     selectbackground='#3498db',
+                                     selectforeground='#ffffff',
+                                     relief='flat', highlightthickness=1,
+                                     highlightcolor='#dcdde1', borderwidth=0)
+        qq_scrollbar.config(command=self.qq_listbox.yview)
+        self.qq_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        qq_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+        # 填充已有 QQ 账号
+        for p in self.app.qq_account_images:
+            self.qq_listbox.insert(tk.END, os.path.basename(p))
+
     def _build_power_tab(self, parent):
         """电源管理选项卡"""
         # ----- 唤醒设置 -----
@@ -343,10 +398,39 @@ class SettingsWindow:
         if path:
             self.delta_var.set(path)
 
+    def _browse_qq(self):
+        path = filedialog.askopenfilename(title="选择 QQ.exe", filetypes=[("可执行文件", "*.exe")])
+        if path:
+            self.qq_path_var.set(path)
+
     def _browse_log(self):
         path = filedialog.askdirectory(title="选择日志保存目录")
         if path:
             self.log_var.set(path)
+
+    # ---------- QQ 账号管理 ----------
+    def _add_qq_account(self):
+        file_path = filedialog.askopenfilename(
+            title="选择 QQ 号截图",
+            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
+        )
+        if file_path:
+            self.app.qq_account_images.append(file_path)
+            self.qq_listbox.insert(tk.END, os.path.basename(file_path))
+            self.app.save_accounts()
+
+    def _delete_qq_account(self):
+        sel = self.qq_listbox.curselection()
+        if sel:
+            idx = sel[0]
+            self.qq_listbox.delete(idx)
+            del self.app.qq_account_images[idx]
+            self.app.save_accounts()
+
+    def _clear_qq_accounts(self):
+        self.qq_listbox.delete(0, tk.END)
+        self.app.qq_account_images.clear()
+        self.app.save_accounts()
 
     def _get_autostart_state(self):
         try:
@@ -368,7 +452,8 @@ class SettingsWindow:
                 exe_path = sys.executable
             else:
                 exe_path = sys.argv[0]
-            winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, exe_path)
+            # 添加 --auto-start 参数以区分开机自启动与双击启动
+            winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
         else:
             try:
                 winreg.DeleteValue(key, "DeltaAutoTool")
@@ -411,6 +496,10 @@ class SettingsWindow:
         self.app.settings["auto_shutdown_time"] = self.shutdown_time_var.get()
         self.app.settings["auto_startup_enabled"] = self.startup_enable_var.get()
         self.app.settings["auto_startup_time"] = self.startup_time_var.get()
+
+        # QQ 设置
+        self.app.settings["qq_path"] = self.qq_path_var.get()
+        self.app.settings["qq_login_enabled"] = self.qq_login_var.get()
 
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)

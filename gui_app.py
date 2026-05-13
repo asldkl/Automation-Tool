@@ -66,7 +66,11 @@ class App:
         self.root.resizable(False, False)
         self.running = False
         self.account_images = []
+        self.qq_account_images = []
         self._stop_event = threading.Event()
+        self._qq_running = False
+        self._qq_pause_event = threading.Event()
+        self._qq_pause_event.set()  # 初始状态：未暂停
         self._auto_timer = None
         self._schedule_thread = None
         self._daily_loop = False
@@ -81,6 +85,7 @@ class App:
         self._next_run_time_str = ""
         # 唤醒定时器
         self._wake_timer_handle = None
+        self._wake_attempted = False  # 是否已尝试唤醒显示器
         # 关机标志（每日只触发一次）
         self._shutdown_handled_today = False
         # 窗口图标
@@ -128,6 +133,10 @@ class App:
         # 定时任务初始化
         if self.settings.get("auto_start", False):
             self._start_scheduler()
+
+        # QQ 开机自动登录（仅在开机自启动时运行，双击启动不触发）
+        if self.settings.get("qq_login_enabled", False) and self.qq_account_images and '--auto-start' in sys.argv:
+            self.root.after(2000, self._auto_login_qq)
 
         # 静默模式
         if self.settings.get("silent_mode", False) and TRAY_AVAILABLE:
@@ -301,16 +310,26 @@ class App:
 
             # 1. 定时执行
             if now_str in self._schedule_times and not self.running:
-                self._execute_scheduled_run(now_str)
+                if not self._reminder_cancelled:
+                    self._execute_scheduled_run(now_str)
+                else:
+                    print(f"⏹ 用户取消了 {now_str} 的定时运行")
+                    self._reminder_shown = False
+                    self._reminder_target = None
+                    self._reminder_cancelled = False
                 time.sleep(60)
                 continue
 
             # 在即将运行的时段阻止系统睡眠（唤醒后防止再次休眠）
             if self._is_within_pre_run_window(now, minutes=10):
                 utils.prevent_sleep()
+                if not self._wake_attempted:
+                    utils.wake_display()
+                    self._wake_attempted = True
             else:
                 if not self.running:
                     utils.allow_sleep()
+                self._wake_attempted = False
 
             # 2. 运行前提醒
             self._check_reminder_daily(now)
@@ -340,9 +359,13 @@ class App:
             pre_run_start = next_target - datetime.timedelta(minutes=10)
             if pre_run_start <= now < next_target and not self.running:
                 utils.prevent_sleep()
+                if not self._wake_attempted:
+                    utils.wake_display()
+                    self._wake_attempted = True
             elif now >= next_target or now < pre_run_start:
                 if not self.running:
                     utils.allow_sleep()
+                self._wake_attempted = False
 
             # 提醒
             if self.settings.get("reminder_enabled", False) and not self._reminder_shown and not self.running:
@@ -401,6 +424,7 @@ class App:
             if current_sec >= target_sec:
                 self._reminder_shown = False
                 self._reminder_target = None
+                self._reminder_cancelled = False
 
     def _check_shutdown(self, now):
         """检查是否需要触发自动关机"""
@@ -460,6 +484,9 @@ class App:
         self._reminder_cancelled = False
         # 防止系统在运行时睡眠
         utils.prevent_sleep()
+        # 尝试唤醒显示器（从睡眠/息屏状态恢复）
+        utils.wake_display()
+        time.sleep(2)
         self.start()
 
     def _set_next_wake_timer(self):
@@ -568,7 +595,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v2.0  |  多账号轮换 · 定时执行", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v2.0  |  多账号轮换 · 定时执行 · QQ自动登录", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -613,6 +640,7 @@ class App:
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_listbox.bind("<Button-3>", self._show_account_menu)
+
 
         # ----- 状态信息栏 -----
         info_card = ttk.Frame(main_container, style='Card.TLabelframe', padding=10)
@@ -669,6 +697,9 @@ class App:
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
         self.settings_btn.pack(side=tk.LEFT, padx=8)
+        self.qq_login_btn = ttk.Button(ctrl_frame, text="QQ一键登录", style='TButton',
+                                       command=self.trigger_qq_login, width=14)
+        self.qq_login_btn.pack(side=tk.LEFT, padx=(8, 0))
 
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self._log_file_path)
@@ -706,36 +737,47 @@ class App:
         help_text = (
             "【使用说明】\n\n"
             "━━━ 基本操作 ━━━\n"
-            "1. 确保 QQ 已在电脑登录，WeGame 将使用快捷登录。\n"
-            "2. 点击「添加账号」选择提前截好的 QQ 号截图（支持多账号轮换）。\n"
-            "3. 点击「开始运行」或按 F1 键启动脚本，按 F2 键或点击「停止」终止。\n"
-            "4. 可在设置中调整图像匹配置信度（0.50-0.95），值越高匹配越严格。\n\n"
+            "1. WeGame 快捷登录：添加 QQ 号截图 → 点击运行，自动完成快捷登录。\n"
+            "2. QQ 自动登录：在设置中配置 QQ 路径和账号，仅在开机自启动时自动登录。\n"
+            "3. 点击主界面「QQ一键登录」按钮可随时手动执行 QQ 登录，运行中可暂停/继续。\n"
+            "4. 点击「开始运行」或按 F1 键启动脚本，按 F2 键或点击「停止」终止。\n"
+            "5. 可在设置中调整图像匹配置信度（0.50-0.95），值越高匹配越严格。\n\n"
             "━━━ 定时执行 ━━━\n"
-            "5. 在「设置 → 自动任务设置」中启用定时执行。\n"
-            "6. 可设置多个时间点（HH:MM），支持「单次」和「每日循环」两种模式。\n"
-            "7. 勾选需要执行的操作（技术中心/工作台/防具台/制药台），可多选。\n"
-            "8. 支持静默运行（最小化到系统托盘），右键托盘图标可退出。\n\n"
-            "━━━ 运行提醒（新增）━━━\n"
-            "9. 在设置中开启「运行前提醒弹窗」，可选提前1~15分钟。\n"
-            "   到达提醒时间后弹出窗口，可「立即运行」或「取消本次」。\n\n"
-            "━━━ 电源管理（新增）━━━\n"
-            "10. 唤醒电脑：定时运行前5分钟自动唤醒（防止休眠/睡眠导致任务跳过）。\n"
-            "11. 自动关机：设定关机时间，到达后自动关闭电脑。\n"
-            "12. 定时开机：设定开机时间，电脑在睡眠/休眠状态时可自动唤醒。\n"
-            "    完全关机需主板支持 RTC 唤醒，请在 BIOS 中启用相关功能。\n\n"
+            "6. 在「设置 → 自动任务设置」中启用定时执行。\n"
+            "7. 可设置多个时间点（HH:MM），支持「单次」和「每日循环」两种模式。\n"
+            "8. 勾选需要执行的操作（技术中心/工作台/防具台/制药台），可多选。\n"
+            "9. 支持静默运行（最小化到系统托盘），右键托盘图标可退出。\n\n"
+            "━━━ 运行提醒 ━━━\n"
+            "10. 在设置中开启「运行前提醒弹窗」，可选提前1~15分钟。\n"
+            "    到达提醒时间后弹出窗口，可「立即运行」或「取消本次」。\n"
+            "    【注意】取消本次运行后，不会影响后续时间点的定时任务。\n\n"
+            "━━━ 电源管理 ━━━\n"
+            "11. 唤醒电脑：定时运行前自动唤醒系统，并尝试点亮显示器。\n"
+            "    如果在唤醒后屏幕仍然黑屏，程序会自动发送按键/鼠标信号唤醒显示器。\n"
+            "12. 自动关机：设定关机时间，到达后自动关闭电脑。\n"
+            "13. 定时开机：设定开机时间，电脑在睡眠/休眠状态时可自动唤醒。\n"
+            "    完全关机需主板支持 RTC 唤醒，请在 BIOS 中启用「定时开机」功能。\n\n"
+            "━━━ QQ 自动登录 ━━━\n"
+            "14. 在设置 → 自动任务设置中配置 QQ 账号截图并勾选「开机时自动登录QQ」。\n"
+            "15. QQ 登录仅在程序通过【开机自启动】运行时自动触发，双击启动不会自动登录。\n"
+            "    登录过程中可点击「暂停」按钮暂停执行，点击「继续」恢复。\n"
+            "16. 也可点击主界面的「QQ一键登录」按钮随时手动触发 QQ 登录。\n\n"
             "━━━ 注意事项 ━━━\n"
-            "13. 脚本依赖固定图片识别，请保持屏幕分辨率和缩放比例一致。\n"
-            "14. 若某个步骤超时，脚本会跳过当前账号并继续下一个。\n"
-            "15. 点击停止后，当前步骤完成后才会退出（或强制结束进程）。\n"
-            "16. 所有日志显示在下方区域，如遇问题可截图反馈。"
+            "17. 脚本依赖固定图片识别，请保持屏幕分辨率和缩放比例一致。\n"
+            "18. 若某个步骤超时，脚本会跳过当前账号并继续下一个。\n"
+            "19. 点击停止后，当前步骤完成后才会退出（或强制结束进程）。\n"
+            "20. 所有日志显示在下方区域，如遇问题可截图反馈。\n"
+            "21. 定时执行前5分钟程序会尝试唤醒系统和显示器，请确保电脑处于休眠/睡眠状态，\n"
+            "    而非完全关机。完全关机需主板支持 RTC 唤醒。"
         )
         messagebox.showinfo("使用说明", help_text)
 
     # ---------- 账号持久化 ----------
     def save_accounts(self):
         try:
+            data = {"wegame": self.account_images, "qq": self.qq_account_images}
             with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
-                json.dump(self.account_images, f, ensure_ascii=False, indent=2)
+                json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"⚠️ 保存账号列表失败：{e}")
 
@@ -744,15 +786,20 @@ class App:
             return
         try:
             with open(ACCOUNTS_JSON_PATH, "r", encoding="utf-8") as f:
-                paths = json.load(f)
-            valid = [p for p in paths if os.path.exists(p)]
-            self.account_images = valid
+                data = json.load(f)
+            # 兼容旧格式（纯列表 → 仅 WeGame）
+            if isinstance(data, list):
+                self.account_images = [p for p in data if os.path.exists(p)]
+                self.qq_account_images = []
+            else:
+                self.account_images = [p for p in data.get("wegame", []) if os.path.exists(p)]
+                self.qq_account_images = [p for p in data.get("qq", []) if os.path.exists(p)]
+            # 刷新 WeGame 列表
             self.account_listbox.delete(0, tk.END)
-            for p in valid:
+            for p in self.account_images:
                 self.account_listbox.insert(tk.END, os.path.basename(p))
-            if len(valid) < len(paths):
-                print(f"⚠️ 有 {len(paths)-len(valid)} 个账号截图已失效，已自动移除")
-            print(f"✅ 已加载 {len(valid)} 个历史账号")
+            total = len(self.account_images) + len(self.qq_account_images)
+            print(f"✅ 已加载 {len(self.account_images)} 个 WeGame 账号、{len(self.qq_account_images)} 个 QQ 账号")
         except Exception as e:
             print(f"⚠️ 加载历史账号失败：{e}")
 
@@ -858,8 +905,11 @@ class App:
     def start(self):
         if self.running:
             return
+        if self._qq_running:
+            messagebox.showwarning("提示", "QQ 登录正在运行，请先暂停或等待完成后，再开始脚本")
+            return
         if not self.account_images:
-            messagebox.showwarning("未添加账号", "请先添加至少一个 QQ 号截图！")
+            messagebox.showwarning("未添加账号", "请先添加至少一个 WeGame 账号截图！")
             return
         self.running = True
         self._stop_event.clear()
@@ -899,14 +949,116 @@ class App:
         """从工作线程安全更新当前操作状态文字"""
         self.root.after(0, lambda: self.op_label.config(text=text))
 
+    # ---------- QQ 自动登录 ----------
+    def _auto_login_qq(self):
+        """在后台线程中执行 QQ 自动登录"""
+        if self.running:
+            print("⚠️ 脚本正在运行，跳过 QQ 自动登录")
+            return
+        if self._qq_running:
+            return
+        self._qq_running = True
+        self._qq_pause_event.set()  # 确保未暂停
+        self.root.after(0, lambda: self.qq_login_btn.config(text="暂停"))
+        threading.Thread(target=self._run_qq_login_phase, daemon=True).start()
+
+    def trigger_qq_login(self):
+        """QQ登录按钮点击处理：根据运行状态执行启动/暂停/继续"""
+        if self.running:
+            messagebox.showwarning("提示", "脚本正在运行，请先停止后再执行 QQ 登录")
+            return
+        if self._qq_running:
+            self._toggle_qq_pause()
+            return
+        # 未运行 → 启动
+        qq_path = self.settings.get("qq_path", "")
+        if not qq_path:
+            messagebox.showwarning("提示", "请先在设置中配置 QQ.exe 路径")
+            return
+        if not self.qq_account_images:
+            messagebox.showwarning("提示", "请先在设置中添加 QQ 账号截图")
+            return
+        self._auto_login_qq()
+
+    def _toggle_qq_pause(self):
+        """切换QQ登录暂停/继续"""
+        if not self._qq_running:
+            return
+        if self._qq_pause_event.is_set():
+            # 运行中 → 暂停
+            self._qq_pause_event.clear()
+            print("⏸ QQ 登录已暂停")
+            self.qq_login_btn.config(text="继续")
+        else:
+            # 已暂停 → 继续
+            self._qq_pause_event.set()
+            print("▶️ QQ 登录已继续")
+            self.qq_login_btn.config(text="暂停")
+
+    def _on_qq_login_finish(self):
+        """QQ登录完成后的UI恢复"""
+        self._qq_running = False
+        self.qq_login_btn.config(text="QQ一键登录")
+
+    # ---------- QQ 自动登录阶段 ----------
+    def _run_qq_login_phase(self):
+        """脚本执行前先完成所有 QQ 账号的自动登录"""
+        try:
+            qq_path = self.settings.get("qq_path", "")
+            if not qq_path or not self.qq_account_images:
+                return
+
+            total = len(self.qq_account_images)
+            print("\n" + "=" * 40)
+            print(f"  QQ 自动登录阶段（共 {total} 个账号）")
+            print("=" * 40)
+
+            for i, img_path in enumerate(self.qq_account_images):
+                if self._stop_event.is_set():
+                    break
+
+                # 暂停检查：暂停时阻塞，直到继续或收到停止信号
+                while not self._qq_pause_event.is_set():
+                    if self._stop_event.wait(timeout=0.5):
+                        break
+                if self._stop_event.is_set():
+                    print("⏹ QQ 登录已停止")
+                    break
+
+                file_name = os.path.basename(img_path)
+                print(f"\n--- QQ 登录 {i+1}/{total}：{file_name} ---")
+
+                # 启动 QQ
+                self.set_operation(f"启动 QQ ({i+1}/{total})")
+                if not utils.start_app(qq_path, "QQ"):
+                    print("❌ QQ 启动失败，跳过")
+                    continue
+                time.sleep(5)
+
+                if self._stop_event.is_set(): break
+                self.set_operation("QQ 快捷登录")
+                if not utils.qq_quick_login(img_path):
+                    print("❌ QQ 快捷登录失败")
+                    utils.kill_process(config.QQ_PROCESS)
+                    continue
+
+                # 等待登录完成，然后关闭 QQ 窗口（保留后台进程）
+                time.sleep(3)
+                utils.close_window_by_title("QQ", partial_match=True)
+                time.sleep(2)
+                time.sleep(2)
+
+            print("✅ QQ 自动登录阶段完成\n")
+        finally:
+            self.root.after(0, self._on_qq_login_finish)
+
     # ---------- 主流程 ----------
     def run_script_main(self):
         try:
             total = len(self.account_images)
             print("=" * 55)
             print("  WeGame 快捷登录 + 三角洲行动 多账号轮换脚本")
-            print("  请确保 QQ 已提前登录，WeGame 将使用快捷登录")
-            print(f"  本轮将处理 {total} 个账号")
+            print(f"  本轮将处理 {total} 个 WeGame 账号")
             print("=" * 55)
 
             for i, img_path in enumerate(self.account_images):

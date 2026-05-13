@@ -214,18 +214,19 @@ _kernel32 = ctypes.windll.kernel32
 ES_CONTINUOUS      = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
 ES_AWAYMODE_REQUIRED = 0x00000040
+ES_DISPLAY_REQUIRED = 0x00000002
 
 _prev_sleep_state = None
 _sleep_prevent_count = 0
 
 
 def prevent_sleep():
-    """阻止系统进入睡眠/休眠状态（运行关键操作时调用）"""
+    """阻止系统进入睡眠/休眠状态，并保持显示器开启（运行关键操作时调用）"""
     global _sleep_prevent_count, _prev_sleep_state
     _sleep_prevent_count += 1
     if _sleep_prevent_count == 1:
         _kernel32.SetThreadExecutionState(
-            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED | ES_DISPLAY_REQUIRED
         )
 
 
@@ -311,6 +312,68 @@ def cancel_shutdown():
     except Exception:
         return False
 
+
+def wake_display():
+    """
+    唤醒显示器（从黑屏/息屏状态恢复显示）。
+    组合多种方法确保显示器正常点亮。
+    """
+    # 方法1: 模拟鼠标移动和点击（常用于唤醒休眠中的显示器）
+    try:
+        screen_w, screen_h = pyautogui.size()
+        pyautogui.moveTo(screen_w // 2, screen_h // 2, duration=0.5)
+        pyautogui.click()
+        pyautogui.moveRel(1, 0, duration=0.1)
+    except Exception:
+        pass
+    time.sleep(0.3)
+
+    # 方法2: 模拟键盘按键 (Ctrl 键)
+    ctypes.windll.user32.keybd_event(0x11, 0, 0, 0)  # Ctrl down
+    time.sleep(0.05)
+    ctypes.windll.user32.keybd_event(0x11, 0, 2, 0)  # Ctrl up
+    time.sleep(0.3)
+
+    # 方法3: 使用 SC_MONITORPOWER 发送显示器唤醒信号
+    HWND_BROADCAST = 0xFFFF
+    WM_SYSCOMMAND = 0x0112
+    SC_MONITORPOWER = 0xF170
+    ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1)
+    time.sleep(0.5)
+
+    # 再次请求保持显示器开启
+    _kernel32.SetThreadExecutionState(
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    )
+    time.sleep(0.5)
+    print("🖥️ 已尝试唤醒显示器")
+
+
+def qq_quick_login(qq_number_img):
+    """
+    使用图像识别完成 QQ 自动登录：
+    点击账号选择 → 点击目标 QQ 号 → 点击登录按钮
+    """
+    from config import QQ_ACCOUNT_SELECT, QQ_LOGIN_BTN
+
+    print("🔍 点击 QQ 账号选择按钮...")
+    if not find_and_click(QQ_ACCOUNT_SELECT, timeout=15):
+        print("❌ 未找到 QQ 账号选择按钮")
+        return False
+    time.sleep(1)
+
+    print("🔍 选择 QQ 号...")
+    if not find_and_click(qq_number_img, timeout=10):
+        print("❌ 未找到目标 QQ 号")
+        return False
+    time.sleep(0.5)
+
+    print("🔍 点击 QQ 登录按钮...")
+    if not find_and_click(QQ_LOGIN_BTN, timeout=10):
+        print("❌ 未找到 QQ 登录按钮")
+        return False
+    print("✅ QQ 自动登录完成")
+    return True
 
 def schedule_startup_task(time_str):
     """

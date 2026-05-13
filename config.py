@@ -39,6 +39,9 @@ DEFAULT_SETTINGS = {
     "auto_shutdown_time": "22:00",    # 关机时间 (HH:MM)
     "auto_startup_enabled": False,    # 是否启用定时开机（从睡眠/休眠唤醒）
     "auto_startup_time": "07:00",     # 开机时间 (HH:MM)
+    # QQ 自动登录
+    "qq_path": "",                    # QQ 程序路径
+    "qq_login_enabled": False,        # 是否在运行脚本前自动登录 QQ
 }
 
 def load_settings():
@@ -128,9 +131,14 @@ Produce_ToolBench   = resource_path("picture/produce/produce_tool_bench.png")
 Produce_ArmorStation = resource_path("picture/produce/produce_armor_station.png")
 Produce_PharmacyStation = resource_path("picture/produce/produce_pharmacy_station.png")
 
+# ==================== QQ 自动登录图片 ====================
+QQ_ACCOUNT_SELECT = resource_path("picture/qq_login/QQ_account_select.png")
+QQ_LOGIN_BTN      = resource_path("picture/qq_login/QQ_login_btn.png")
+
 # ==================== 进程名称 ====================
 WEGAME_PROCESS = "wegame.exe"
 DELTA_PROCESS = "DeltaForce.exe"
+QQ_PROCESS = "QQ.exe"
 
 # ==================== 全局变量（在 main 中设置） ====================
 WEGAME_PATH = ""
