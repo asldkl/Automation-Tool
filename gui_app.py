@@ -23,28 +23,37 @@ from settings_window import SettingsWindow
 # 尝试导入托盘所需库
 try:
     import pystray
-    from PIL import Image
+    from PIL import Image, ImageTk
     TRAY_AVAILABLE = True
 except ImportError:
     TRAY_AVAILABLE = False
 
 # -------------------- 有效期设置 --------------------
-EXPIRY_DATE = datetime.date(2026, 7, 1)
+EXPIRY_DATE = datetime.date(2026, 6, 1)
 # ------------------------------------------------
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
 
 
 class RedirectText:
-    """将标准输出重定向到 Tkinter 文本框"""
-    def __init__(self, text_widget):
+    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件"""
+    def __init__(self, text_widget, log_path=None):
         self.text_widget = text_widget
+        self.log_path = log_path
+        if log_path:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     def write(self, message):
         self.text_widget.configure(state='normal')
         self.text_widget.insert(tk.END, message)
         self.text_widget.see(tk.END)
         self.text_widget.configure(state='disabled')
+        if self.log_path and message.strip():
+            try:
+                with open(self.log_path, 'a', encoding='utf-8') as f:
+                    f.write(message)
+            except Exception:
+                pass
 
     def flush(self):
         pass
@@ -58,12 +67,12 @@ class App:
         self.running = False
         self.account_images = []
         self._stop_event = threading.Event()
-        self._auto_timer = None          # 保留用于取消旧定时器
-        self._schedule_thread = None     # 定时检查线程
+        self._auto_timer = None
+        self._schedule_thread = None
         self._daily_loop = False
         self._silent = False
-        self._schedule_times = []        # 当前启用的时间列表
-        self._settings_window = None  # 跟踪设置窗口
+        self._schedule_times = []
+        self._settings_window = None
         # 窗口图标
         try:
             icon_path = config.resource_path("picture/icon.ico")
@@ -76,6 +85,20 @@ class App:
         self.settings = config.APP_SETTINGS
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
         config.CONFIDENCE = self.settings["confidence"]
+
+        # 运行统计
+        self.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": None}
+
+        # 日志文件路径
+        log_dir = self.settings.get("log_save_path", "")
+        if log_dir:
+            today = datetime.datetime.now().strftime("%Y%m%d")
+            self._log_file_path = os.path.join(log_dir, f"delta_auto_{today}.log")
+        else:
+            self._log_file_path = None
+
+        # 初始化样式
+        self._setup_styles()
 
         # 快捷键
         root.bind("<F1>", lambda e: self.start())
@@ -100,6 +123,93 @@ class App:
         if self.settings.get("silent_mode", False) and TRAY_AVAILABLE:
             self.root.withdraw()
 
+        # 关闭按钮 → 最小化到托盘（而非退出）
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _setup_styles(self):
+        """配置现代化 ttk 样式"""
+        style = ttk.Style()
+        # 使用 clam 主题以获得更好的自定义能力
+        available_themes = style.theme_names()
+        if 'clam' in available_themes:
+            style.theme_use('clam')
+
+        # 配色方案
+        PRIMARY = "#2c3e50"
+        ACCENT = "#3498db"
+        SUCCESS = "#27ae60"
+        DANGER = "#e74c3c"
+        WARNING = "#f39c12"
+        BG_LIGHT = "#f0f2f5"
+        CARD_BG = "#ffffff"
+        TEXT_DARK = "#2c3e50"
+        TEXT_LIGHT = "#ffffff"
+        BORDER = "#dcdde1"
+
+        # 根窗口背景
+        style.configure('.', background=BG_LIGHT, font=('Microsoft YaHei UI', 9))
+        style.configure('TFrame', background=BG_LIGHT)
+        style.configure('TLabel', background=BG_LIGHT, foreground=TEXT_DARK)
+        style.configure('TButton', background=PRIMARY, foreground=TEXT_LIGHT,
+                        borderwidth=0, focusthickness=3, font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('TButton',
+                  background=[('active', ACCENT), ('disabled', '#bdc3c7')],
+                  foreground=[('disabled', '#95a5a6')])
+
+        # 卡片样式的 LabelFrame
+        style.configure('Card.TLabelframe', background=CARD_BG, foreground=TEXT_DARK,
+                        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
+                        relief='solid', borderwidth=1)
+        style.configure('Card.TLabelframe.Label', background=CARD_BG, foreground=PRIMARY,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+
+        # 带内部 Frame 的卡片
+        style.configure('CardInner.TFrame', background=CARD_BG)
+
+        # 标题样式
+        style.configure('Header.TFrame', background=PRIMARY)
+        style.configure('Header.TLabel', background=PRIMARY, foreground=TEXT_LIGHT,
+                        font=('Microsoft YaHei UI', 14, 'bold'))
+        style.configure('HeaderSub.TLabel', background=PRIMARY, foreground='#bdc3c7',
+                        font=('Microsoft YaHei UI', 8))
+
+        # 信息标签
+        style.configure('Info.TLabel', background=CARD_BG, foreground=TEXT_DARK)
+        style.configure('Accent.TLabel', background=CARD_BG, foreground=ACCENT, font=('Microsoft YaHei UI', 9, 'bold'))
+        style.configure('Success.TLabel', background=CARD_BG, foreground=SUCCESS)
+        style.configure('Warning.TLabel', background=CARD_BG, foreground=WARNING)
+
+        # 按钮变体
+        style.configure('Success.TButton', background=SUCCESS, foreground=TEXT_LIGHT,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Success.TButton', background=[('active', '#219a52'), ('disabled', '#bdc3c7')])
+
+        style.configure('Danger.TButton', background=DANGER, foreground=TEXT_LIGHT,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Danger.TButton', background=[('active', '#c0392b'), ('disabled', '#bdc3c7')])
+
+        style.configure('Accent.TButton', background=ACCENT, foreground=TEXT_LIGHT,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Accent.TButton', background=[('active', '#2980b9'), ('disabled', '#bdc3c7')])
+
+        # 进度条
+        style.configure('Accent.Horizontal.TProgressbar', background=ACCENT, troughcolor=BG_LIGHT,
+                        bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
+
+        # 复选框
+        style.configure('TCheckbutton', background=BG_LIGHT, foreground=TEXT_DARK, font=('Microsoft YaHei UI', 9))
+
+        # 滚动条
+        style.configure('TScrollbar', background='#dfe6e9', bordercolor=BG_LIGHT,
+                        arrowcolor=PRIMARY, troughcolor=BG_LIGHT)
+
+        # 下拉框
+        style.configure('TCombobox', fieldbackground=CARD_BG, foreground=TEXT_DARK,
+                        background=PRIMARY, arrowcolor=TEXT_LIGHT)
+
+        # 输入框
+        style.configure('TEntry', fieldbackground=CARD_BG, foreground=TEXT_DARK, borderwidth=1)
+
     # ---------- 托盘 ----------
     def _setup_tray(self):
         if not TRAY_AVAILABLE:
@@ -120,7 +230,16 @@ class App:
         self.root.after(0, self.root.deiconify)
         self.root.after(0, self.root.lift)
 
+    def _on_close(self):
+        """关闭按钮：最小化到托盘（如果可用），否则退出"""
+        if TRAY_AVAILABLE and self.tray_icon:
+            self.root.withdraw()
+            print("ℹ️ 程序已最小化到托盘，右键托盘图标可退出")
+        else:
+            self._quit_all()
+
     def _quit_all(self):
+        """真正退出程序"""
         self.stop()
         if self.tray_icon:
             self.tray_icon.stop()
@@ -131,12 +250,10 @@ class App:
         """启动定时检查线程"""
         if self._schedule_thread and self._schedule_thread.is_alive():
             return
-        self._stop_event.clear()  # 重置停止信号
+        self._stop_event.clear()
         self._daily_loop = self.settings.get("run_mode") == "每日循环"
-        # 获取时间列表并排序
         times_str = self.settings.get("schedule_times", [])
         if not times_str:
-            # 兼容旧版本：使用单个 start_time
             single = self.settings.get("start_time", "08:00")
             times_str = [single]
         self._schedule_times = sorted(times_str)
@@ -148,20 +265,15 @@ class App:
     def _schedule_loop(self):
         """线程：每分钟检查一次时间，触发后执行 start()"""
         if self._daily_loop:
-            # 每日循环模式：不断监控
             while not self._stop_event.is_set():
                 now = datetime.datetime.now().strftime("%H:%M")
                 if now in self._schedule_times:
                     print(f"🚀 定时触发：{now}")
                     self.start()
-                    # 等待至这一分钟结束，避免重复触发
                     time.sleep(60)
                 time.sleep(30)
         else:
-            # 单次模式：找出最近的下一个时间点，执行一次后退出线程
-            # 如果所有时间点都已过，则等到明天的第一个时间点
             now = datetime.datetime.now()
-            # 将时间转换为今天的 datetime，若已过则加到明天
             targets = []
             for t in self._schedule_times:
                 h, m = map(int, t.split(":"))
@@ -175,7 +287,6 @@ class App:
                 if datetime.datetime.now() >= next_target:
                     print(f"🚀 单次定时触发：{next_target}")
                     self.start()
-                    # 执行后自动取消定时
                     self.settings["auto_start"] = False
                     config.save_settings(self.settings)
                     self.root.after(0, self._update_ui_after_single)
@@ -183,174 +294,153 @@ class App:
                 time.sleep(10)
 
     def _update_ui_after_single(self):
-        """单次执行后更新 UI"""
-        self.auto_enable_var.set(False)
+        self.settings["auto_start"] = False
+        config.save_settings(self.settings)
 
     def _stop_scheduler(self):
-        """停止定时线程"""
-        if self._schedule_thread:
-            # 设置停止标志（复用 _stop_event，但注意它也用于主流程停止）
-            # 这里使用一个独立的事件会更干净，简单处理：直接终止线程或等待自然退出
-            # 我们使用一个全局的 scheduler_stop 事件
-            pass
-        # 这里使用一个简单的方法：在 _schedule_loop 中检查 _stop_event，而 _stop_event 在 stop() 时设置
-        # 但 stop() 是停止脚本运行，而不是停止定时器。所以我们引入另一个事件 self._scheduler_stop
-        # 为了保持代码简洁，这里使用 self._stop_event 即可，因为停止定时器通常在用户取消定时时，
-        # 我们会重新创建线程。在 _apply_auto_settings 中，我们先设置停止标志，然后等待线程退出。
-        # 为此添加一个 _scheduler_stop_event
         pass
 
     # ---------- UI 构建 ----------
     def _build_ui(self):
-        # 账号管理区域
-        account_frame = ttk.LabelFrame(self.root, text="账号管理（QQ号截图列表，从上到下即运行顺序）", padding=10)
-        account_frame.pack(fill=tk.X, padx=10, pady=5)
+        # ===== 顶部标题栏 =====
+        header = ttk.Frame(self.root, style='Header.TFrame')
+        header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
+        ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
+        ttk.Label(header, text="v2.0  |  多账号轮换 · 定时执行", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
-        btn_frame = ttk.Frame(account_frame)
-        btn_frame.pack(fill=tk.X, pady=5)
-        self.add_btn = ttk.Button(btn_frame, text="➕ 添加账号", command=self.add_account)
-        self.add_btn.pack(side=tk.LEFT, padx=5)
-        self.del_btn = ttk.Button(btn_frame, text="➖ 删除选中", command=self.delete_account)
-        self.del_btn.pack(side=tk.LEFT, padx=5)
-        self.clear_btn = ttk.Button(btn_frame, text="🗑 清空列表", command=self.clear_accounts)
-        self.clear_btn.pack(side=tk.LEFT, padx=5)
+        # ===== 主内容区（带背景图片） =====
+        main_container = tk.Frame(self.root, bg='#1a1a2e')
+        main_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(8, 12))
 
-        list_frame = ttk.Frame(account_frame)
-        list_frame.pack(fill=tk.X, pady=5)
+        # 背景图片
+        self._bg_canvas = tk.Canvas(main_container, highlightthickness=0, bd=0)
+        self._bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        try:
+            bg_path = config.resource_path("picture/background.jpg")
+            bg_pil = Image.open(bg_path)
+            self._bg_photo = ImageTk.PhotoImage(bg_pil)
+            self._bg_canvas.create_image(0, 0, image=self._bg_photo, anchor='nw')
+        except Exception:
+            pass
+
+        # ----- 账号管理 -----
+        account_frame = ttk.LabelFrame(main_container, text=" 账号管理（截图顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
+        account_frame.pack(fill=tk.X, pady=(0, 8))
+
+        # 按钮行
+        btn_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
+        btn_frame.pack(fill=tk.X, pady=(0, 6))
+        self.add_btn = ttk.Button(btn_frame, text="＋ 添加账号", style='Accent.TButton', command=self.add_account, width=14)
+        self.add_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.del_btn = ttk.Button(btn_frame, text="－ 删除选中", style='TButton', command=self.delete_account, width=10)
+        self.del_btn.pack(side=tk.LEFT, padx=4)
+        self.clear_btn = ttk.Button(btn_frame, text="× 清空列表", style='TButton', command=self.clear_accounts, width=10)
+        self.clear_btn.pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="↑ 上移", style='TButton', command=self._move_up, width=7).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="↓ 下移", style='TButton', command=self._move_down, width=7).pack(side=tk.LEFT, padx=4)
+
+        # 列表
+        list_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
+        list_frame.pack(fill=tk.X)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        self.account_listbox = tk.Listbox(list_frame, height=4, yscrollcommand=scrollbar.set, selectmode=tk.SINGLE)
+        self.account_listbox = tk.Listbox(list_frame, height=4,
+                                          yscrollcommand=scrollbar.set,
+                                          selectmode=tk.SINGLE,
+                                          font=('Microsoft YaHei UI', 9),
+                                          bg='#fafbfc', fg='#2c3e50',
+                                          selectbackground='#3498db',
+                                          selectforeground='#ffffff',
+                                          relief='flat', highlightthickness=1,
+                                          highlightcolor='#dcdde1', borderwidth=0)
         scrollbar.config(command=self.account_listbox.yview)
         self.account_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
 
-        # 自动任务区域（多时间点）
-        auto_frame = ttk.LabelFrame(self.root, text="自动任务设置", padding=10)
-        auto_frame.pack(fill=tk.X, padx=10, pady=5)
+        # 账号列表右键菜单
+        self.account_menu = tk.Menu(self.root, tearoff=0)
+        self.account_menu.add_command(label="测试截图识别", command=self._test_recognition)
+        self.account_menu.add_separator()
+        self.account_menu.add_command(label="删除选中", command=self.delete_account)
+        self.account_listbox.bind("<Button-3>", self._show_account_menu)
 
-        self.auto_enable_var = tk.BooleanVar(value=self.settings.get("auto_start", False))
-        ttk.Checkbutton(auto_frame, text="启用定时执行", variable=self.auto_enable_var,
-                        command=self._toggle_auto_start).grid(row=0, column=0, sticky=tk.W, padx=5)
+        # ----- 状态信息栏 -----
+        info_card = ttk.Frame(main_container, style='Card.TLabelframe', padding=10)
+        info_card.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(auto_frame, text="运行模式：").grid(row=0, column=1, sticky=tk.W, padx=5)
-        self.run_mode_var = tk.StringVar(value=self.settings.get("run_mode", "每日循环"))
-        mode_combo = ttk.Combobox(auto_frame, textvariable=self.run_mode_var, values=["每日循环", "单次"],
-                                  state="readonly", width=8)
-        mode_combo.grid(row=0, column=2, padx=5)
+        info_row = ttk.Frame(info_card, style='CardInner.TFrame')
+        info_row.pack(fill=tk.X)
+        ttk.Label(info_row, text="进度：", style='Info.TLabel').pack(side=tk.LEFT)
+        self.account_label = ttk.Label(info_row, text="未开始", style='Accent.TLabel')
+        self.account_label.pack(side=tk.LEFT, padx=(2, 18))
+        ttk.Label(info_row, text="当前账号：", style='Info.TLabel').pack(side=tk.LEFT)
+        self.current_account_file_label = ttk.Label(info_row, text="无", style='Success.TLabel')
+        self.current_account_file_label.pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Label(info_row, text="操作：", style='Info.TLabel').pack(side=tk.LEFT)
+        self.op_label = ttk.Label(info_row, text="就绪", style='Warning.TLabel')
+        self.op_label.pack(side=tk.LEFT, padx=(2, 0))
 
-        self.silent_var = tk.BooleanVar(value=self.settings.get("silent_mode", False))
-        ttk.Checkbutton(auto_frame, text="静默运行（最小化到托盘）", variable=self.silent_var).grid(row=0, column=3, padx=20)
+        # 进度条
+        self.progress = ttk.Progressbar(main_container, length=500, mode='determinate',
+                                         style='Accent.Horizontal.TProgressbar')
+        self.progress.pack(pady=(0, 4), fill=tk.X)
 
-        # 时间点列表
-        ttk.Label(auto_frame, text="执行时间点（HH:MM）：").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.time_var = tk.StringVar()
-        ttk.Entry(auto_frame, textvariable=self.time_var, width=8).grid(row=1, column=1, padx=5, sticky=tk.W)
-        ttk.Button(auto_frame, text="添加", command=self._add_time).grid(row=1, column=2, padx=5)
-        ttk.Button(auto_frame, text="删除选中", command=self._delete_time).grid(row=1, column=3, padx=5)
+        # 运行统计
+        self.stats_label = ttk.Label(main_container, text="", style='Info.TLabel')
+        self.stats_label.pack(pady=(0, 8))
 
-        # 时间列表 Listbox
-        time_list_frame = ttk.Frame(auto_frame)
-        time_list_frame.grid(row=2, column=0, columnspan=4, pady=5, sticky=tk.EW)
-        scrollbar2 = ttk.Scrollbar(time_list_frame, orient=tk.VERTICAL)
-        self.time_listbox = tk.Listbox(time_list_frame, height=3, yscrollcommand=scrollbar2.set, selectmode=tk.SINGLE)
-        scrollbar2.config(command=self.time_listbox.yview)
-        self.time_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        scrollbar2.pack(side=tk.RIGHT, fill=tk.Y)
+        # ----- 日志区域 -----
+        log_label_frame = ttk.LabelFrame(main_container, text=" 运行日志 ", style='Card.TLabelframe', padding=8)
+        log_label_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
-        # 填充已有时间
-        times = self.settings.get("schedule_times", [])
-        if not times and self.settings.get("start_time"):
-            times = [self.settings["start_time"]]   # 兼容旧版
-        for t in times:
-            self.time_listbox.insert(tk.END, t)
+        self.log_area = scrolledtext.ScrolledText(log_label_frame,
+                                                  state='disabled', wrap=tk.WORD,
+                                                  font=('Consolas', 9),
+                                                  bg='#1e272e', fg='#00d8d6',
+                                                  insertbackground='#00d8d6',
+                                                  relief='flat', borderwidth=0,
+                                                  padx=8, pady=8,
+                                                  highlightthickness=1,
+                                                  highlightcolor='#dcdde1')
+        self.log_area.pack(expand=True, fill=tk.BOTH)
 
-        ttk.Button(auto_frame, text="应用定时设置", command=self._apply_auto_settings).grid(row=3, column=0, columnspan=4, pady=5)
-
-        # 信息栏
-        info_frame = ttk.Frame(self.root)
-        info_frame.pack(fill=tk.X, padx=10, pady=5)
-        ttk.Label(info_frame, text="进度提示：").pack(side=tk.LEFT)
-        self.account_label = ttk.Label(info_frame, text="未开始", foreground="blue")
-        self.account_label.pack(side=tk.LEFT, padx=5)
-        ttk.Label(info_frame, text="  当前账号文件：").pack(side=tk.LEFT)
-        self.current_account_file_label = ttk.Label(info_frame, text="无", foreground="green")
-        self.current_account_file_label.pack(side=tk.LEFT, padx=5)
-
-        self.progress = ttk.Progressbar(self.root, length=500, mode='determinate')
-        self.progress.pack(pady=5, padx=10, fill=tk.X)
-
-        self.log_area = scrolledtext.ScrolledText(self.root, state='disabled', wrap=tk.WORD)
-        self.log_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
-
-        ctrl_frame = ttk.Frame(self.root)
-        ctrl_frame.pack(fill=tk.X, padx=10, pady=10)
-        self.start_btn = ttk.Button(ctrl_frame, text="▶ 开始运行 (F1)", command=self.start)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-        self.stop_btn = ttk.Button(ctrl_frame, text="⏹ 停止 (F2)", command=self.stop, state='disabled')
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
-        self.help_btn = ttk.Button(ctrl_frame, text="📖 使用说明", command=self.show_help)
-        self.help_btn.pack(side=tk.LEFT, padx=20)
-        self.settings_btn = ttk.Button(ctrl_frame, text="⚙️ 设置", command=self.open_settings)
-        self.settings_btn.pack(side=tk.LEFT, padx=20)
+        # ----- 底部控制按钮 -----
+        ctrl_frame = ttk.Frame(main_container, style='TFrame')
+        ctrl_frame.pack(fill=tk.X)
+        self.start_btn = ttk.Button(ctrl_frame, text="▶ 开始运行 (F1)", style='Success.TButton',
+                                    command=self.start, width=18)
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.stop_btn = ttk.Button(ctrl_frame, text="■ 停止 (F2)", style='Danger.TButton',
+                                   command=self.stop, state='disabled', width=16)
+        self.stop_btn.pack(side=tk.LEFT, padx=8)
+        self.help_btn = ttk.Button(ctrl_frame, text="? 使用说明", style='TButton',
+                                   command=self.show_help, width=12)
+        self.help_btn.pack(side=tk.LEFT, padx=(20, 8))
+        self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
+                                       command=self.open_settings, width=10)
+        self.settings_btn.pack(side=tk.LEFT, padx=8)
 
     def _redirect_output(self):
-        sys.stdout = RedirectText(self.log_area)
-        sys.stderr = RedirectText(self.log_area)
+        sys.stdout = RedirectText(self.log_area, self._log_file_path)
+        sys.stderr = RedirectText(self.log_area, self._log_file_path)
 
-    def _toggle_auto_start(self):
-        pass
-
-    def _add_time(self):
-        time_str = self.time_var.get().strip()
-        if re.match(r'^\d{1,2}:\d{2}$', time_str):
-            self.time_listbox.insert(tk.END, time_str)
-            self.time_var.set("")
-        else:
-            messagebox.showwarning("格式错误", "请输入 HH:MM 格式的时间，例如 08:30")
-
-    def _delete_time(self):
-        sel = self.time_listbox.curselection()
-        if sel:
-            self.time_listbox.delete(sel[0])
-
-    def _apply_auto_settings(self):
-        # 保存设置
-        self.settings["auto_start"] = self.auto_enable_var.get()
-        self.settings["run_mode"] = self.run_mode_var.get()
-        self.settings["silent_mode"] = self.silent_var.get()
-        # 收集时间列表
-        times = [self.time_listbox.get(i) for i in range(self.time_listbox.size())]
-        self.settings["schedule_times"] = times
-        # 同时更新旧的 start_time 以兼容（取第一个时间）
-        if times:
-            self.settings["start_time"] = times[0]
-        config.save_settings(self.settings)
-
-        # 停止旧的定时器
+    def apply_auto_settings_from_window(self):
+        """从设置窗口保存后应用自动任务设置"""
         if self._schedule_thread and self._schedule_thread.is_alive():
-            # 通过事件停止（需要使用专门的事件，这里简化：直接设置 _stop_event 会导致脚本误停）
-            # 我们为调度线程单独准备一个停止事件 _scheduler_stop
-            # 为了不混淆，重启线程更可靠：在这里设置标志，线程检查到标志后退出
             pass
-        # 重新启动定时器
-        if self.settings["auto_start"]:
+        if self.settings.get("auto_start", False):
             self._start_scheduler()
         else:
             print("⏰ 已取消定时执行")
-        messagebox.showinfo("提示", "自动任务设置已更新。")
 
     def open_settings(self):
-        """打开设置窗口（单例模式）"""
-        # 如果已有设置窗口且未关闭，则将其提升到前台
         if self._settings_window and self._settings_window.win.winfo_exists():
             self._settings_window.win.lift()
             self._settings_window.win.focus_force()
             return
-        # 否则创建新窗口，并绑定关闭事件
         self._settings_window = SettingsWindow(self.root, self)
         self._settings_window.win.protocol("WM_DELETE_WINDOW", self._on_settings_close)
 
     def _on_settings_close(self):
-        """设置窗口关闭时的回调"""
         if self._settings_window:
             self._settings_window.win.destroy()
             self._settings_window = None
@@ -429,6 +519,74 @@ class App:
         self.total_steps = len(self.account_images) * 4
         self.progress['maximum'] = max(1, self.total_steps)
 
+    # ---------- 账号排序 ----------
+    def _move_up(self):
+        sel = self.account_listbox.curselection()
+        if sel and sel[0] > 0:
+            idx = sel[0]
+            self.account_images[idx], self.account_images[idx-1] = self.account_images[idx-1], self.account_images[idx]
+            self._refresh_account_list()
+            self.account_listbox.selection_set(idx-1)
+
+    def _move_down(self):
+        sel = self.account_listbox.curselection()
+        if sel and sel[0] < len(self.account_images) - 1:
+            idx = sel[0]
+            self.account_images[idx], self.account_images[idx+1] = self.account_images[idx+1], self.account_images[idx]
+            self._refresh_account_list()
+            self.account_listbox.selection_set(idx+1)
+
+    def _refresh_account_list(self):
+        self.account_listbox.delete(0, tk.END)
+        for p in self.account_images:
+            self.account_listbox.insert(tk.END, os.path.basename(p))
+        self.save_accounts()
+
+    # ---------- 账号右键菜单 ----------
+    def _show_account_menu(self, event):
+        try:
+            sel = self.account_listbox.nearest(event.y)
+            self.account_listbox.selection_clear(0, tk.END)
+            self.account_listbox.selection_set(sel)
+            self.account_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.account_menu.grab_release()
+
+    def _test_recognition(self):
+        sel = self.account_listbox.curselection()
+        if not sel:
+            messagebox.showwarning("提示", "请先选中一个账号")
+            return
+        idx = sel[0]
+        img_path = self.account_images[idx]
+        if not os.path.exists(img_path):
+            messagebox.showerror("错误", "截图文件不存在")
+            return
+        try:
+            import cv2
+            import numpy as np
+            screen = pyautogui.screenshot()
+            screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+            template = cv2.imread(img_path, 0)
+            if template is None:
+                messagebox.showerror("错误", "无法读取截图文件")
+                return
+            gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+            res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            conf = int(max_val * 100)
+            threshold = int(config.CONFIDENCE * 100)
+            status = "✅ 可识别" if max_val >= config.CONFIDENCE else "❌ 匹配度不足"
+            messagebox.showinfo(
+                "测试结果",
+                f"截图：{os.path.basename(img_path)}\n"
+                f"匹配度：{conf}% (阈值：{threshold}%)\n"
+                f"最高匹配位置：{max_loc}\n"
+                f"结论：{status}"
+            )
+        except Exception as e:
+            messagebox.showerror("测试失败", f"识别过程出错：{e}")
+
     # ---------- 启停控制 ----------
     def start(self):
         if self.running:
@@ -440,6 +598,8 @@ class App:
         self._stop_event.clear()
         self.current_step = 0
         self.progress['value'] = 0
+        self.stats_label.config(text="")
+        self.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
         self.start_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
         self.log_area.configure(state='normal')
@@ -466,6 +626,10 @@ class App:
         if account_file:
             self.current_account_file_label.config(text=account_file)
 
+    def set_operation(self, text):
+        """从工作线程安全更新当前操作状态文字"""
+        self.root.after(0, lambda: self.op_label.config(text=text))
+
     # ---------- 主流程 ----------
     def run_script_main(self):
         try:
@@ -486,75 +650,92 @@ class App:
                 print(f"\n{'='*40}")
                 print(f"    {acc_text}  -  {file_name}")
                 print(f"{'='*40}")
+                self.run_stats["total"] += 1
+                account_failed = False
 
                 if self._stop_event.is_set(): break
+                self.set_operation("启动 WeGame")
                 print("启动 WeGame...")
                 if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
                     print("❌ WeGame 启动失败，跳过此账号")
-                    continue
-                time.sleep(8)
+                    account_failed = True
+                if not account_failed:
+                    time.sleep(8)
 
-                if self._stop_event.is_set(): break
-                print("开始快捷登录 WeGame ...")
-                if not utils.wegame_quick_login(img_path):
-                    print("❌ WeGame 快捷登录失败，跳过此账号")
-                    utils.kill_process(config.WEGAME_PROCESS)
-                    continue
-                time.sleep(3)
+                if not account_failed and self._stop_event.is_set(): break
+                if not account_failed:
+                    self.set_operation("快捷登录 WeGame")
+                    print("开始快捷登录 WeGame ...")
+                    if not utils.wegame_quick_login(img_path):
+                        print("❌ WeGame 快捷登录失败，跳过此账号")
+                        utils.kill_process(config.WEGAME_PROCESS)
+                        account_failed = True
+                    else:
+                        time.sleep(3)
 
-                if self._stop_event.is_set(): break
-                print("\n--- 启动三角洲行动 ---")
-                utils.activate_window_by_title("WeGame", partial_match=True)
-                time.sleep(2)
+                if not account_failed and self._stop_event.is_set(): break
+                if not account_failed:
+                    self.set_operation("查找三角洲游戏图标")
+                    print("\n--- 启动三角洲行动 ---")
+                    utils.activate_window_by_title("WeGame", partial_match=True)
+                    time.sleep(2)
 
-                delta_icon_found = False
-                for retry in range(3):
+                    delta_icon_found = False
+                    for retry in range(3):
+                        if self._stop_event.is_set(): break
+                        if utils.find_and_click(config.DELTA_GAME_ICON, timeout=15):
+                            delta_icon_found = True
+                            break
+                        print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
+                        time.sleep(3)
+                    if not delta_icon_found:
+                        print("❌ 多次重试后仍未找到三角洲游戏图标，跳过此账号")
+                        utils.kill_process(config.WEGAME_PROCESS)
+                        account_failed = True
+
+                if not account_failed:
+                    time.sleep(2)
+
+                    launch_found = False
+                    for retry in range(3):
+                        if self._stop_event.is_set(): break
+                        if utils.find_and_click(config.DELTA_LAUNCH_BTN, timeout=15):
+                            launch_found = True
+                            break
+                        print(f"⚠️ 未找到启动按钮，3秒后重试 ({retry+1}/3)...")
+                        time.sleep(3)
+                    if not launch_found:
+                        print("❌ 多次重试后仍未找到启动按钮，跳过此账号")
+                        utils.kill_process(config.WEGAME_PROCESS)
+                        account_failed = True
+
+                if not account_failed:
+                    print("✅ 三角洲正在启动，等待游戏加载...")
+                    time.sleep(25)
+
+                    self._game_operations()
                     if self._stop_event.is_set(): break
-                    if utils.find_and_click(config.DELTA_GAME_ICON, timeout=15):
-                        delta_icon_found = True
-                        break
-                    print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
+
+                    self.set_operation("关闭三角洲游戏")
+                    print("\n--- 关闭三角洲游戏 ---")
+                    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+                    for title in delta_titles:
+                        if self._stop_event.is_set(): break
+                        utils.close_window_by_title(title, partial_match=True)
+                    time.sleep(2)
+                    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
+
+                    self.set_operation("关闭 WeGame")
+                    print("\n--- 关闭 WeGame ---")
+                    utils.close_window_by_title("WeGame", partial_match=True)
+                    time.sleep(2)
+                    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
                     time.sleep(3)
-                if not delta_icon_found:
-                    print("❌ 多次重试后仍未找到三角洲游戏图标，跳过此账号")
-                    utils.kill_process(config.WEGAME_PROCESS)
-                    continue
-                time.sleep(2)
 
-                launch_found = False
-                for retry in range(3):
-                    if self._stop_event.is_set(): break
-                    if utils.find_and_click(config.DELTA_LAUNCH_BTN, timeout=15):
-                        launch_found = True
-                        break
-                    print(f"⚠️ 未找到启动按钮，3秒后重试 ({retry+1}/3)...")
-                    time.sleep(3)
-                if not launch_found:
-                    print("❌ 多次重试后仍未找到启动按钮，跳过此账号")
-                    utils.kill_process(config.WEGAME_PROCESS)
-                    continue
-
-                print("✅ 三角洲正在启动，等待游戏加载...")
-                time.sleep(25)
-
-                self._game_operations()
-                if self._stop_event.is_set(): break
-
-                # 安全关闭三角洲
-                print("\n--- 关闭三角洲游戏 ---")
-                delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
-                for title in delta_titles:
-                    if self._stop_event.is_set(): break
-                    utils.close_window_by_title(title, partial_match=True)
-                time.sleep(2)
-                utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
-
-                # 安全关闭 WeGame
-                print("\n--- 关闭 WeGame ---")
-                utils.close_window_by_title("WeGame", partial_match=True)
-                time.sleep(2)
-                utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
-                time.sleep(3)
+                if account_failed:
+                    self.run_stats["fail"] += 1
+                else:
+                    self.run_stats["success"] += 1
 
             print("\n🎉 所有账号处理完毕！")
         except Exception as e:
@@ -564,6 +745,7 @@ class App:
 
     def _game_operations(self):
         print("\n--- 进入游戏操作 ---")
+        self.set_operation("进入烽火地带")
         print("进入烽火地带...")
         for retry in range(3):
             if self._stop_event.is_set(): return
@@ -577,6 +759,7 @@ class App:
             return
 
         time.sleep(5)
+        self.set_operation("进入大厅 / 特勤处")
         print("进入大厅...")
         pyautogui.press("Space")
         time.sleep(0.5)
@@ -597,14 +780,22 @@ class App:
             return
         time.sleep(0.5)
 
-        facilities = [
-            (config.Tech_Center, config.Produce_TechCenter, "技术中心"),
-            (config.Tool_Bench, config.Produce_ToolBench, "工作台"),
-            (config.Armor_Station, config.Produce_ArmorStation, "防具台"),
-            (config.Pharmacy_Station, config.Produce_PharmacyStation, "制药台"),
+        selected_ops = self.settings.get("selected_operations", [])
+        all_facilities = [
+            ("tech_center", config.Tech_Center, config.Produce_TechCenter, "技术中心"),
+            ("tool_bench", config.Tool_Bench, config.Produce_ToolBench, "工作台"),
+            ("armor_station", config.Armor_Station, config.Produce_ArmorStation, "防具台"),
+            ("pharmacy_station", config.Pharmacy_Station, config.Produce_PharmacyStation, "制药台"),
         ]
+        facilities = [(f[1], f[2], f[3]) for f in all_facilities if f[0] in selected_ops]
+        if not facilities:
+            print("ℹ️ 未选择任何设施操作，跳过游戏内操作")
+            return
+        op_names = [f[3] for f in all_facilities if f[0] in selected_ops]
+        print(f"🔧 将执行：{'、'.join(op_names)}")
         for fac_img, prod_img, fac_name in facilities:
             if self._stop_event.is_set(): break
+            self.set_operation(f"处理 {fac_name}")
             if not self._handle_facility(fac_img, prod_img, fac_name):
                 if not self._stop_event.is_set():
                     print(f"❌ 处理{fac_name}失败，终止当前账号")
@@ -665,6 +856,25 @@ class App:
         self.stop_btn.config(state='disabled')
         self.progress['value'] = self.progress['maximum']
 
+        # 显示运行统计
+        stats = self.run_stats
+        elapsed = time.time() - stats["start_time"] if stats["start_time"] else 0
+        if stats["total"] > 0 and elapsed > 0:
+            m, s = divmod(int(elapsed), 60)
+            h, m = divmod(m, 60)
+            if h > 0:
+                time_str = f"{h}时{m}分{s}秒"
+            else:
+                time_str = f"{m}分{s}秒"
+            stats_text = (f"📊 本轮：共 {stats['total']} 个账号  "
+                          f"✅ {stats['success']} 成功  "
+                          f"❌ {stats['fail']} 失败  "
+                          f"⏱ 耗时 {time_str}")
+            self.stats_label.config(text=stats_text)
+            print(f"\n{'='*40}")
+            print(f"   {stats_text}")
+            print(f"{'='*40}")
+
 
 # ==================== 联网时间校验 ====================
 def get_network_time():
@@ -695,12 +905,10 @@ def get_network_time():
 
 
 def main():
-    # 初始化设置
     config.APP_SETTINGS = config.init_settings()
     config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
     config.CONFIDENCE = config.APP_SETTINGS["confidence"]
 
-    # 联网时间校验
     net_date = get_network_time()
     if net_date is None:
         root = tk.Tk()

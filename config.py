@@ -28,7 +28,8 @@ DEFAULT_SETTINGS = {
     "start_time": "08:00",            # 定时执行时间 (HH:MM)
     "run_mode": "单次",               # "单次" 或 "每日循环"
     "silent_mode": False,             # 静默运行（最小化到托盘）
-    "schedule_times": [], 
+    "schedule_times": [],
+    "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
 }
 
 def load_settings():
