@@ -392,31 +392,46 @@ def schedule_startup_task(time_str):
     在睡眠/休眠状态下可唤醒电脑并启动本程序。
     time_str: "HH:MM" 格式
     """
-    import subprocess, sys
+    import subprocess, sys, tempfile
+
     if getattr(sys, 'frozen', False):
         exe_path = sys.executable
-        argument = '--auto-start'
+        ps_script = f"""$a = New-ScheduledTaskAction -Execute '"{exe_path}"' -Argument '--auto-start'
+"""
     else:
-        exe_path = sys.executable
+        python_exe = sys.executable
         script_path = os.path.abspath(sys.argv[0]) if sys.argv[0] else os.path.abspath(__file__)
-        argument = f'"{script_path}" --auto-start'
+        ps_script = f"""$a = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ('/c "{python_exe}" "{script_path}" --auto-start')
+"""
 
-    ps_script = f'''
-    $action = New-ScheduledTaskAction -Execute "{exe_path}" -Argument "{argument}"
-    $trigger = New-ScheduledTaskTrigger -Daily -At "{time_str}"
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -StartWhenAvailable
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName "DeltaAutoTool_Wake" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
-    '''
+    ps_script += f"""$t = New-ScheduledTaskTrigger -Daily -At '{time_str}'
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -StartWhenAvailable
+$p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+Register-ScheduledTask -TaskName 'DeltaAutoTool_Wake' -Action $a -Trigger $t -Settings $s -Principal $p -Force
+"""
+    tmp_path = None
     try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            check=True, capture_output=True, timeout=15
+        fd, tmp_path = tempfile.mkstemp(suffix='.ps1', prefix='delta_task_')
+        with os.fdopen(fd, 'w', encoding='utf-8-sig') as f:
+            f.write(ps_script)
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp_path],
+            check=True, capture_output=True, text=True, timeout=15
         )
+        print(f"✅ 已创建定时开机任务：每天 {time_str}")
         return True
+    except subprocess.CalledProcessError as e:
+        print(f"⚠️ 设置定时开机任务失败: {e.stderr if e.stderr else e}")
+        return False
     except Exception as e:
         print(f"⚠️ 设置定时开机任务失败: {e}")
         return False
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 def remove_startup_task():

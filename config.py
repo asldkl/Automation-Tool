@@ -113,7 +113,7 @@ DELTA_GAME_ICON     = resource_path("picture/delta_game_icon.png")
 DELTA_LAUNCH_BTN    = resource_path("picture/delta_launch_btn.png")
 
 MAKE                = resource_path("picture/make.png")
-Hazard_Operations   = resource_path("picture/Hazard_Operations.png")
+Hazard_Operations   = resource_path("picture/hazard_operations.png")
 Special_Ops         = resource_path("picture/special_ops.png")
 Tech_Center         = resource_path("picture/tech_center.png")
 Tool_Bench          = resource_path("picture/tool_bench.png")
