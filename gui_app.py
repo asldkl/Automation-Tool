@@ -14,7 +14,6 @@ import re
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 import pyautogui
-import winreg
 
 import config
 import utils
@@ -44,10 +43,13 @@ class RedirectText:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     def write(self, message):
-        self.text_widget.configure(state='normal')
-        self.text_widget.insert(tk.END, message)
-        self.text_widget.see(tk.END)
-        self.text_widget.configure(state='disabled')
+        try:
+            self.text_widget.configure(state='normal')
+            self.text_widget.insert(tk.END, message)
+            self.text_widget.see(tk.END)
+            self.text_widget.configure(state='disabled')
+        except Exception:
+            pass
         if self.log_path and message.strip():
             try:
                 with open(self.log_path, 'a', encoding='utf-8') as f:
@@ -287,8 +289,6 @@ class App:
         self._show_event = None
         try:
             import win32event
-            import win32api
-            import win32security
             # 创建全局事件，允许跨进程访问
             self._show_event = win32event.CreateEvent(
                 None, False, False,
@@ -716,9 +716,6 @@ class App:
         self.settings["auto_start"] = False
         config.save_settings(self.settings)
 
-    def _stop_scheduler(self):
-        pass
-
     # ---------- UI 构建 ----------
     def _build_ui(self):
         # ===== 顶部标题栏 =====
@@ -1024,7 +1021,7 @@ class App:
         if self.running:
             return
         if self._qq_running:
-            messagebox.showwarning("提示", "QQ 登录正在运行，请先暂停或等待完成后，再开始脚本")
+            print("⚠️ QQ 登录正在运行，无法启动脚本")
             return
         if not self.account_images:
             messagebox.showwarning("未添加账号", "请先添加至少一个 WeGame 账号截图！")

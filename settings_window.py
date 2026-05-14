@@ -442,32 +442,40 @@ class SettingsWindow:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run",
                                  0, winreg.KEY_READ)
-            value, _ = winreg.QueryValueEx(key, "DeltaAutoTool")
-            winreg.CloseKey(key)
-            return True
-        except FileNotFoundError:
+            try:
+                winreg.QueryValueEx(key, "DeltaAutoTool")
+                return True
+            except FileNotFoundError:
+                return False
+            finally:
+                winreg.CloseKey(key)
+        except (FileNotFoundError, PermissionError, OSError):
             return False
 
     def _set_autostart(self, enable):
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                             r"Software\Microsoft\Windows\CurrentVersion\Run",
-                             0, winreg.KEY_SET_VALUE)
-        if enable:
-            if getattr(sys, 'frozen', False):
-                exe_path = sys.executable
-                # 添加 --auto-start 参数以区分开机自启动与双击启动
-                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
+                                 0, winreg.KEY_SET_VALUE)
+        except (FileNotFoundError, PermissionError):
+            return
+        try:
+            if enable:
+                if getattr(sys, 'frozen', False):
+                    exe_path = sys.executable
+                    winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
+                else:
+                    python_exe = sys.executable
+                    script_path = os.path.abspath(sys.argv[0])
+                    winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ,
+                                      f'"{python_exe}" "{script_path}" --auto-start')
             else:
-                python_exe = sys.executable
-                script_path = os.path.abspath(sys.argv[0])
-                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ,
-                                  f'"{python_exe}" "{script_path}" --auto-start')
-        else:
-            try:
-                winreg.DeleteValue(key, "DeltaAutoTool")
-            except FileNotFoundError:
-                pass
-        winreg.CloseKey(key)
+                try:
+                    winreg.DeleteValue(key, "DeltaAutoTool")
+                except FileNotFoundError:
+                    pass
+        finally:
+            winreg.CloseKey(key)
 
     def _save(self):
         # 全局设置
