@@ -121,7 +121,7 @@ class SettingsWindow:
     def _build_global_tab(self, parent):
         """全局设置选项卡内容"""
         # ----- WeGame 路径 -----
-        frame1 = ttk.LabelFrame(parent, text="  WeGame 路径  ", style='SettingsCard.TLabelframe', padding=12)
+        frame1 = ttk.LabelFrame(parent, text="  WeGame 路径  ", style='SettingsCard.TLabelframe', padding=8)
         frame1.pack(fill=tk.X, pady=(0, 8))
 
         f1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
@@ -132,7 +132,7 @@ class SettingsWindow:
         ttk.Button(f1, text="浏览", command=self._browse_wegame, width=24).pack(side=tk.LEFT)
 
         # ----- 三角洲路径 -----
-        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=10)
+        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=8)
         frame2.pack(fill=tk.X, pady=(0, 8))
 
         f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
@@ -143,7 +143,7 @@ class SettingsWindow:
         ttk.Button(f2, text="浏览", command=self._browse_delta, width=24).pack(side=tk.LEFT)
 
         # ----- QQ 路径 -----
-        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径（自动登录用）  ", style='SettingsCard.TLabelframe', padding=10)
+        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径（自动登录用）  ", style='SettingsCard.TLabelframe', padding=8)
         frame_qq.pack(fill=tk.X, pady=(0, 8))
 
         f_qq = ttk.Frame(frame_qq, style='SettingsInner.TFrame')
@@ -180,7 +180,7 @@ class SettingsWindow:
         self.confidence_var.trace_add('write', on_scale_change)
 
         # ----- 日志保存目录 -----
-        frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=10)
+        frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
         frame4.pack(fill=tk.X, pady=(0, 8))
 
         f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')
@@ -455,10 +455,13 @@ class SettingsWindow:
         if enable:
             if getattr(sys, 'frozen', False):
                 exe_path = sys.executable
+                # 添加 --auto-start 参数以区分开机自启动与双击启动
+                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
             else:
-                exe_path = sys.argv[0]
-            # 添加 --auto-start 参数以区分开机自启动与双击启动
-            winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
+                python_exe = sys.executable
+                script_path = os.path.abspath(sys.argv[0])
+                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ,
+                                  f'"{python_exe}" "{script_path}" --auto-start')
         else:
             try:
                 winreg.DeleteValue(key, "DeltaAutoTool")

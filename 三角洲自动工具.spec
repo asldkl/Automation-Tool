@@ -3,11 +3,16 @@
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=[r'C:\Users\Administrator\PycharmProjects\PythonProject(联网时间校验版)'],
     binaries=[],
     datas=[('picture', 'picture'), ('picture\\produce', 'picture\\produce'),
            ('picture\\qq_login', 'picture\\qq_login')],
-    hiddenimports=['psutil', 'win32gui', 'win32con', 'pystray'],
+    hiddenimports=[
+        'config', 'utils', 'settings_window',
+        'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
+        'pystray', 'PIL', 'PIL.Image',
+        'cv2', 'numpy', 'pyautogui',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
