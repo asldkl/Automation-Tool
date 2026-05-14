@@ -29,7 +29,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # -------------------- 有效期设置 --------------------
-EXPIRY_DATE = datetime.date(2026, 6, 1)
+EXPIRY_DATE = datetime.date(2026, 7, 1)
 # ------------------------------------------------
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
@@ -129,6 +129,9 @@ class App:
         # 托盘
         self.tray_icon = None
         self._setup_tray()
+
+        # 单实例前台显示事件
+        self._setup_show_event()
 
         # 定时任务初始化
         if self.settings.get("auto_start", False):
@@ -246,10 +249,55 @@ class App:
             print(f"⚠️ 托盘创建失败: {e}")
 
     def _show_window(self):
-        self.root.after(0, self.root.deiconify)
-        self.root.after(0, lambda: (self.root.lift(), self.root.focus_force()))
-        self.root.after(0, lambda: self.root.attributes('-topmost', True))
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        # 闪烁任务栏图标以吸引注意力
+        self.root.attributes('-topmost', True)
         self.root.after(100, lambda: self.root.attributes('-topmost', False))
+
+    def _setup_show_event(self):
+        """创建命名事件，用于接收其它实例的前台显示请求"""
+        self._show_event = None
+        try:
+            import win32event
+            import win32api
+            import win32security
+            # 创建全局事件，允许跨进程访问
+            self._show_event = win32event.CreateEvent(
+                None, False, False,
+                "Global\\DeltaAutoTool_ShowApp"
+            )
+            self._poll_show_event()
+        except Exception:
+            pass
+
+    def _poll_show_event(self):
+        """定期检测是否有其它实例请求显示窗口"""
+        try:
+            if self._show_event is not None:
+                import win32event
+                if win32event.WaitForSingleObject(self._show_event, 0) == win32event.WAIT_OBJECT_0:
+                    self._show_window()
+                    print("ℹ️ 检测到外部打开请求，已显示窗口")
+        except Exception:
+            pass
+        # 保持轮询（在 root 存活期间）
+        try:
+            if self.root.winfo_exists():
+                self.root.after(300, self._poll_show_event)
+        except Exception:
+            pass
+
+    def _close_show_event(self):
+        """关闭显示事件句柄"""
+        if self._show_event is not None:
+            try:
+                import win32event
+                win32event.CloseHandle(self._show_event)
+            except Exception:
+                pass
+            self._show_event = None
 
     def _on_close(self):
         """关闭按钮：最小化到托盘（如果可用），否则退出"""
@@ -268,6 +316,8 @@ class App:
             self._wake_timer_handle = None
         # 恢复睡眠设置
         utils.allow_sleep()
+        # 关闭前台显示事件
+        self._close_show_event()
         if self.tray_icon:
             self.tray_icon.stop()
         self.root.after(0, self.root.destroy)
@@ -497,6 +547,12 @@ class App:
         # 尝试唤醒显示器（从睡眠/息屏状态恢复）
         utils.wake_display()
         time.sleep(2)
+        # 等待 QQ 自动登录完成（如果正在运行），否则 start() 会被 _qq_running 阻止
+        if self._qq_running:
+            print("⏳ 等待 QQ 自动登录完成后再执行定时任务...")
+            while self._qq_running and not self._stop_event.is_set():
+                time.sleep(1)
+            print("✅ QQ 登录已完成，开始执行定时任务")
         self.start()
 
     def _set_next_wake_timer(self):
@@ -1026,12 +1082,24 @@ class App:
                 file_name = os.path.basename(img_path)
                 print(f"\n--- QQ 登录 {i+1}/{total}：{file_name} ---")
 
-                # 启动 QQ
+                # 启动 QQ（等待窗口出现，而非固定延时）
                 self.set_operation(f"启动 QQ ({i+1}/{total})")
                 if not utils.start_app(qq_path, "QQ"):
                     print("❌ QQ 启动失败，跳过")
                     continue
-                time.sleep(5)
+                # 智能等待 QQ 登录窗口出现（每 0.5s 检测一次，最长 15s）
+                qq_ready = False
+                for _ in range(30):
+                    if self._stop_event.is_set():
+                        break
+                    if utils.activate_window_by_title("QQ", partial_match=True,
+                                                       exclude_titles=["WeGame"]):
+                        qq_ready = True
+                        break
+                    time.sleep(0.5)
+                if not qq_ready:
+                    print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
+                time.sleep(1)  # 短暂稳定等待
 
                 if self._stop_event.is_set(): break
                 self.set_operation("QQ 快捷登录")
@@ -1041,10 +1109,9 @@ class App:
                     continue
 
                 # 等待登录完成，然后关闭 QQ 窗口（保留后台进程）
-                time.sleep(3)
+                time.sleep(2)
                 utils.close_window_by_title("QQ", partial_match=True)
-                time.sleep(2)
-                time.sleep(2)
+                time.sleep(1)
 
             print("✅ QQ 自动登录阶段完成\n")
         finally:

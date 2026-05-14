@@ -19,10 +19,22 @@ def ensure_single_instance():
         try:
             import win32gui
             import win32con
+            # 优先使用命名事件通知已有实例显示窗口（更可靠）
+            try:
+                import win32event
+                event = win32event.OpenEvent(win32event.EVENT_MODIFY_STATE, False, "Global\\DeltaAutoTool_ShowApp")
+                if event:
+                    win32event.SetEvent(event)
+                    win32event.CloseHandle(event)
+            except Exception:
+                pass
+            # 兜底：直接用 Windows API 尝试显示窗口
             hwnd = win32gui.FindWindow(None, "三角洲行动自动化工具")
             if hwnd:
                 if win32gui.IsIconic(hwnd):
                     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                elif not win32gui.IsWindowVisible(hwnd):
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                 win32gui.SetForegroundWindow(hwnd)
         except Exception:
             pass

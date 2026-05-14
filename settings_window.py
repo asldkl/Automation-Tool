@@ -126,7 +126,7 @@ class SettingsWindow:
 
         f1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
         f1.pack(fill=tk.X)
-        ttk.Label(f1, text="WeGame.exe 位置：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(f1, text="WeGame.exe：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
         ttk.Button(f1, text="浏览", command=self._browse_wegame, width=24).pack(side=tk.LEFT)
@@ -148,7 +148,7 @@ class SettingsWindow:
 
         f_qq = ttk.Frame(frame_qq, style='SettingsInner.TFrame')
         f_qq.pack(fill=tk.X)
-        ttk.Label(f_qq, text="QQ.exe 位置：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(f_qq, text="QQ.exe：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         qq_entry = ttk.Entry(f_qq, textvariable=self.qq_path_var, width=45)
         qq_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
         ttk.Button(f_qq, text="浏览", command=self._browse_qq, width=24).pack(side=tk.LEFT)
