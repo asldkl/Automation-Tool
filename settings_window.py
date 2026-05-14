@@ -132,7 +132,7 @@ class SettingsWindow:
         ttk.Button(f1, text="浏览", command=self._browse_wegame, width=24).pack(side=tk.LEFT)
 
         # ----- 三角洲路径 -----
-        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=10)
         frame2.pack(fill=tk.X, pady=(0, 8))
 
         f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
@@ -143,7 +143,7 @@ class SettingsWindow:
         ttk.Button(f2, text="浏览", command=self._browse_delta, width=24).pack(side=tk.LEFT)
 
         # ----- QQ 路径 -----
-        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径（自动登录用）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径（自动登录用）  ", style='SettingsCard.TLabelframe', padding=10)
         frame_qq.pack(fill=tk.X, pady=(0, 8))
 
         f_qq = ttk.Frame(frame_qq, style='SettingsInner.TFrame')
@@ -180,7 +180,7 @@ class SettingsWindow:
         self.confidence_var.trace_add('write', on_scale_change)
 
         # ----- 日志保存目录 -----
-        frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=12)
+        frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=10)
         frame4.pack(fill=tk.X, pady=(0, 8))
 
         f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')

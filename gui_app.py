@@ -240,7 +240,8 @@ class App:
             icon_path = config.resource_path("picture/icon.ico")
             image = Image.open(icon_path)
             menu = pystray.Menu(
-                pystray.MenuItem("显示窗口", self._show_window),
+                pystray.MenuItem("显示窗口", self._show_window, default=True),
+                pystray.MenuItem("设置", self._on_tray_settings),
                 pystray.MenuItem("退出", self._quit_all),
             )
             self.tray_icon = pystray.Icon("delta_tool", image, "三角洲自动化工具", menu)
@@ -248,13 +249,33 @@ class App:
         except Exception as e:
             print(f"⚠️ 托盘创建失败: {e}")
 
+    def _on_tray_settings(self):
+        """托盘右键菜单「设置」回调——通过 after 确保在主线程打开设置窗口"""
+        self.root.after(0, self.open_settings)
+
     def _show_window(self):
         self.root.deiconify()
         self.root.lift()
+        # 如果设置窗口（模态）处于打开状态，临时释放 grab 使主窗口可获焦
+        had_settings = False
+        if self._settings_window and self._settings_window.win.winfo_exists():
+            try:
+                self._settings_window.win.grab_release()
+                had_settings = True
+            except Exception:
+                pass
         self.root.focus_force()
         # 闪烁任务栏图标以吸引注意力
         self.root.attributes('-topmost', True)
         self.root.after(100, lambda: self.root.attributes('-topmost', False))
+        # 恢复设置窗口 grab
+        if had_settings:
+            try:
+                self._settings_window.win.grab_set()
+                self._settings_window.win.lift()
+                self._settings_window.win.focus_force()
+            except Exception:
+                pass
 
     def _setup_show_event(self):
         """创建命名事件，用于接收其它实例的前台显示请求"""
@@ -285,7 +306,7 @@ class App:
         # 保持轮询（在 root 存活期间）
         try:
             if self.root.winfo_exists():
-                self.root.after(300, self._poll_show_event)
+                self.root.after(100, self._poll_show_event)
         except Exception:
             pass
 
