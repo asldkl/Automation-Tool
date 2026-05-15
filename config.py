@@ -42,6 +42,12 @@ DEFAULT_SETTINGS = {
     # QQ 自动登录
     "qq_path": "",                    # QQ 程序路径
     "qq_login_enabled": False,        # 是否在运行脚本前自动登录 QQ
+    "qq_login_then_run": False,       # QQ 登录完成后立即执行主任务
+    # 邮件通知
+    "email_enabled": False,           # 是否启用邮件通知
+    "smtp_code": "",                  # SMTP 授权码
+    "sender_email": "",               # 发送者邮箱
+    "receiver_email": "",             # 接收者邮箱
 }
 
 def load_settings():

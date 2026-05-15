@@ -18,13 +18,13 @@ class SettingsWindow:
         self.app = app
         self.win = tk.Toplevel(parent)
         self.win.title("设置")
-        self.win.geometry("660x720")
+        self.win.geometry("660x780")
         self.win.resizable(False, False)
         # 窗口居中
         self.win.update_idletasks()
         x = (self.win.winfo_screenwidth() - 660) // 2
-        y = (self.win.winfo_screenheight() - 720) // 2
-        self.win.geometry(f"660x720+{x}+{y}")
+        y = (self.win.winfo_screenheight() - 780) // 2
+        self.win.geometry(f"660x780+{x}+{y}")
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
@@ -61,6 +61,13 @@ class SettingsWindow:
         # QQ 路径 + 登录开关
         self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
         self.qq_login_var = tk.BooleanVar(value=app.settings.get("qq_login_enabled", False))
+        self.qq_login_then_run_var = tk.BooleanVar(value=app.settings.get("qq_login_then_run", False))
+
+        # 邮件通知变量
+        self.email_enable_var = tk.BooleanVar(value=app.settings.get("email_enabled", False))
+        self.smtp_code_var = tk.StringVar(value=app.settings.get("smtp_code", ""))
+        self.sender_email_var = tk.StringVar(value=app.settings.get("sender_email", ""))
+        self.receiver_email_var = tk.StringVar(value=app.settings.get("receiver_email", ""))
 
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
@@ -109,6 +116,11 @@ class SettingsWindow:
         power_tab = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(power_tab, text="  电源管理  ")
         self._build_power_tab(power_tab)
+
+        # ----- Tab 4: 邮件通知 -----
+        email_tab = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(email_tab, text="  邮件通知  ")
+        self._build_email_tab(email_tab)
 
         # ----- 底部操作按钮 -----
         btn_frame = ttk.Frame(main_frame, style='Settings.TFrame')
@@ -286,6 +298,8 @@ class SettingsWindow:
         qq_inner1.pack(fill=tk.X, pady=(0, 6))
         ttk.Checkbutton(qq_inner1, text="开机时自动登录QQ（程序启动后自动登录所有已添加账号）",
                        variable=self.qq_login_var).pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(qq_inner1, text="QQ 登录完成后立即执行任务（WeGame 登录 → 进游戏领取奖励）",
+                       variable=self.qq_login_then_run_var).pack(anchor=tk.W, padx=5, pady=2)
 
         # QQ 账号管理
         qq_btn_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
@@ -370,6 +384,88 @@ class SettingsWindow:
                  text="💡 定时开机功能可在电脑处于睡眠/休眠状态时将其唤醒。\n    若电脑为完全关机状态，需主板支持 RTC 唤醒并在 BIOS 中启用【定时开机】或「RTC Alarm」功能。",
                  style='SettingsSmall.TLabel', wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
 
+    def _build_email_tab(self, parent):
+        """邮件通知选项卡内容"""
+        # ----- 启用开关 -----
+        enable_frame = ttk.LabelFrame(parent, text="  通知设置  ", style='SettingsCard.TLabelframe', padding=12)
+        enable_frame.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Checkbutton(enable_frame, text="启用邮件通知（工作流执行完成后自动发送运行结果）",
+                       variable=self.email_enable_var).pack(anchor=tk.W, padx=5, pady=5)
+
+        # ----- 邮箱配置 -----
+        config_frame = ttk.LabelFrame(parent, text="  邮箱配置  ", style='SettingsCard.TLabelframe', padding=12)
+        config_frame.pack(fill=tk.X, pady=(0, 8))
+
+        # 发送者邮箱
+        row1 = ttk.Frame(config_frame, style='SettingsInner.TFrame')
+        row1.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(row1, text="发送者邮箱：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(row1, textvariable=self.sender_email_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # SMTP 授权码
+        row2 = ttk.Frame(config_frame, style='SettingsInner.TFrame')
+        row2.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(row2, text="SMTP 授权码：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(row2, textvariable=self.smtp_code_var, width=40, show="*").pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 接收者邮箱
+        row3 = ttk.Frame(config_frame, style='SettingsInner.TFrame')
+        row3.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(row3, text="接收者邮箱：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(row3, textvariable=self.receiver_email_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 测试发送按钮
+        row4 = ttk.Frame(config_frame, style='SettingsInner.TFrame')
+        row4.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(row4, text="发送测试邮件", style='Accent.TButton',
+                  command=self._test_send_email, width=16).pack(side=tk.LEFT, padx=(0, 10))
+        self.email_test_label = ttk.Label(row4, text="", style='Settings.TLabel')
+        self.email_test_label.pack(side=tk.LEFT)
+
+        # ----- 使用提示 -----
+        tips_frame = ttk.LabelFrame(parent, text="  使用提示  ", style='SettingsCard.TLabelframe', padding=12)
+        tips_frame.pack(fill=tk.X, pady=(0, 0))
+
+        tips_text = (
+            "1. 登录 QQ 邮箱网页版 → 设置 → 账户 → 开启 SMTP 服务 → 生成授权码\n"
+            "2. 将生成的授权码填入上方「SMTP 授权码」栏\n"
+            "3. 发送者邮箱和接收者邮箱可以相同（自己发给自己）\n"
+            "4. 点击「发送测试邮件」验证配置是否正确\n"
+            "5. 工作流执行完成后将自动发送包含运行结果的邮件通知"
+        )
+        ttk.Label(tips_frame, text=tips_text, style='SettingsSmall.TLabel',
+                 wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
+
+        server_info = ttk.Frame(tips_frame, style='SettingsInner.TFrame')
+        server_info.pack(fill=tk.X, padx=5, pady=(0, 5))
+        ttk.Label(server_info, text="SMTP 服务器：smtp.qq.com    SSL 端口：465",
+                 style='SettingsSmall.TLabel', font=('Microsoft YaHei UI', 8, 'bold')).pack(anchor=tk.W)
+
+    def _test_send_email(self):
+        """发送测试邮件"""
+        sender = self.sender_email_var.get().strip()
+        code = self.smtp_code_var.get().strip()
+        receiver = self.receiver_email_var.get().strip()
+
+        if not sender or not code or not receiver:
+            messagebox.showwarning("提示", "请先填写完整的邮箱配置信息")
+            return
+
+        self.email_test_label.config(text="正在发送...", foreground="#f39c12")
+        self.win.update_idletasks()
+
+        import utils
+        success, msg = utils.send_email_notification(
+            code, sender, receiver,
+            "三角洲自动化工具 - 测试邮件",
+            "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>"
+        )
+        if success:
+            self.email_test_label.config(text="✓ 发送成功！", foreground="#27ae60")
+        else:
+            self.email_test_label.config(text=f"✗ {msg}", foreground="#e74c3c")
+
     def _add_time(self):
         raw = self.time_var.get().strip()
         if re.match(r'^\d{1,2}:\d{2}$', raw):
@@ -442,32 +538,40 @@ class SettingsWindow:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run",
                                  0, winreg.KEY_READ)
-            value, _ = winreg.QueryValueEx(key, "DeltaAutoTool")
-            winreg.CloseKey(key)
-            return True
-        except FileNotFoundError:
+            try:
+                winreg.QueryValueEx(key, "DeltaAutoTool")
+                return True
+            except FileNotFoundError:
+                return False
+            finally:
+                winreg.CloseKey(key)
+        except (FileNotFoundError, PermissionError, OSError):
             return False
 
     def _set_autostart(self, enable):
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                             r"Software\Microsoft\Windows\CurrentVersion\Run",
-                             0, winreg.KEY_SET_VALUE)
-        if enable:
-            if getattr(sys, 'frozen', False):
-                exe_path = sys.executable
-                # 添加 --auto-start 参数以区分开机自启动与双击启动
-                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
+                                 0, winreg.KEY_SET_VALUE)
+        except (FileNotFoundError, PermissionError):
+            return
+        try:
+            if enable:
+                if getattr(sys, 'frozen', False):
+                    exe_path = sys.executable
+                    winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
+                else:
+                    python_exe = sys.executable
+                    script_path = os.path.abspath(sys.argv[0])
+                    winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ,
+                                      f'"{python_exe}" "{script_path}" --auto-start')
             else:
-                python_exe = sys.executable
-                script_path = os.path.abspath(sys.argv[0])
-                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ,
-                                  f'"{python_exe}" "{script_path}" --auto-start')
-        else:
-            try:
-                winreg.DeleteValue(key, "DeltaAutoTool")
-            except FileNotFoundError:
-                pass
-        winreg.CloseKey(key)
+                try:
+                    winreg.DeleteValue(key, "DeltaAutoTool")
+                except FileNotFoundError:
+                    pass
+        finally:
+            winreg.CloseKey(key)
 
     def _save(self):
         # 全局设置
@@ -516,6 +620,13 @@ class SettingsWindow:
         # QQ 设置
         self.app.settings["qq_path"] = self.qq_path_var.get()
         self.app.settings["qq_login_enabled"] = self.qq_login_var.get()
+        self.app.settings["qq_login_then_run"] = self.qq_login_then_run_var.get()
+
+        # 邮件通知设置
+        self.app.settings["email_enabled"] = self.email_enable_var.get()
+        self.app.settings["smtp_code"] = self.smtp_code_var.get()
+        self.app.settings["sender_email"] = self.sender_email_var.get()
+        self.app.settings["receiver_email"] = self.receiver_email_var.get()
 
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)

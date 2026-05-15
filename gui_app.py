@@ -14,7 +14,6 @@ import re
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 import pyautogui
-import winreg
 
 import config
 import utils
@@ -44,10 +43,13 @@ class RedirectText:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     def write(self, message):
-        self.text_widget.configure(state='normal')
-        self.text_widget.insert(tk.END, message)
-        self.text_widget.see(tk.END)
-        self.text_widget.configure(state='disabled')
+        try:
+            self.text_widget.configure(state='normal')
+            self.text_widget.insert(tk.END, message)
+            self.text_widget.see(tk.END)
+            self.text_widget.configure(state='disabled')
+        except Exception:
+            pass
         if self.log_path and message.strip():
             try:
                 with open(self.log_path, 'a', encoding='utf-8') as f:
@@ -287,8 +289,6 @@ class App:
         self._show_event = None
         try:
             import win32event
-            import win32api
-            import win32security
             # 创建全局事件，允许跨进程访问
             self._show_event = win32event.CreateEvent(
                 None, False, False,
@@ -394,18 +394,35 @@ class App:
             traceback.print_exc()
 
     def _schedule_loop_daily(self):
-        """每日循环模式：持续检查时间点"""
+        """每日循环模式：持续检查时间点（含5分钟容差，防止开机后错过目标时间）"""
+        executed_today = set()  # 记录今天已执行的 (日期, 时间点) 防止重复执行
         try:
             while not self._stop_event.is_set():
                 now = datetime.datetime.now()
+                today_str = now.strftime("%Y-%m-%d")
                 now_str = now.strftime("%H:%M")
 
-                # 1. 定时执行
-                if now_str in self._schedule_times and not self.running:
+                # 清理非当天的执行记录
+                executed_today = {(d, t) for d, t in executed_today if d == today_str}
+
+                # 1. 定时执行（带5分钟容差）
+                matched_time = None
+                for t in self._schedule_times:
+                    if (today_str, t) in executed_today:
+                        continue
+                    h, m = map(int, t.split(":"))
+                    scheduled_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                    tolerance = datetime.timedelta(minutes=5)
+                    if scheduled_dt <= now <= scheduled_dt + tolerance:
+                        matched_time = t
+                        break
+
+                if matched_time is not None and not self.running:
+                    executed_today.add((today_str, matched_time))
                     if not self._reminder_cancelled:
-                        self._execute_scheduled_run(now_str)
+                        self._execute_scheduled_run(matched_time)
                     else:
-                        print(f"⏹ 用户取消了 {now_str} 的定时运行")
+                        print(f"⏹ 用户取消了 {matched_time} 的定时运行")
                         self._reminder_shown = False
                         self._reminder_target = None
                         self._reminder_cancelled = False
@@ -716,9 +733,6 @@ class App:
         self.settings["auto_start"] = False
         config.save_settings(self.settings)
 
-    def _stop_scheduler(self):
-        pass
-
     # ---------- UI 构建 ----------
     def _build_ui(self):
         # ===== 顶部标题栏 =====
@@ -1024,7 +1038,7 @@ class App:
         if self.running:
             return
         if self._qq_running:
-            messagebox.showwarning("提示", "QQ 登录正在运行，请先暂停或等待完成后，再开始脚本")
+            print("⚠️ QQ 登录正在运行，无法启动脚本")
             return
         if not self.account_images:
             messagebox.showwarning("未添加账号", "请先添加至少一个 WeGame 账号截图！")
@@ -1117,6 +1131,12 @@ class App:
         """QQ登录完成后的UI恢复"""
         self._qq_running = False
         self.qq_login_btn.config(text="QQ一键登录")
+        # 开机自启动时，QQ 登录完成后立即执行主任务
+        if ('--auto-start' in sys.argv
+                and self.settings.get("qq_login_then_run", False)
+                and not self.running):
+            print("🔄 QQ 登录完成，即将自动执行主任务...")
+            self.root.after(1000, self.start)
 
     # ---------- QQ 自动登录阶段 ----------
     def _run_qq_login_phase(self):
@@ -1430,6 +1450,51 @@ class App:
             print(f"\n{'='*40}")
             print(f"   {stats_text}")
             print(f"{'='*40}")
+
+        # 发送邮件通知
+        self._send_email_notification(stats, elapsed)
+
+    def _send_email_notification(self, stats, elapsed):
+        """在后台线程中发送邮件通知"""
+        if not self.settings.get("email_enabled", False):
+            return
+        smtp_code = self.settings.get("smtp_code", "").strip()
+        sender = self.settings.get("sender_email", "").strip()
+        receiver = self.settings.get("receiver_email", "").strip()
+        if not smtp_code or not sender or not receiver:
+            return
+
+        m, s = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        time_str = f"{h}时{m}分{s}秒" if h > 0 else f"{m}分{s}秒"
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status_text = "全部成功" if stats["fail"] == 0 else f"有 {stats['fail']} 个失败"
+
+        body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;">
+<h2 style="color:#2c3e50;">三角洲行动自动化工具 - 运行报告</h2>
+<hr style="border:1px solid #dcdde1;">
+<table style="border-collapse:collapse;width:100%;margin:15px 0;">
+<tr style="background:#f0f2f5;"><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">运行时间</td><td style="padding:10px;border:1px solid #dcdde1;">{now_str}</td></tr>
+<tr><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:10px;border:1px solid #dcdde1;">{stats['total']}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']}</td></tr>
+<tr><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:10px;border:1px solid #dcdde1;color:{'#e74c3c' if stats['fail']>0 else '#2c3e50'};">{stats['fail']}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">耗时</td><td style="padding:10px;border:1px solid #dcdde1;">{time_str}</td></tr>
+<tr><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">状态</td><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">{status_text}</td></tr>
+</table>
+<p style="color:#7f8c8d;font-size:12px;">此邮件由三角洲行动自动化工具自动发送</p>
+</div>"""
+
+        def _send():
+            success, msg = utils.send_email_notification(
+                smtp_code, sender, receiver,
+                f"三角洲自动化 - 运行报告 ({status_text})", body
+            )
+            if success:
+                print("📧 邮件通知已发送")
+            else:
+                print(f"📧 邮件通知发送失败：{msg}")
+
+        threading.Thread(target=_send, daemon=True).start()
 
 
 # ==================== 联网时间校验 ====================

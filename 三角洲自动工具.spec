@@ -12,6 +12,7 @@ a = Analysis(
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',
         'cv2', 'numpy', 'pyautogui',
+        'smtplib', 'email', 'email.mime', 'email.mime.text', 'email.mime.multipart',
     ],
     hookspath=[],
     hooksconfig={},

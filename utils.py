@@ -446,3 +446,39 @@ def remove_startup_task():
         return True
     except Exception:
         return False
+
+
+# ==================== 邮件通知 ====================
+def send_email_notification(smtp_code, sender_email, receiver_email, subject, body):
+    """
+    使用 QQ 邮箱 SMTP 发送邮件通知。
+    smtp_code: SMTP 授权码
+    sender_email: 发送者邮箱
+    receiver_email: 接收者邮箱
+    subject: 邮件主题
+    body: 邮件正文（HTML 格式）
+    返回 (success: bool, message: str)
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html', 'utf-8'))
+
+        with smtplib.SMTP_SSL('smtp.qq.com', 465, timeout=30) as server:
+            server.login(sender_email, smtp_code)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+        return True, "邮件发送成功"
+    except smtplib.SMTPAuthenticationError:
+        return False, "SMTP 认证失败，请检查授权码是否正确"
+    except smtplib.SMTPConnectError:
+        return False, "无法连接到 SMTP 服务器，请检查网络"
+    except smtplib.SMTPException as e:
+        return False, f"SMTP 错误：{e}"
+    except Exception as e:
+        return False, f"发送失败：{e}"
