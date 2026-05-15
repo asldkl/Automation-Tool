@@ -58,10 +58,18 @@ class SettingsWindow:
         self.reminder_enable_var = tk.BooleanVar(value=app.settings.get("reminder_enabled", False))
         self.reminder_minutes_var = tk.IntVar(value=app.settings.get("reminder_minutes", 5))
 
-        # QQ 路径 + 登录开关
+        # QQ 路径 + 登录开关（互斥单选）
         self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
-        self.qq_login_var = tk.BooleanVar(value=app.settings.get("qq_login_enabled", False))
-        self.qq_login_then_run_var = tk.BooleanVar(value=app.settings.get("qq_login_then_run", False))
+        # 根据已有设置推断当前模式
+        _qq_then_run = app.settings.get("qq_login_then_run", False)
+        _qq_enabled = app.settings.get("qq_login_enabled", False)
+        if _qq_then_run:
+            _qq_mode = "login_and_run"
+        elif _qq_enabled:
+            _qq_mode = "login_only"
+        else:
+            _qq_mode = "none"
+        self.qq_login_mode_var = tk.StringVar(value=_qq_mode)
 
         # 邮件通知变量
         self.email_enable_var = tk.BooleanVar(value=app.settings.get("email_enabled", False))
@@ -296,10 +304,10 @@ class SettingsWindow:
 
         qq_inner1 = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
         qq_inner1.pack(fill=tk.X, pady=(0, 6))
-        ttk.Checkbutton(qq_inner1, text="开机时自动登录QQ（程序启动后自动登录所有已添加账号）",
-                       variable=self.qq_login_var).pack(anchor=tk.W, padx=5, pady=2)
-        ttk.Checkbutton(qq_inner1, text="QQ 登录完成后立即执行任务（WeGame 登录 → 进游戏领取奖励）",
-                       variable=self.qq_login_then_run_var).pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Radiobutton(qq_inner1, text="开机自动登录QQ（仅登录所有已添加账号，不执行任务）",
+                       variable=self.qq_login_mode_var, value="login_only").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Radiobutton(qq_inner1, text="开机自动登录QQ并立即执行任务（登录后自动运行 WeGame + 游戏任务）",
+                       variable=self.qq_login_mode_var, value="login_and_run").pack(anchor=tk.W, padx=5, pady=2)
 
         # QQ 账号管理
         qq_btn_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
@@ -617,10 +625,11 @@ class SettingsWindow:
         self.app.settings["auto_startup_enabled"] = self.startup_enable_var.get()
         self.app.settings["auto_startup_time"] = self.startup_time_var.get()
 
-        # QQ 设置
+        # QQ 设置（互斥单选映射到两个布尔字段）
         self.app.settings["qq_path"] = self.qq_path_var.get()
-        self.app.settings["qq_login_enabled"] = self.qq_login_var.get()
-        self.app.settings["qq_login_then_run"] = self.qq_login_then_run_var.get()
+        qq_mode = self.qq_login_mode_var.get()
+        self.app.settings["qq_login_enabled"] = qq_mode in ("login_only", "login_and_run")
+        self.app.settings["qq_login_then_run"] = qq_mode == "login_and_run"
 
         # 邮件通知设置
         self.app.settings["email_enabled"] = self.email_enable_var.get()

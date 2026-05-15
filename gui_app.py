@@ -71,6 +71,7 @@ class App:
         self.qq_account_images = []
         self._stop_event = threading.Event()
         self._qq_running = False
+        self._qq_auto_boot = False  # 标记当前 QQ 登录是否为开机自动触发
         self._qq_pause_event = threading.Event()
         self._qq_pause_event.set()  # 初始状态：未暂停
         self._auto_timer = None
@@ -143,6 +144,7 @@ class App:
         # QQ 开机自动登录（仅在开机自启动时运行，双击启动不触发）
         if self.settings.get("qq_login_enabled", False) and self.qq_account_images and '--auto-start' in sys.argv:
             print(f"🔄 检测到开机自启动，将在 2 秒后自动登录 QQ（共 {len(self.qq_account_images)} 个账号）")
+            self._qq_auto_boot = True
             self.root.after(2000, self._auto_login_qq)
 
         # 静默模式（仅开机自启动时生效，双击打开始终显示主界面）
@@ -1102,7 +1104,8 @@ class App:
         if self._qq_running:
             self._toggle_qq_pause()
             return
-        # 未运行 → 启动
+        # 未运行 → 启动（手动触发，非开机自动）
+        self._qq_auto_boot = False
         qq_path = self.settings.get("qq_path", "")
         if not qq_path:
             messagebox.showwarning("提示", "请先在设置中配置 QQ.exe 路径")
@@ -1131,12 +1134,13 @@ class App:
         """QQ登录完成后的UI恢复"""
         self._qq_running = False
         self.qq_login_btn.config(text="QQ一键登录")
-        # 开机自启动时，QQ 登录完成后立即执行主任务
-        if ('--auto-start' in sys.argv
+        # 仅开机自动登录且设置了"登录后立即执行"时，才自动执行主任务
+        if (self._qq_auto_boot
                 and self.settings.get("qq_login_then_run", False)
                 and not self.running):
             print("🔄 QQ 登录完成，即将自动执行主任务...")
             self.root.after(1000, self.start)
+        self._qq_auto_boot = False
 
     # ---------- QQ 自动登录阶段 ----------
     def _run_qq_login_phase(self):
