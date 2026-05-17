@@ -11,8 +11,10 @@ import os
 import psutil
 import win32gui
 import win32con
+import config
 from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS,
-                    IMAGE_ACCOUNT_SELECT, IMAGE_LOGIN_BTN)
+                    IMAGE_ACCOUNT_SELECT, IMAGE_LOGIN_BTN,
+                    QQ_ACCOUNT_SELECT, QQ_LOGIN_BTN)
 
 def start_app(exe_path, app_name):
     """启动外部程序，5秒后返回是否成功"""
@@ -84,11 +86,28 @@ def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titl
     print(f"❌ 超时未找到窗口 '{title_contains}'")
     return False
 
+# 模板图片缓存，避免每次匹配都从磁盘读取
+_template_cache = {}
+
+def clear_template_cache():
+    """清除模板缓存（用于重新截图后刷新）"""
+    global _template_cache
+    _template_cache.clear()
+
 def find_and_click(img_path, timeout=20, region=None):
     """
     在当前屏幕中查找图片并点击中心点
     返回是否成功找到并点击
     """
+    # 从缓存加载模板，首次调用时读取磁盘
+    template = _template_cache.get(img_path)
+    if template is None:
+        template = cv2.imread(img_path, 0)
+        if template is None:
+            print(f"❌ 图片文件不存在：{img_path}")
+            return False
+        _template_cache[img_path] = template
+
     start = time.time()
     while time.time() - start < timeout:
         try:
@@ -97,10 +116,6 @@ def find_and_click(img_path, timeout=20, region=None):
             time.sleep(0.5)
             continue
         screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-        template = cv2.imread(img_path, 0)
-        if template is None:
-            print(f"❌ 图片文件不存在：{img_path}")
-            return False
 
         gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
@@ -127,21 +142,86 @@ def find_and_click(img_path, timeout=20, region=None):
     print(f"⏳ 超时未找到：{img_path}")
     return False
 
+def find_and_click_pos(img_path, timeout=20, region=None):
+    """
+    在当前屏幕中查找图片并点击中心点
+    返回 (是否成功, 坐标元组(x,y)) 或 (False, None)
+    """
+    template = _template_cache.get(img_path)
+    if template is None:
+        template = cv2.imread(img_path, 0)
+        if template is None:
+            print(f"❌ 图片文件不存在：{img_path}")
+            return False, None
+        _template_cache[img_path] = template
+
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+        except Exception:
+            time.sleep(0.5)
+            continue
+        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+
+        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+
+        if max_val >= CONFIDENCE:
+            h, w = template.shape
+            x = max_loc[0] + w // 2 + (region[0] if region else 0)
+            y = max_loc[1] + h // 2 + (region[1] if region else 0)
+
+            screen_w, screen_h = pyautogui.size()
+            margin = 10
+            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
+                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
+                time.sleep(0.3)
+                continue
+
+            pyautogui.moveTo(x, y, duration=0.2)
+            pyautogui.click()
+            time.sleep(WAIT_TIME)
+            return True, (x, y)
+        time.sleep(0.3)
+    print(f"⏳ 超时未找到：{img_path}")
+    return False, None
+
 def wegame_quick_login(qq_number_img):
     """
     使用图像识别完成 WeGame 快捷登录：
     点击账号选择按钮 → 点击目标 QQ 号 → 点击登录按钮
+    支持滚动查找被遮挡的账号（超过3个账号时）
     """
     print("🔍 点击账号选择按钮...")
-    if not find_and_click(IMAGE_ACCOUNT_SELECT, timeout=15):
+    success, btn_pos = find_and_click_pos(IMAGE_ACCOUNT_SELECT, timeout=15)
+    if not success:
         print("❌ 未找到账号选择按钮")
         return False
     time.sleep(1)  # 等待列表弹出
 
     print("🔍 选择 QQ 号...")
-    if not find_and_click(qq_number_img, timeout=10):
-        print("❌ 未找到目标 QQ 号")
-        return False
+    if not find_and_click(qq_number_img, timeout=5):
+        # 未找到目标账号，尝试滚动下拉列表查找
+        if btn_pos:
+            print("🔍 目标账号可能被遮挡，尝试滚动查找...")
+            scroll_x, scroll_y = btn_pos
+            scroll_distance = config.APP_SETTINGS.get("wegame_mouse_move_distance", 100)
+            scroll_amount = config.APP_SETTINGS.get("scroll_amount", 100)
+            for scroll_attempt in range(3):
+                pyautogui.moveTo(scroll_x, scroll_y + scroll_distance, duration=0.1)
+                time.sleep(0.2)
+                pyautogui.scroll(-scroll_amount)
+                time.sleep(0.8)
+                if find_and_click(qq_number_img, timeout=5):
+                    break
+            else:
+                print("❌ 滚动查找后仍未找到目标 QQ 号")
+                return False
+        else:
+            print("❌ 未找到目标 QQ 号")
+            return False
     time.sleep(0.5)
 
     print("🔍 点击登录按钮...")
@@ -364,19 +444,36 @@ def qq_quick_login(qq_number_img):
     """
     使用图像识别完成 QQ 自动登录：
     点击账号选择 → 点击目标 QQ 号 → 点击登录按钮
+    支持滚动查找被遮挡的账号（超过3个账号时）
     """
-    from config import QQ_ACCOUNT_SELECT, QQ_LOGIN_BTN
-
     print("🔍 点击 QQ 账号选择按钮...")
-    if not find_and_click(QQ_ACCOUNT_SELECT, timeout=15):
+    success, btn_pos = find_and_click_pos(QQ_ACCOUNT_SELECT, timeout=15)
+    if not success:
         print("❌ 未找到 QQ 账号选择按钮")
         return False
     time.sleep(1)
 
     print("🔍 选择 QQ 号...")
-    if not find_and_click(qq_number_img, timeout=10):
-        print("❌ 未找到目标 QQ 号")
-        return False
+    if not find_and_click(qq_number_img, timeout=5):
+        # 未找到目标账号，尝试滚动下拉列表查找
+        if btn_pos:
+            print("🔍 目标 QQ 号可能被遮挡，尝试滚动查找...")
+            scroll_x, scroll_y = btn_pos
+            scroll_distance = config.APP_SETTINGS.get("qq_mouse_move_distance", 100)
+            scroll_amount = config.APP_SETTINGS.get("scroll_amount", 100)
+            for scroll_attempt in range(3):
+                pyautogui.moveTo(scroll_x, scroll_y + scroll_distance, duration=0.1)
+                time.sleep(0.2)
+                pyautogui.scroll(-scroll_amount)
+                time.sleep(0.8)
+                if find_and_click(qq_number_img, timeout=5):
+                    break
+            else:
+                print("❌ 滚动查找后仍未找到目标 QQ 号")
+                return False
+        else:
+            print("❌ 未找到目标 QQ 号")
+            return False
     time.sleep(0.5)
 
     print("🔍 点击 QQ 登录按钮...")

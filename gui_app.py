@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 import pyautogui
 
+import traceback
 import config
 import utils
 from settings_window import SettingsWindow
@@ -74,6 +75,7 @@ class App:
         self._qq_auto_boot = False  # 标记当前 QQ 登录是否为开机自动触发
         self._qq_pause_event = threading.Event()
         self._qq_pause_event.set()  # 初始状态：未暂停
+        self._qq_stop_event = threading.Event()  # QQ 登录专用停止信号
         self._auto_timer = None
         self._schedule_thread = None
         self._daily_loop = False
@@ -392,7 +394,6 @@ class App:
                 self._schedule_loop_single()
         except Exception as e:
             print(f"❌ 定时调度线程异常退出: {e}")
-            import traceback
             traceback.print_exc()
 
     def _schedule_loop_daily(self):
@@ -451,7 +452,6 @@ class App:
                 time.sleep(30)
         except Exception as e:
             print(f"❌ 每日循环调度异常: {e}")
-            import traceback
             traceback.print_exc()
 
     def _schedule_loop_single(self):
@@ -509,7 +509,6 @@ class App:
                 time.sleep(10)
         except Exception as e:
             print(f"❌ 单次定时调度异常: {e}")
-            import traceback
             traceback.print_exc()
 
     def _check_reminder_daily(self, now):
@@ -614,7 +613,7 @@ class App:
             if self._qq_running:
                 print("⏳ 等待 QQ 自动登录完成后再执行定时任务...")
                 wait_start = time.time()
-                while self._qq_running and not self._stop_event.is_set():
+                while self._qq_running and not self._stop_event.is_set() and not self._qq_stop_event.is_set():
                     time.sleep(1)
                     if time.time() - wait_start > 120:
                         print("⚠️ 等待 QQ 登录超时（2分钟），强制执行定时任务")
@@ -623,7 +622,6 @@ class App:
             self.start()
         except Exception as e:
             print(f"❌ 定时执行出错: {e}")
-            import traceback
             traceback.print_exc()
 
     def _set_next_wake_timer(self):
@@ -771,7 +769,7 @@ class App:
                                           yscrollcommand=scrollbar.set,
                                           selectmode=tk.SINGLE,
                                           font=('Microsoft YaHei UI', 9),
-                                          bg='#fafbfc', fg='#2c3e50',
+                                          bg='#d5d5d5', fg='#1a1a1a',
                                           selectbackground='#3498db',
                                           selectforeground='#ffffff',
                                           relief='flat', highlightthickness=1,
@@ -943,6 +941,9 @@ class App:
             filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
         )
         if file_path:
+            if file_path in self.account_images:
+                messagebox.showwarning("提示", "该账号图片已存在，不能重复添加！")
+                return
             self.account_images.append(file_path)
             self.account_listbox.insert(tk.END, os.path.basename(file_path))
             self.update_account_count()
@@ -1093,7 +1094,8 @@ class App:
             return
         self._qq_running = True
         self._qq_pause_event.set()  # 确保未暂停
-        self.root.after(0, lambda: self.qq_login_btn.config(text="暂停"))
+        self._qq_stop_event.clear()  # 清除之前的停止信号
+        self.root.after(0, lambda: self.qq_login_btn.config(text="停止"))
         threading.Thread(target=self._run_qq_login_phase, daemon=True).start()
 
     def trigger_qq_login(self):
@@ -1116,19 +1118,14 @@ class App:
         self._auto_login_qq()
 
     def _toggle_qq_pause(self):
-        """切换QQ登录暂停/继续"""
+        """停止QQ登录"""
         if not self._qq_running:
             return
-        if self._qq_pause_event.is_set():
-            # 运行中 → 暂停
-            self._qq_pause_event.clear()
-            print("⏸ QQ 登录已暂停")
-            self.qq_login_btn.config(text="继续")
-        else:
-            # 已暂停 → 继续
-            self._qq_pause_event.set()
-            print("▶️ QQ 登录已继续")
-            self.qq_login_btn.config(text="暂停")
+        self._qq_stop_event.set()
+        self._qq_pause_event.set()  # 解除暂停阻塞，让线程可以退出
+        print("⏹ QQ 登录已停止")
+        self._qq_running = False
+        self.qq_login_btn.config(text="QQ一键登录")
 
     def _on_qq_login_finish(self):
         """QQ登录完成后的UI恢复"""
@@ -1156,14 +1153,14 @@ class App:
             print("=" * 40)
 
             for i, img_path in enumerate(self.qq_account_images):
-                if self._stop_event.is_set():
+                if self._qq_stop_event.is_set():
                     break
 
                 # 暂停检查：暂停时阻塞，直到继续或收到停止信号
                 while not self._qq_pause_event.is_set():
-                    if self._stop_event.wait(timeout=0.5):
+                    if self._qq_stop_event.wait(timeout=0.5):
                         break
-                if self._stop_event.is_set():
+                if self._qq_stop_event.is_set():
                     print("⏹ QQ 登录已停止")
                     break
 
@@ -1178,7 +1175,7 @@ class App:
                 # 智能等待 QQ 登录窗口出现（每 0.5s 检测一次，最长 15s）
                 qq_ready = False
                 for _ in range(30):
-                    if self._stop_event.is_set():
+                    if self._qq_stop_event.is_set():
                         break
                     if utils.activate_window_by_title("QQ", partial_match=True,
                                                        exclude_titles=["WeGame"]):
@@ -1189,7 +1186,7 @@ class App:
                     print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
                 time.sleep(1)  # 短暂稳定等待
 
-                if self._stop_event.is_set(): break
+                if self._qq_stop_event.is_set(): break
                 self.set_operation("QQ 快捷登录")
                 if not utils.qq_quick_login(img_path):
                     print("❌ QQ 快捷登录失败")
@@ -1284,8 +1281,30 @@ class App:
                         account_failed = True
 
                 if not account_failed:
-                    print("✅ 三角洲正在启动，等待游戏加载...")
-                    time.sleep(25)
+                    print("✅ 三角洲正在启动，等待游戏窗口出现...")
+                    # 轮询检测游戏窗口（每2秒检测一次，最长等待90秒）
+                    game_loaded = False
+                    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+                    for _ in range(45):
+                        if self._stop_event.is_set():
+                            break
+                        for title in delta_titles:
+                            if utils.activate_window_by_title(title, partial_match=True,
+                                                               exclude_titles=["WeGame", "腾讯"]):
+                                game_loaded = True
+                                break
+                        if game_loaded:
+                            break
+                        time.sleep(2)
+                    if game_loaded:
+                        print("✅ 检测到游戏窗口，等待界面就绪...")
+                        time.sleep(8)  # 窗口出现后再等几秒让界面完全加载
+                        extra_wait = self.settings.get("game_launch_wait", 0)
+                        if extra_wait > 0:
+                            print(f"⏳ 额外等待 {extra_wait} 秒（用户设置的游戏启动等待时间）...")
+                            time.sleep(extra_wait)
+                    else:
+                        print("⚠️ 未检测到游戏窗口，继续尝试操作...")
 
                     self._game_operations()
                     if self._stop_event.is_set(): break
@@ -1314,6 +1333,7 @@ class App:
             print("\n🎉 所有账号处理完毕！")
         except Exception as e:
             print(f"❌ 运行出错: {e}")
+            traceback.print_exc()
         finally:
             self.root.after(0, self.on_finish)
 
@@ -1547,12 +1567,54 @@ def main():
         sys.exit(1)
 
     root = tk.Tk()
+
+    # 分辨率校验：检测当前屏幕分辨率是否与模板截图时一致
+    _check_resolution_on_startup(root)
+
     App(root)
     # 窗口显示到前台
     root.after(50, lambda: (root.lift(), root.focus_force()))
     root.after(50, lambda: root.attributes('-topmost', True))
     root.after(200, lambda: root.attributes('-topmost', False))
     root.mainloop()
+
+
+def _check_resolution_on_startup(root):
+    """启动时检测分辨率，若与模板不匹配则提示用户重新截图"""
+    current_res = config.get_resolution_key()
+    stored_res = config.load_template_resolution()
+
+    if not stored_res:
+        # 首次运行，保存当前分辨率
+        config.save_template_resolution(current_res)
+        return
+
+    if current_res == stored_res:
+        return  # 分辨率一致，正常启动
+
+    # 分辨率不匹配，弹窗提示
+    msg = (
+        f"检测到屏幕分辨率发生变化！\n\n"
+        f"  模板截图时分辨率：{stored_res}\n"
+        f"  当前屏幕分辨率：{current_res}\n\n"
+        f"分辨率不同会导致图像识别失败。\n"
+        f"建议重新截取模板图片。"
+    )
+    result = messagebox.askyesnocancel(
+        "分辨率不匹配",
+        msg + "\n\n点击「是」打开模板截图向导\n点击「否」继续运行（可能识别失败）",
+        icon='warning'
+    )
+    if result is True:
+        # 打开模板截图向导
+        from template_capture import TemplateCaptureWizard
+        TemplateCaptureWizard(root, current_res)
+    elif result is False:
+        # 继续运行，更新存储的分辨率
+        config.save_template_resolution(current_res)
+    else:
+        # 取消 → 退出程序
+        sys.exit(0)
 
 
 if __name__ == "__main__":

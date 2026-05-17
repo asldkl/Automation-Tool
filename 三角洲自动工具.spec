@@ -8,7 +8,7 @@ a = Analysis(
     datas=[('picture', 'picture'), ('picture\\produce', 'picture\\produce'),
            ('picture\\qq_login', 'picture\\qq_login')],
     hiddenimports=[
-        'config', 'utils', 'settings_window',
+        'config', 'utils', 'settings_window', 'template_capture',
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',
         'cv2', 'numpy', 'pyautogui',

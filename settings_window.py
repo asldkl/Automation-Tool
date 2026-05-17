@@ -77,6 +77,12 @@ class SettingsWindow:
         self.sender_email_var = tk.StringVar(value=app.settings.get("sender_email", ""))
         self.receiver_email_var = tk.StringVar(value=app.settings.get("receiver_email", ""))
 
+        # 账号列表滚动查找变量
+        self.qq_mouse_move_distance_var = tk.IntVar(value=app.settings.get("qq_mouse_move_distance", 100))
+        self.wegame_mouse_move_distance_var = tk.IntVar(value=app.settings.get("wegame_mouse_move_distance", 100))
+        self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
+        self.game_launch_wait_var = tk.IntVar(value=app.settings.get("game_launch_wait", 0))
+
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
         self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
@@ -129,6 +135,11 @@ class SettingsWindow:
         email_tab = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(email_tab, text="  邮件通知  ")
         self._build_email_tab(email_tab)
+
+        # ----- Tab 5: 其他设置 -----
+        other_tab = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(other_tab, text="  其他设置  ")
+        self._build_other_tab(other_tab)
 
         # ----- 底部操作按钮 -----
         btn_frame = ttk.Frame(main_frame, style='Settings.TFrame')
@@ -199,6 +210,20 @@ class SettingsWindow:
             self._update_conf_display()
         self.confidence_var.trace_add('write', on_scale_change)
 
+        # 分辨率信息 + 重新截图按钮
+        res_frame = ttk.Frame(frame3, style='SettingsInner.TFrame')
+        res_frame.pack(fill=tk.X, pady=(8, 0))
+        current_res = config.get_resolution_key()
+        stored_res = config.load_template_resolution()
+        res_text = f"当前分辨率：{current_res}"
+        if stored_res and stored_res != current_res:
+            res_text += f"  ⚠️ 模板分辨率：{stored_res}（不匹配）"
+        elif stored_res:
+            res_text += "  ✅ 与模板一致"
+        ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(res_frame, text="重新截图模板", style='Accent.TButton',
+                   command=self._open_capture_wizard, width=14).pack(side=tk.RIGHT)
+
         # ----- 日志保存目录 -----
         frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
         frame4.pack(fill=tk.X, pady=(0, 8))
@@ -209,15 +234,6 @@ class SettingsWindow:
         log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
         log_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
         ttk.Button(f4, text="浏览", command=self._browse_log, width=24).pack(side=tk.LEFT)
-
-        # ----- 开机自启动 -----
-        frame5 = ttk.LabelFrame(parent, text="  其他设置  ", style='SettingsCard.TLabelframe', padding=12)
-        frame5.pack(fill=tk.X, pady=(0, 0))
-
-        f5 = ttk.Frame(frame5, style='SettingsInner.TFrame')
-        f5.pack(fill=tk.X)
-        ttk.Checkbutton(f5, text="开机自启动（登录 Windows 时自动运行）",
-                       variable=self.autostart_var).pack(side=tk.LEFT, padx=5, pady=5)
 
     def _build_auto_tab(self, parent):
         """自动任务设置选项卡内容"""
@@ -318,6 +334,10 @@ class SettingsWindow:
                   command=self._delete_qq_account, width=10).pack(side=tk.LEFT, padx=4)
         ttk.Button(qq_btn_frame, text="× 清空列表",
                   command=self._clear_qq_accounts, width=10).pack(side=tk.LEFT, padx=4)
+        ttk.Button(qq_btn_frame, text="↑ 上移",
+                  command=self._move_up_qq_account, width=7).pack(side=tk.LEFT, padx=4)
+        ttk.Button(qq_btn_frame, text="↓ 下移",
+                  command=self._move_down_qq_account, width=7).pack(side=tk.LEFT, padx=4)
 
         # QQ 列表
         qq_list_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
@@ -327,7 +347,7 @@ class SettingsWindow:
                                      yscrollcommand=qq_scrollbar.set,
                                      selectmode=tk.SINGLE,
                                      font=('Microsoft YaHei UI', 9),
-                                     bg='#fafbfc', fg='#2c3e50',
+                                     bg='#d5d5d5', fg='#1a1a1a',
                                      selectbackground='#3498db',
                                      selectforeground='#ffffff',
                                      relief='flat', highlightthickness=1,
@@ -474,6 +494,57 @@ class SettingsWindow:
         else:
             self.email_test_label.config(text=f"✗ {msg}", foreground="#e74c3c")
 
+    def _build_other_tab(self, parent):
+        """其他设置选项卡内容"""
+        # ----- 开机自启动 -----
+        frame1 = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=12)
+        frame1.pack(fill=tk.X, pady=(0, 8))
+
+        f1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
+        f1.pack(fill=tk.X)
+        ttk.Checkbutton(f1, text="开机自启动（登录 Windows 时自动运行）",
+                       variable=self.autostart_var).pack(side=tk.LEFT, padx=5, pady=5)
+
+        # ----- 账号列表鼠标下移距离设置 -----
+        frame2 = ttk.LabelFrame(parent, text="  账号列表鼠标下移距离  ", style='SettingsCard.TLabelframe', padding=12)
+        frame2.pack(fill=tk.X, pady=(0, 8))
+
+        f2a = ttk.Frame(frame2, style='SettingsInner.TFrame')
+        f2a.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(f2a, text="QQ 账号列表鼠标下移距离：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f2a, from_=30, to=300, increment=10,
+                    textvariable=self.qq_mouse_move_distance_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f2a, text="像素（账号超过3个被遮挡时使用）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        f2b = ttk.Frame(frame2, style='SettingsInner.TFrame')
+        f2b.pack(fill=tk.X)
+        ttk.Label(f2b, text="WeGame 账号列表鼠标下移距离：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f2b, from_=30, to=300, increment=10,
+                    textvariable=self.wegame_mouse_move_distance_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f2b, text="像素（账号超过3个被遮挡时使用）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        # ----- 滚动幅度设置 -----
+        frame3 = ttk.LabelFrame(parent, text="  滚动幅度设置  ", style='SettingsCard.TLabelframe', padding=12)
+        frame3.pack(fill=tk.X, pady=(0, 8))
+
+        f3 = ttk.Frame(frame3, style='SettingsInner.TFrame')
+        f3.pack(fill=tk.X)
+        ttk.Label(f3, text="滚动幅度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f3, from_=50, to=150, increment=10,
+                    textvariable=self.scroll_amount_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f3, text="（50-150，值越大滚动越多，默认 100）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        # ----- 游戏启动等待时间 -----
+        frame4 = ttk.LabelFrame(parent, text="  游戏启动等待时间  ", style='SettingsCard.TLabelframe', padding=12)
+        frame4.pack(fill=tk.X, pady=(0, 0))
+
+        f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')
+        f4.pack(fill=tk.X)
+        ttk.Label(f4, text="额外等待时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f4, from_=0, to=120, increment=5,
+                    textvariable=self.game_launch_wait_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f4, text="秒（0-120，机器配置较低时可增加等待，默认 0）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
     def _add_time(self):
         raw = self.time_var.get().strip()
         if re.match(r'^\d{1,2}:\d{2}$', raw):
@@ -517,6 +588,12 @@ class SettingsWindow:
         if path:
             self.log_var.set(path)
 
+    def _open_capture_wizard(self):
+        """打开模板截图向导"""
+        from template_capture import TemplateCaptureWizard
+        current_res = config.get_resolution_key()
+        TemplateCaptureWizard(self.win, current_res)
+
     # ---------- QQ 账号管理 ----------
     def _add_qq_account(self):
         file_path = filedialog.askopenfilename(
@@ -524,6 +601,9 @@ class SettingsWindow:
             filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
         )
         if file_path:
+            if file_path in self.app.qq_account_images:
+                messagebox.showwarning("提示", "该账号图片已存在，不能重复添加！")
+                return
             self.app.qq_account_images.append(file_path)
             self.qq_listbox.insert(tk.END, os.path.basename(file_path))
             self.app.save_accounts()
@@ -539,6 +619,30 @@ class SettingsWindow:
     def _clear_qq_accounts(self):
         self.qq_listbox.delete(0, tk.END)
         self.app.qq_account_images.clear()
+        self.app.save_accounts()
+
+    def _move_up_qq_account(self):
+        sel = self.qq_listbox.curselection()
+        if sel and sel[0] > 0:
+            idx = sel[0]
+            self.app.qq_account_images[idx], self.app.qq_account_images[idx-1] = \
+                self.app.qq_account_images[idx-1], self.app.qq_account_images[idx]
+            self._refresh_qq_account_list()
+            self.qq_listbox.selection_set(idx-1)
+
+    def _move_down_qq_account(self):
+        sel = self.qq_listbox.curselection()
+        if sel and sel[0] < len(self.app.qq_account_images) - 1:
+            idx = sel[0]
+            self.app.qq_account_images[idx], self.app.qq_account_images[idx+1] = \
+                self.app.qq_account_images[idx+1], self.app.qq_account_images[idx]
+            self._refresh_qq_account_list()
+            self.qq_listbox.selection_set(idx+1)
+
+    def _refresh_qq_account_list(self):
+        self.qq_listbox.delete(0, tk.END)
+        for p in self.app.qq_account_images:
+            self.qq_listbox.insert(tk.END, os.path.basename(p))
         self.app.save_accounts()
 
     def _get_autostart_state(self):
@@ -636,6 +740,12 @@ class SettingsWindow:
         self.app.settings["smtp_code"] = self.smtp_code_var.get()
         self.app.settings["sender_email"] = self.sender_email_var.get()
         self.app.settings["receiver_email"] = self.receiver_email_var.get()
+
+        # 账号列表滚动查找设置
+        self.app.settings["qq_mouse_move_distance"] = self.qq_mouse_move_distance_var.get()
+        self.app.settings["wegame_mouse_move_distance"] = self.wegame_mouse_move_distance_var.get()
+        self.app.settings["scroll_amount"] = self.scroll_amount_var.get()
+        self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
 
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)
