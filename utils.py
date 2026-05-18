@@ -102,7 +102,8 @@ def find_and_click(img_path, timeout=20, region=None):
     # 从缓存加载模板，首次调用时读取磁盘
     template = _template_cache.get(img_path)
     if template is None:
-        template = cv2.imread(img_path, 0)
+        resolved = config.resolve_template_path(img_path)
+        template = cv2.imread(resolved, 0)
         if template is None:
             print(f"❌ 图片文件不存在：{img_path}")
             return False
@@ -149,7 +150,8 @@ def find_and_click_pos(img_path, timeout=20, region=None):
     """
     template = _template_cache.get(img_path)
     if template is None:
-        template = cv2.imread(img_path, 0)
+        resolved = config.resolve_template_path(img_path)
+        template = cv2.imread(resolved, 0)
         if template is None:
             print(f"❌ 图片文件不存在：{img_path}")
             return False, None

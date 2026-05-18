@@ -10,6 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import re
 import winreg
 import config
+from PIL import Image, ImageTk
 
 
 class SettingsWindow:
@@ -31,7 +32,9 @@ class SettingsWindow:
         try:
             icon_path = config.resource_path("picture/icon.ico")
             if os.path.exists(icon_path):
-                self.win.iconbitmap(icon_path)
+                icon_img = Image.open(icon_path)
+                self._icon_photo = ImageTk.PhotoImage(icon_img)
+                self.win.iconphoto(False, self._icon_photo)
         except Exception:
             pass
 
@@ -200,7 +203,7 @@ class SettingsWindow:
             self._update_conf_display()
         self.confidence_var.trace_add('write', on_scale_change)
 
-        # 分辨率信息 + 重新截图按钮
+        # 分辨率信息
         res_frame = ttk.Frame(frame3, style='SettingsInner.TFrame')
         res_frame.pack(fill=tk.X, pady=(8, 0))
         current_res = config.get_resolution_key()
@@ -211,7 +214,7 @@ class SettingsWindow:
         elif stored_res:
             res_text += "  ✅ 与模板一致"
         ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(res_frame, text="重新截图模板", style='Accent.TButton',
+        ttk.Button(res_frame, text="上传模板图片", style='Accent.TButton',
                    command=self._open_capture_wizard, width=14).pack(side=tk.RIGHT)
 
         # ----- 日志保存目录 -----

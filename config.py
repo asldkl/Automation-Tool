@@ -18,6 +18,21 @@ def resource_path(relative_path):
 # ==================== 用户设置文件路径 ====================
 SETTINGS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_settings.json")
 
+# ==================== 用户自定义模板目录 ====================
+USER_TEMPLATE_DIR = os.path.join(os.path.expanduser("~"), ".delta_auto_templates")
+
+def user_template_path(basename):
+    """获取用户自定义模板的完整路径"""
+    return os.path.join(USER_TEMPLATE_DIR, basename)
+
+def resolve_template_path(config_path):
+    """优先使用用户自定义模板，不存在则使用内置资源"""
+    basename = os.path.basename(config_path)
+    user_path = user_template_path(basename)
+    if os.path.exists(user_path):
+        return user_path
+    return config_path
+
 # ==================== 默认设置 ====================
 DEFAULT_SETTINGS = {
     "wegame_path": "",                # 若空则自动从注册表获取

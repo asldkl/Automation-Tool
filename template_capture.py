@@ -1,11 +1,12 @@
 """
-模板截图向导
-当检测到屏幕分辨率与模板不匹配时，引导用户重新截取所有模板图片
+模板上传向导
+当检测到屏幕分辨率与模板不匹配时，引导用户上传所有模板图片
 """
 import os
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, filedialog, messagebox
 import config
+from PIL import Image, ImageTk
 
 
 class TemplateCaptureWizard:
@@ -21,11 +22,20 @@ class TemplateCaptureWizard:
             self.status[item[0]] = "pending"
 
         self.win = tk.Toplevel(parent)
-        self.win.title("模板截图向导")
+        self.win.title("模板上传向导")
         self.win.geometry("700x520")
         self.win.resizable(False, False)
         self.win.transient(parent)
         self.win.grab_set()
+        # 设置窗口图标
+        try:
+            icon_path = config.resource_path("picture/icon.ico")
+            if os.path.exists(icon_path):
+                icon_img = Image.open(icon_path)
+                self._icon_photo = ImageTk.PhotoImage(icon_img)
+                self.win.iconphoto(False, self._icon_photo)
+        except Exception:
+            pass
 
         self._build_ui()
         self._update_progress()
@@ -34,11 +44,11 @@ class TemplateCaptureWizard:
         # 标题
         header = ttk.Frame(self.win)
         header.pack(fill=tk.X, padx=15, pady=(15, 5))
-        ttk.Label(header, text="模板截图向导", font=('Microsoft YaHei UI', 14, 'bold')).pack(side=tk.LEFT)
+        ttk.Label(header, text="模板上传向导", font=('Microsoft YaHei UI', 14, 'bold')).pack(side=tk.LEFT)
         ttk.Label(header, text=f"当前分辨率：{self.resolution_key}",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.RIGHT)
 
-        ttk.Label(self.win, text="请按照提示逐个截取模板图片。点击「截图」后，用鼠标框选屏幕上的对应区域。",
+        ttk.Label(self.win, text="请按照提示逐个上传模板图片。点击「上传」后，从本地选择对应的图片文件。",
                   font=('Microsoft YaHei UI', 9), foreground='#555').pack(padx=15, anchor='w')
 
         # 进度
@@ -106,10 +116,14 @@ class TemplateCaptureWizard:
                 ttk.Label(info_frame, text=name, font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w')
                 ttk.Label(info_frame, text=hint, font=('Microsoft YaHei UI', 8), foreground='#888').pack(anchor='w')
 
-            # 截图按钮
-            btn = ttk.Button(row, text="截图", width=8,
-                             command=lambda v=var_name, r=rel_path: self._start_capture(v, r))
+            # 上传按钮
+            btn = ttk.Button(row, text="上传", width=8,
+                             command=lambda v=var_name, r=rel_path: self._start_upload(v, r))
             btn.pack(side=tk.RIGHT, padx=5)
+            # 恢复默认按钮
+            restore_btn = ttk.Button(row, text="恢复默认", width=8,
+                                     command=lambda v=var_name, r=rel_path: self._restore_template(v, r))
+            restore_btn.pack(side=tk.RIGHT, padx=5)
 
             self.rows[var_name] = (status_lbl, btn)
 
@@ -131,122 +145,77 @@ class TemplateCaptureWizard:
         self.progress_bar['maximum'] = total
         self.progress_bar['value'] = done
 
-    def _start_capture(self, var_name, rel_path):
-        """启动区域截图：最小化向导，显示全屏遮罩供用户框选"""
-        self.win.withdraw()
-        # 延迟一下确保窗口完全隐藏
-        self.win.after(300, lambda: self._do_capture(var_name, rel_path))
+    def _start_upload(self, var_name, rel_path):
+        """打开文件对话框让用户选择模板图片"""
+        filetypes = [("图片文件", "*.png;*.jpg;*.jpeg;*.bmp"), ("所有文件", "*.*")]
+        src = filedialog.askopenfilename(title="选择模板图片", filetypes=filetypes)
+        if not src:
+            return
 
-    def _do_capture(self, var_name, rel_path):
-        """显示全屏半透明遮罩，用户拖拽框选区域"""
-        overlay = tk.Toplevel()
-        overlay.attributes('-fullscreen', True)
-        overlay.attributes('-topmost', True)
-        overlay.attributes('-alpha', 0.3)
-        overlay.configure(bg='gray')
-        overlay.cursor = "crosshair"
+        try:
+            os.makedirs(config.USER_TEMPLATE_DIR, exist_ok=True)
+            save_path = config.user_template_path(os.path.basename(rel_path))
+            with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
+                f_out.write(f_in.read())
 
-        # 用 Canvas 实现框选
-        canvas = tk.Canvas(overlay, highlightthickness=0, bg='gray', cursor='cross')
-        canvas.pack(fill=tk.BOTH, expand=True)
+            # 更新状态
+            self.status[var_name] = "done"
+            if var_name in self.rows:
+                status_lbl, btn = self.rows[var_name]
+                status_lbl.config(text="✅")
+        except Exception as e:
+            messagebox.showerror("错误", f"上传失败：{e}")
 
-        start_x = [0]
-        start_y = [0]
-        rect_id = [None]
-
-        def on_press(event):
-            start_x[0] = event.x_root
-            start_y[0] = event.y_root
-            # 切换为不透明截图模式
-            overlay.attributes('-alpha', 0)
-
-        def on_drag(event):
-            if rect_id[0]:
-                canvas.delete(rect_id[0])
-            # 在 overlay 关闭后截图，所以这里只做视觉反馈
-            pass
-
-        def on_release(event):
-            overlay.destroy()
-            end_x = event.x_root
-            end_y = event.y_root
-
-            # 计算选区
-            x1 = min(start_x[0], end_x)
-            y1 = min(start_y[0], end_y)
-            x2 = max(start_x[0], end_x)
-            y2 = max(start_y[0], end_y)
-            w = x2 - x1
-            h = y2 - y1
-
-            if w < 10 or h < 10:
-                print(f"⚠️ 选区太小，已跳过")
-                self._show_again()
-                return
-
-            # 截图并保存
-            try:
-                import pyautogui
-                screenshot = pyautogui.screenshot(region=(x1, y1, w, h))
-                save_path = config.resource_path(rel_path)
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                screenshot.save(save_path)
-                print(f"✅ 已保存模板：{rel_path} ({w}x{h})")
-
-                # 更新状态
-                self.status[var_name] = "done"
-                if var_name in self.rows:
-                    status_lbl, btn = self.rows[var_name]
-                    status_lbl.config(text="✅")
-            except Exception as e:
-                print(f"❌ 截图保存失败：{e}")
-
-            self._show_again()
-
-        def on_escape(event):
-            overlay.destroy()
-            self._show_again()
-
-        overlay.bind("<ButtonPress-1>", on_press)
-        overlay.bind("<B1-Motion>", on_drag)
-        overlay.bind("<ButtonRelease-1>", on_release)
-        overlay.bind("<Escape>", on_escape)
-
-    def _show_again(self):
-        """截图完成后重新显示向导"""
         self._update_progress()
         utils_clear_cache()
-        self.win.deiconify()
-        self.win.lift()
-        self.win.focus_force()
+
+    def _restore_template(self, var_name, rel_path):
+        """恢复指定模板为内置默认图片"""
+        user_path = config.user_template_path(os.path.basename(rel_path))
+        if not os.path.exists(user_path):
+            messagebox.showinfo("提示", "当前使用的是内置默认图片，无需恢复。")
+            return
+        if not messagebox.askyesno("确认", "确定恢复该模板为内置默认图片？"):
+            return
+        try:
+            os.remove(user_path)
+        except Exception:
+            pass
+        # 更新状态为未完成
+        self.status[var_name] = "pending"
+        if var_name in self.rows:
+            status_lbl, btn = self.rows[var_name]
+            status_lbl.config(text="⬜")
+        self._update_progress()
+        utils_clear_cache()
 
     def _skip_all(self):
-        """跳过所有未完成的截图"""
+        """跳过所有未完成的上传"""
         remaining = sum(1 for s in self.status.values() if s == "pending")
         if remaining > 0:
-            if not messagebox.askyesno("确认跳过", f"还有 {remaining} 个模板未截图，确定跳过吗？"):
+            if not messagebox.askyesno("确认跳过", f"还有 {remaining} 个模板未上传，确定跳过吗？"):
                 return
         # 更新分辨率记录（即使跳过也记录当前分辨率，避免重复提示）
         config.save_template_resolution(self.resolution_key)
         self.win.destroy()
 
     def _finish(self):
-        """完成截图向导"""
+        """完成模板上传"""
         done = sum(1 for s in self.status.values() if s == "done")
         total = len(self.status)
         if done < total:
             remaining = total - done
-            if not messagebox.askyesno("确认完成", f"还有 {remaining} 个模板未截图。确定完成吗？\n未截图的模板将使用旧图片，可能识别失败。"):
+            if not messagebox.askyesno("确认完成", f"还有 {remaining} 个模板未上传。确定完成吗？\n未上传的模板将使用旧图片，可能识别失败。"):
                 return
         # 保存新分辨率并清除模板缓存
         config.save_template_resolution(self.resolution_key)
         utils_clear_cache()
         self.win.destroy()
-        messagebox.showinfo("完成", f"模板截图完成！共截取 {done}/{total} 个模板。")
+        messagebox.showinfo("完成", f"模板上传完成！共上传 {done}/{total} 个模板。")
 
 
 def utils_clear_cache():
-    """清除 utils 中的模板缓存，使新截图生效"""
+    """清除 utils 中的模板缓存，使新上传的图片生效"""
     try:
         import utils
         utils.clear_template_cache()
