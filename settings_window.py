@@ -76,6 +76,11 @@ class SettingsWindow:
         self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
         self.game_launch_wait_var = tk.IntVar(value=app.settings.get("game_launch_wait", 0))
 
+        # 一键出售变量
+        self.enable_sell_var = tk.BooleanVar(value=app.settings.get("enable_sell_after_run", False))
+        self.sell_discount_var = tk.IntVar(value=app.settings.get("sell_discount_times", 0))
+        self.sell_confidence_var = tk.DoubleVar(value=float(app.settings.get("sell_confidence", 0.55)))
+
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
         self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
@@ -307,6 +312,35 @@ class SettingsWindow:
         reminder_combo.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(reminder_inner, text="分钟弹出提示", style='Settings.TLabel').pack(side=tk.LEFT)
 
+        # ----- 一键出售设置 -----
+        sell_frame = ttk.LabelFrame(parent, text="  一键出售  ", style='SettingsCard.TLabelframe', padding=10)
+        sell_frame.pack(fill=tk.X, pady=(8, 0))
+
+        sell_inner = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
+        sell_inner.pack(fill=tk.X)
+        ttk.Checkbutton(sell_inner, text="主流程完成后执行一键售卖",
+                        variable=self.enable_sell_var).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(sell_inner, text="降价次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(sell_inner, from_=0, to=5, increment=1,
+                    textvariable=self.sell_discount_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(sell_inner, text="次（0-5，0=不降价）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        # 出售置信度滑块
+        sell_conf_row = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
+        sell_conf_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(sell_conf_row, text="物品匹配置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        sell_scale = ttk.Scale(sell_conf_row, from_=0.40, to=0.80, variable=self.sell_confidence_var,
+                               length=180, orient=tk.HORIZONTAL)
+        sell_scale.pack(side=tk.LEFT, padx=(0, 8))
+        self.sell_conf_label = ttk.Label(sell_conf_row, text="", style='SettingsSmall.TLabel', width=4)
+        self.sell_conf_label.pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Label(sell_conf_row, text="(0.40 - 0.80)", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self._update_sell_conf_display()
+
+        def on_sell_conf_change(*args):
+            self._update_sell_conf_display()
+        self.sell_confidence_var.trace_add('write', on_sell_conf_change)
+
 
     def _build_power_tab(self, parent):
         """电源管理选项卡"""
@@ -515,6 +549,11 @@ class SettingsWindow:
         percent = int(val * 100)
         self.conf_value_label.config(text=f"当前值：{percent}%")
 
+    def _update_sell_conf_display(self):
+        val = self.sell_confidence_var.get()
+        percent = int(val * 100)
+        self.sell_conf_label.config(text=f"{percent}%")
+
     def _browse_wegame(self):
         path = filedialog.askopenfilename(title="选择 WeGame.exe", filetypes=[("可执行文件", "*.exe")])
         if path:
@@ -644,6 +683,11 @@ class SettingsWindow:
         self.app.settings["qq_mouse_move_distance"] = self.qq_mouse_move_distance_var.get()
         self.app.settings["scroll_amount"] = self.scroll_amount_var.get()
         self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
+
+        # 一键出售设置
+        self.app.settings["enable_sell_after_run"] = self.enable_sell_var.get()
+        self.app.settings["sell_discount_times"] = self.sell_discount_var.get()
+        self.app.settings["sell_confidence"] = round(self.sell_confidence_var.get(), 2)
 
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)

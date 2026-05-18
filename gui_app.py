@@ -893,6 +893,9 @@ class App:
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
         self.settings_btn.pack(side=tk.LEFT, padx=8)
+        self.sell_test_btn = ttk.Button(ctrl_frame, text="出售测试", style='Accent.TButton',
+                                        command=self._test_sell, width=12)
+        self.sell_test_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self._log_file_path)
@@ -1378,6 +1381,14 @@ class App:
         else:
             print("✅ 所有设施处理完成")
 
+        # 主流程完成后执行一键出售
+        if self.settings.get("enable_sell_after_run", False):
+            print("\n--- 主流程完成，执行一键出售 ---")
+            pyautogui.press("esc")
+            time.sleep(1)
+            success, sell_stats = self._sell_operations()
+            self.run_stats["sell_stats"] = sell_stats
+
     def _handle_facility(self, facility_img, produce_item_img, facility_name):
         if self._stop_event.is_set(): return False
         print(f"🏭 开始处理 {facility_name} ...")
@@ -1420,6 +1431,101 @@ class App:
         print(f"✅ {facility_name} 处理完毕")
         self.root.after(0, self.update_ui, True)
         return True
+
+    def _sell_operations(self):
+        """一键出售流程：打开仓库，遍历售卖物品执行出售
+        返回 (success: bool, stats: dict)
+        stats: {"total": N, "sold": N, "not_found": N, "failed": N}
+        """
+        sell_stats = {"total": 0, "sold": 0, "not_found": 0, "failed": 0}
+        print("\n--- 一键出售 ---")
+        self.set_operation("一键出售")
+
+        # 清除模板缓存，确保使用最新模板
+        utils.clear_template_cache()
+
+        if not utils.find_and_click(config.Warehouse, timeout=15):
+            print("❌ 未找到仓库入口")
+            return False, sell_stats
+        # 等待仓库界面完全加载
+        time.sleep(3)
+
+        sell_items = config.get_sell_items()
+        if not sell_items:
+            print("⚠️ 未上传任何售卖物品图片")
+            return False, sell_stats
+
+        sell_confidence = self.settings.get("sell_confidence", 0.55)
+        discount_times = self.settings.get("sell_discount_times", 0)
+        sell_stats["total"] = len(sell_items)
+
+        for item_path in sell_items:
+            if self._stop_event.is_set():
+                return False, sell_stats
+            item_name = os.path.basename(item_path)
+            print(f"📦 出售物品：{item_name}")
+
+            if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
+                print(f"⚠️ 未找到物品 {item_name}，跳过")
+                sell_stats["not_found"] += 1
+                continue
+            time.sleep(0.5)
+
+            if not utils.find_and_click(config.Sell, timeout=10):
+                print(f"❌ 未找到出售按钮")
+                sell_stats["failed"] += 1
+                continue
+            time.sleep(0.5)
+
+            if not utils.find_and_click(config.List_Item, timeout=10):
+                print(f"❌ 未找到上架按钮")
+                sell_stats["failed"] += 1
+                continue
+            time.sleep(0.5)
+
+            for i in range(discount_times):
+                if utils.find_and_click(config.Discount, timeout=5):
+                    print(f"📉 降价 {i + 1}/{discount_times}")
+                    time.sleep(0.3)
+
+            if not utils.find_and_click(config.Confirm_Listing, timeout=10):
+                print(f"❌ 未找到确认上架按钮")
+                sell_stats["failed"] += 1
+                continue
+            time.sleep(1.5)
+            sell_stats["sold"] += 1
+            print(f"✅ {item_name} 已上架")
+
+        print(f"✅ 一键出售完成：共 {sell_stats['total']} 件，"
+              f"成功 {sell_stats['sold']} 件，"
+              f"未找到 {sell_stats['not_found']} 件，"
+              f"失败 {sell_stats['failed']} 件")
+        return True, sell_stats
+
+    def _test_sell(self):
+        """测试一键出售流程（从 Tab 键开始）"""
+        if self.running:
+            messagebox.showwarning("提示", "任务运行中，请等待完成后再测试。")
+            return
+        sell_items = config.get_sell_items()
+        if not sell_items:
+            messagebox.showwarning("提示", "未上传任何售卖物品图片，请先在设置中上传。")
+            return
+
+        def _run():
+            start_time = time.time()
+            pyautogui.press("Tab")
+            time.sleep(1)
+            success, sell_stats = self._sell_operations()
+            elapsed = time.time() - start_time
+            stats_text = (f"测试耗时：{elapsed:.1f} 秒\n"
+                          f"共 {sell_stats['total']} 件物品\n"
+                          f"成功上架：{sell_stats['sold']} 件\n"
+                          f"未找到：{sell_stats['not_found']} 件\n"
+                          f"失败：{sell_stats['failed']} 件")
+            self.root.after(0, lambda: messagebox.showinfo("出售测试完成", stats_text))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def on_finish(self):
         self.running = False
@@ -1476,20 +1582,49 @@ class App:
         h, m = divmod(m, 60)
         time_str = f"{h}时{m}分{s}秒" if h > 0 else f"{m}分{s}秒"
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status_color = "#27ae60" if stats["fail"] == 0 else "#e74c3c"
         status_text = "全部成功" if stats["fail"] == 0 else f"有 {stats['fail']} 个失败"
 
-        body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;">
-<h2 style="color:#2c3e50;">三角洲行动自动化工具 - 运行报告</h2>
-<hr style="border:1px solid #dcdde1;">
+        # 已选操作
+        op_names = {"tech_center": "技术中心", "tool_bench": "工作台",
+                    "armor_station": "防具台", "pharmacy_station": "制药台"}
+        selected = self.settings.get("selected_operations", [])
+        ops_text = "、".join(op_names.get(op, op) for op in selected) if selected else "无"
+
+        # 运行模式
+        run_mode = self.settings.get("run_mode", "单次")
+        schedule_times = self.settings.get("schedule_times", [])
+        mode_text = f"每日循环（{', '.join(schedule_times)}）" if run_mode == "每日循环" and schedule_times else "单次执行"
+
+        # 一键出售统计
+        sell_section = ""
+        sell_stats = stats.get("sell_stats")
+        if sell_stats:
+            sell_section = f"""
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">一键出售</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">物品总数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{sell_stats['total']} 件</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功上架</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{sell_stats['sold']} 件</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">未找到</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e67e22' if sell_stats['not_found']>0 else '#2c3e50'};">{sell_stats['not_found']} 件</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if sell_stats['failed']>0 else '#2c3e50'};">{sell_stats['failed']} 件</td></tr>"""
+
+        body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
+<h2 style="color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;">三角洲行动自动化工具 - 运行报告</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
-<tr style="background:#f0f2f5;"><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">运行时间</td><td style="padding:10px;border:1px solid #dcdde1;">{now_str}</td></tr>
-<tr><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:10px;border:1px solid #dcdde1;">{stats['total']}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']}</td></tr>
-<tr><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:10px;border:1px solid #dcdde1;color:{'#e74c3c' if stats['fail']>0 else '#2c3e50'};">{stats['fail']}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">耗时</td><td style="padding:10px;border:1px solid #dcdde1;">{time_str}</td></tr>
-<tr><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">状态</td><td style="padding:10px;border:1px solid #dcdde1;font-weight:bold;">{status_text}</td></tr>
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">基本信息</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">运行模式</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{mode_text}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">账号统计</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{stats['total']} 个</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if stats['fail']>0 else '#2c3e50'};">{stats['fail']} 个</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">耗时</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
+{sell_section}
 </table>
-<p style="color:#7f8c8d;font-size:12px;">此邮件由三角洲行动自动化工具自动发送</p>
+<div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:{status_color}15;border:1px solid {status_color}40;">
+<span style="font-size:16px;font-weight:bold;color:{status_color};">运行状态：{status_text}</span>
+</div>
+<p style="color:#7f8c8d;font-size:12px;text-align:center;margin-top:15px;">此邮件由三角洲行动自动化工具自动发送</p>
 </div>"""
 
         def _send():

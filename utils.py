@@ -89,25 +89,35 @@ def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titl
 # 模板图片缓存，避免每次匹配都从磁盘读取
 _template_cache = {}
 
+def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
+    """cv2.imread 不支持非 ASCII 路径（如中文），用 np.fromfile + cv2.imdecode 替代"""
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+        return cv2.imdecode(data, flags)
+    except Exception:
+        return None
+
 def clear_template_cache():
     """清除模板缓存（用于重新截图后刷新）"""
     global _template_cache
     _template_cache.clear()
 
-def find_and_click(img_path, timeout=20, region=None):
+def find_and_click(img_path, timeout=20, region=None, confidence=None):
     """
     在当前屏幕中查找图片并点击中心点
     返回是否成功找到并点击
+    confidence: 可选，覆盖全局置信度阈值
     """
-    # 从缓存加载模板，首次调用时读取磁盘
-    template = _template_cache.get(img_path)
+    threshold = confidence if confidence is not None else CONFIDENCE
+    # 先解析路径（优先用户自定义模板），再查缓存
+    resolved = config.resolve_template_path(img_path)
+    template = _template_cache.get(resolved)
     if template is None:
-        resolved = config.resolve_template_path(img_path)
-        template = cv2.imread(resolved, 0)
+        template = _imread_unicode(resolved)
         if template is None:
-            print(f"❌ 图片文件不存在：{img_path}")
+            print(f"❌ 图片文件不存在或无法读取：{resolved}")
             return False
-        _template_cache[img_path] = template
+        _template_cache[resolved] = template
 
     start = time.time()
     while time.time() - start < timeout:
@@ -122,7 +132,7 @@ def find_and_click(img_path, timeout=20, region=None):
         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-        if max_val >= CONFIDENCE:
+        if max_val >= threshold:
             h, w = template.shape
             x = max_loc[0] + w // 2 + (region[0] if region else 0)
             y = max_loc[1] + h // 2 + (region[1] if region else 0)
@@ -143,19 +153,21 @@ def find_and_click(img_path, timeout=20, region=None):
     print(f"⏳ 超时未找到：{img_path}")
     return False
 
-def find_and_click_pos(img_path, timeout=20, region=None):
+def find_and_click_pos(img_path, timeout=20, region=None, confidence=None):
     """
     在当前屏幕中查找图片并点击中心点
     返回 (是否成功, 坐标元组(x,y)) 或 (False, None)
+    confidence: 可选，覆盖全局置信度阈值
     """
-    template = _template_cache.get(img_path)
+    threshold = confidence if confidence is not None else CONFIDENCE
+    resolved = config.resolve_template_path(img_path)
+    template = _template_cache.get(resolved)
     if template is None:
-        resolved = config.resolve_template_path(img_path)
-        template = cv2.imread(resolved, 0)
+        template = _imread_unicode(resolved)
         if template is None:
-            print(f"❌ 图片文件不存在：{img_path}")
+            print(f"❌ 图片文件不存在或无法读取：{resolved}")
             return False, None
-        _template_cache[img_path] = template
+        _template_cache[resolved] = template
 
     start = time.time()
     while time.time() - start < timeout:
@@ -170,7 +182,7 @@ def find_and_click_pos(img_path, timeout=20, region=None):
         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-        if max_val >= CONFIDENCE:
+        if max_val >= threshold:
             h, w = template.shape
             x = max_loc[0] + w // 2 + (region[0] if region else 0)
             y = max_loc[1] + h // 2 + (region[1] if region else 0)

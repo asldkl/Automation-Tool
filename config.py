@@ -33,6 +33,17 @@ def resolve_template_path(config_path):
         return user_path
     return resource_path(config_path)
 
+# ==================== 售卖物品目录 ====================
+SELL_ITEMS_DIR = os.path.join(os.path.expanduser("~"), ".delta_auto_sell_items")
+
+def get_sell_items():
+    """获取用户上传的售卖物品模板列表，返回路径列表"""
+    if not os.path.exists(SELL_ITEMS_DIR):
+        return []
+    items = sorted([f for f in os.listdir(SELL_ITEMS_DIR)
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))])
+    return [os.path.join(SELL_ITEMS_DIR, f) for f in items]
+
 # ==================== 默认设置 ====================
 DEFAULT_SETTINGS = {
     "wegame_path": "",                # 若空则自动从注册表获取
@@ -66,6 +77,10 @@ DEFAULT_SETTINGS = {
     "scroll_amount": 100,             # 滚动幅度（pyautogui.scroll 的参数值，50-150）
     "game_launch_wait": 0,            # 启动游戏后额外等待时间（秒，0-120）
     "run_on_startup": False,          # 开机立即运行一次程序
+    # 一键出售
+    "enable_sell_after_run": False,   # 主流程完成后执行一键售卖
+    "sell_discount_times": 0,         # 降价次数（0-5）
+    "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
 }
 
 def load_settings():
@@ -149,6 +164,13 @@ Auto_fill           = resource_path("picture/auto_fill.png")
 Claim_Reward        = resource_path("picture/claim_reward.png")
 COIN_GAME           = resource_path("picture/coin_game.png")
 
+# ==================== 一键出售图片 ====================
+Warehouse           = resource_path("picture/One_Click_Sell/Warehouse.png")
+Sell                = resource_path("picture/One_Click_Sell/Sell.png")
+List_Item           = resource_path("picture/One_Click_Sell/List.png")
+Discount            = resource_path("picture/One_Click_Sell/Discount.png")
+Confirm_Listing     = resource_path("picture/One_Click_Sell/Confirm Listing.png")
+
 Produce_TechCenter  = resource_path("picture/produce/produce_tech_center.png")
 Produce_ToolBench   = resource_path("picture/produce/produce_tool_bench.png")
 Produce_ArmorStation = resource_path("picture/produce/produce_armor_station.png")
@@ -220,6 +242,12 @@ TEMPLATE_CAPTURE_LIST = [
     ("Auto_fill",            "picture/auto_fill.png",       "一键补齐按钮",       "在制造界面，截取「一键补齐」按钮"),
     ("Claim_Reward",         "picture/claim_reward.png",    "领取奖励按钮",       "在制造界面，截取「领取奖励」按钮"),
     ("COIN_GAME",            "picture/coin_game.png",       "游戏币购买按钮",     "在制造界面，截取游戏币购买按钮"),
+    # 一键出售相关
+    ("Warehouse",            "picture/One_Click_Sell/Warehouse.png",       "仓库入口",     "在游戏主界面，截取「仓库」图标"),
+    ("Sell",                 "picture/One_Click_Sell/Sell.png",            "出售按钮",     "在物品详情界面，截取「出售」按钮"),
+    ("List_Item",            "picture/One_Click_Sell/List.png",            "上架按钮",     "在出售界面，截取「上架」按钮"),
+    ("Discount",             "picture/One_Click_Sell/Discount.png",        "降价按钮",     "在上架界面，截取「降价」按钮"),
+    ("Confirm_Listing",      "picture/One_Click_Sell/Confirm Listing.png", "确认上架按钮", "在上架界面，截取「确认上架」按钮"),
 ]
 
 # QQ 登录相关模板

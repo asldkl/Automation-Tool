@@ -23,7 +23,7 @@ class TemplateCaptureWizard:
 
         self.win = tk.Toplevel(parent)
         self.win.title("模板上传向导")
-        self.win.geometry("700x520")
+        self.win.geometry("700x700")
         self.win.resizable(False, False)
         self.win.transient(parent)
         self.win.grab_set()
@@ -143,6 +143,38 @@ class TemplateCaptureWizard:
                 sep = ttk.Separator(self.scroll_frame, orient='horizontal')
                 sep.pack(fill=tk.X, pady=8, padx=10)
 
+        # 售卖物品管理区域
+        sell_sep = ttk.Separator(self.win, orient='horizontal')
+        sell_sep.pack(fill=tk.X, padx=15, pady=(5, 5))
+
+        sell_frame = ttk.LabelFrame(self.win, text="  售卖物品（可上传多个，用于一键出售）  ", padding=8)
+        sell_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
+
+        sell_list_frame = ttk.Frame(sell_frame)
+        sell_list_frame.pack(fill=tk.X, pady=(0, 5))
+        sell_scrollbar = ttk.Scrollbar(sell_list_frame, orient=tk.VERTICAL)
+        self.sell_listbox = tk.Listbox(sell_list_frame, height=3,
+                                       yscrollcommand=sell_scrollbar.set,
+                                       selectmode=tk.SINGLE,
+                                       font=('Microsoft YaHei UI', 9),
+                                       bg='#fafbfc', fg='#2c3e50',
+                                       selectbackground='#3498db',
+                                       selectforeground='#ffffff',
+                                       relief='flat', highlightthickness=1,
+                                       highlightcolor='#dcdde1', borderwidth=0)
+        sell_scrollbar.config(command=self.sell_listbox.yview)
+        self.sell_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        sell_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+        sell_btn_frame = ttk.Frame(sell_frame)
+        sell_btn_frame.pack(fill=tk.X)
+        ttk.Button(sell_btn_frame, text="添加物品", width=10,
+                   command=self._add_sell_item).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(sell_btn_frame, text="删除选中", width=10,
+                   command=self._delete_sell_item).pack(side=tk.LEFT)
+
+        self._refresh_sell_list()
+
         # 底部按钮
         btn_frame = ttk.Frame(self.win)
         btn_frame.pack(fill=tk.X, padx=15, pady=(5, 15))
@@ -202,10 +234,19 @@ class TemplateCaptureWizard:
 
     def _preview_template(self, rel_path, name):
         """弹窗预览当前模板图片（优先显示用户自定义，否则显示内置默认）"""
-        img_path = config.resolve_template_path(rel_path)
-        if not os.path.exists(img_path):
-            messagebox.showinfo("提示", "未找到模板图片文件。")
-            return
+        # 先检查用户自定义模板
+        basename = os.path.basename(rel_path)
+        user_path = config.user_template_path(basename)
+        if os.path.exists(user_path):
+            img_path = user_path
+        else:
+            # 内置模板路径
+            built_in = config.resource_path(rel_path)
+            if os.path.exists(built_in):
+                img_path = built_in
+            else:
+                messagebox.showinfo("提示", f"暂无「{name}」的预览图片，请先上传模板图片。")
+                return
 
         try:
             img = Image.open(img_path)
@@ -225,8 +266,6 @@ class TemplateCaptureWizard:
             img_resized = img
 
         # 判断来源
-        basename = os.path.basename(rel_path)
-        user_path = config.user_template_path(basename)
         is_user = os.path.exists(user_path)
         source_text = "用户自定义模板" if is_user else "内置默认模板"
 
@@ -235,6 +274,15 @@ class TemplateCaptureWizard:
         win.resizable(False, False)
         win.transient(self.win)
         win.grab_set()
+        # 设置窗口图标
+        try:
+            icon_path = config.resource_path("picture/icon.ico")
+            if os.path.exists(icon_path):
+                icon_img = Image.open(icon_path)
+                win._icon_photo = ImageTk.PhotoImage(icon_img)
+                win.iconphoto(False, win._icon_photo)
+        except Exception:
+            pass
 
         # 图片显示区
         photo = ImageTk.PhotoImage(img_resized)
@@ -257,6 +305,44 @@ class TemplateCaptureWizard:
         px = (win.winfo_screenwidth() - pw) // 2
         py = (win.winfo_screenheight() - ph) // 2
         win.geometry(f"+{px}+{py}")
+
+    def _refresh_sell_list(self):
+        """刷新售卖物品列表显示"""
+        self.sell_listbox.delete(0, tk.END)
+        items = config.get_sell_items()
+        for item in items:
+            self.sell_listbox.insert(tk.END, os.path.basename(item))
+
+    def _add_sell_item(self):
+        """添加售卖物品图片"""
+        filetypes = [("图片文件", "*.png;*.jpg;*.jpeg;*.bmp"), ("所有文件", "*.*")]
+        src = filedialog.askopenfilename(title="选择售卖物品图片", filetypes=filetypes)
+        if not src:
+            return
+        try:
+            os.makedirs(config.SELL_ITEMS_DIR, exist_ok=True)
+            basename = os.path.basename(src)
+            save_path = os.path.join(config.SELL_ITEMS_DIR, basename)
+            with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
+                f_out.write(f_in.read())
+            self._refresh_sell_list()
+        except Exception as e:
+            messagebox.showerror("错误", f"添加失败：{e}")
+
+    def _delete_sell_item(self):
+        """删除选中的售卖物品"""
+        sel = self.sell_listbox.curselection()
+        if not sel:
+            messagebox.showinfo("提示", "请先选择要删除的物品。")
+            return
+        name = self.sell_listbox.get(sel[0])
+        if not messagebox.askyesno("确认", f"确定删除售卖物品「{name}」？"):
+            return
+        try:
+            os.remove(os.path.join(config.SELL_ITEMS_DIR, name))
+        except Exception:
+            pass
+        self._refresh_sell_list()
 
     def _skip_all(self):
         """跳过所有未完成的上传"""
