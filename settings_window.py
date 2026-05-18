@@ -41,6 +41,7 @@ class SettingsWindow:
         self.confidence_var = tk.DoubleVar(value=float(app.settings.get("confidence", 0.7)))
         self.log_var = tk.StringVar(value=app.settings.get("log_save_path", ""))
         self.autostart_var = tk.BooleanVar(value=self._get_autostart_state())
+        self.run_on_startup_var = tk.BooleanVar(value=app.settings.get("run_on_startup", False))
 
         # 自动任务设置变量
         self.auto_enable_var = tk.BooleanVar(value=app.settings.get("auto_start", False))
@@ -58,18 +59,8 @@ class SettingsWindow:
         self.reminder_enable_var = tk.BooleanVar(value=app.settings.get("reminder_enabled", False))
         self.reminder_minutes_var = tk.IntVar(value=app.settings.get("reminder_minutes", 5))
 
-        # QQ 路径 + 登录开关（互斥单选）
+        # QQ 路径
         self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
-        # 根据已有设置推断当前模式
-        _qq_then_run = app.settings.get("qq_login_then_run", False)
-        _qq_enabled = app.settings.get("qq_login_enabled", False)
-        if _qq_then_run:
-            _qq_mode = "login_and_run"
-        elif _qq_enabled:
-            _qq_mode = "login_only"
-        else:
-            _qq_mode = "none"
-        self.qq_login_mode_var = tk.StringVar(value=_qq_mode)
 
         # 邮件通知变量
         self.email_enable_var = tk.BooleanVar(value=app.settings.get("email_enabled", False))
@@ -79,7 +70,6 @@ class SettingsWindow:
 
         # 账号列表滚动查找变量
         self.qq_mouse_move_distance_var = tk.IntVar(value=app.settings.get("qq_mouse_move_distance", 100))
-        self.wegame_mouse_move_distance_var = tk.IntVar(value=app.settings.get("wegame_mouse_move_distance", 100))
         self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
         self.game_launch_wait_var = tk.IntVar(value=app.settings.get("game_launch_wait", 0))
 
@@ -174,7 +164,7 @@ class SettingsWindow:
         ttk.Button(f2, text="浏览", command=self._browse_delta, width=24).pack(side=tk.LEFT)
 
         # ----- QQ 路径 -----
-        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径（自动登录用）  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径  ", style='SettingsCard.TLabelframe', padding=8)
         frame_qq.pack(fill=tk.X, pady=(0, 8))
 
         f_qq = ttk.Frame(frame_qq, style='SettingsInner.TFrame')
@@ -314,51 +304,6 @@ class SettingsWindow:
         reminder_combo.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(reminder_inner, text="分钟弹出提示", style='Settings.TLabel').pack(side=tk.LEFT)
 
-        # ----- QQ 自动登录（账号管理） -----
-        qq_frame = ttk.LabelFrame(parent, text="  QQ 自动登录  ", style='SettingsCard.TLabelframe', padding=12)
-        qq_frame.pack(fill=tk.X, pady=(8, 0))
-
-        qq_inner1 = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
-        qq_inner1.pack(fill=tk.X, pady=(0, 6))
-        ttk.Radiobutton(qq_inner1, text="开机自动登录QQ（仅登录所有已添加账号，不执行任务）",
-                       variable=self.qq_login_mode_var, value="login_only").pack(anchor=tk.W, padx=5, pady=2)
-        ttk.Radiobutton(qq_inner1, text="开机自动登录QQ并立即执行任务（登录后自动运行 WeGame + 游戏任务）",
-                       variable=self.qq_login_mode_var, value="login_and_run").pack(anchor=tk.W, padx=5, pady=2)
-
-        # QQ 账号管理
-        qq_btn_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
-        qq_btn_frame.pack(fill=tk.X, pady=(4, 6))
-        ttk.Button(qq_btn_frame, text="＋ 添加QQ账号",
-                  command=self._add_qq_account, width=16).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(qq_btn_frame, text="－ 删除选中",
-                  command=self._delete_qq_account, width=10).pack(side=tk.LEFT, padx=4)
-        ttk.Button(qq_btn_frame, text="× 清空列表",
-                  command=self._clear_qq_accounts, width=10).pack(side=tk.LEFT, padx=4)
-        ttk.Button(qq_btn_frame, text="↑ 上移",
-                  command=self._move_up_qq_account, width=7).pack(side=tk.LEFT, padx=4)
-        ttk.Button(qq_btn_frame, text="↓ 下移",
-                  command=self._move_down_qq_account, width=7).pack(side=tk.LEFT, padx=4)
-
-        # QQ 列表
-        qq_list_frame = ttk.Frame(qq_frame, style='SettingsInner.TFrame')
-        qq_list_frame.pack(fill=tk.X)
-        qq_scrollbar = ttk.Scrollbar(qq_list_frame, orient=tk.VERTICAL)
-        self.qq_listbox = tk.Listbox(qq_list_frame, height=3,
-                                     yscrollcommand=qq_scrollbar.set,
-                                     selectmode=tk.SINGLE,
-                                     font=('Microsoft YaHei UI', 9),
-                                     bg='#d5d5d5', fg='#1a1a1a',
-                                     selectbackground='#3498db',
-                                     selectforeground='#ffffff',
-                                     relief='flat', highlightthickness=1,
-                                     highlightcolor='#dcdde1', borderwidth=0)
-        qq_scrollbar.config(command=self.qq_listbox.yview)
-        self.qq_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        qq_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
-
-        # 填充已有 QQ 账号
-        for p in self.app.qq_account_images:
-            self.qq_listbox.insert(tk.END, os.path.basename(p))
 
     def _build_power_tab(self, parent):
         """电源管理选项卡"""
@@ -504,6 +449,12 @@ class SettingsWindow:
         f1.pack(fill=tk.X)
         ttk.Checkbutton(f1, text="开机自启动（登录 Windows 时自动运行）",
                        variable=self.autostart_var).pack(side=tk.LEFT, padx=5, pady=5)
+        f1b = ttk.Frame(frame1, style='SettingsInner.TFrame')
+        f1b.pack(fill=tk.X)
+        ttk.Checkbutton(f1b, text="开机后立即运行一次任务（需先开启开机自启动）",
+                       variable=self.run_on_startup_var).pack(side=tk.LEFT, padx=5, pady=(0, 5))
+        ttk.Label(frame1, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
         # ----- 账号列表鼠标下移距离设置 -----
         frame2 = ttk.LabelFrame(parent, text="  账号列表鼠标下移距离  ", style='SettingsCard.TLabelframe', padding=12)
@@ -515,13 +466,6 @@ class SettingsWindow:
         ttk.Spinbox(f2a, from_=30, to=300, increment=10,
                     textvariable=self.qq_mouse_move_distance_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(f2a, text="像素（账号超过3个被遮挡时使用）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-
-        f2b = ttk.Frame(frame2, style='SettingsInner.TFrame')
-        f2b.pack(fill=tk.X)
-        ttk.Label(f2b, text="WeGame 账号列表鼠标下移距离：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f2b, from_=30, to=300, increment=10,
-                    textvariable=self.wegame_mouse_move_distance_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f2b, text="像素（账号超过3个被遮挡时使用）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 滚动幅度设置 -----
         frame3 = ttk.LabelFrame(parent, text="  滚动幅度设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -594,65 +538,15 @@ class SettingsWindow:
         current_res = config.get_resolution_key()
         TemplateCaptureWizard(self.win, current_res)
 
-    # ---------- QQ 账号管理 ----------
-    def _add_qq_account(self):
-        file_path = filedialog.askopenfilename(
-            title="选择 QQ 号截图",
-            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
-        )
-        if file_path:
-            if file_path in self.app.qq_account_images:
-                messagebox.showwarning("提示", "该账号图片已存在，不能重复添加！")
-                return
-            self.app.qq_account_images.append(file_path)
-            self.qq_listbox.insert(tk.END, os.path.basename(file_path))
-            self.app.save_accounts()
-
-    def _delete_qq_account(self):
-        sel = self.qq_listbox.curselection()
-        if sel:
-            idx = sel[0]
-            self.qq_listbox.delete(idx)
-            del self.app.qq_account_images[idx]
-            self.app.save_accounts()
-
-    def _clear_qq_accounts(self):
-        self.qq_listbox.delete(0, tk.END)
-        self.app.qq_account_images.clear()
-        self.app.save_accounts()
-
-    def _move_up_qq_account(self):
-        sel = self.qq_listbox.curselection()
-        if sel and sel[0] > 0:
-            idx = sel[0]
-            self.app.qq_account_images[idx], self.app.qq_account_images[idx-1] = \
-                self.app.qq_account_images[idx-1], self.app.qq_account_images[idx]
-            self._refresh_qq_account_list()
-            self.qq_listbox.selection_set(idx-1)
-
-    def _move_down_qq_account(self):
-        sel = self.qq_listbox.curselection()
-        if sel and sel[0] < len(self.app.qq_account_images) - 1:
-            idx = sel[0]
-            self.app.qq_account_images[idx], self.app.qq_account_images[idx+1] = \
-                self.app.qq_account_images[idx+1], self.app.qq_account_images[idx]
-            self._refresh_qq_account_list()
-            self.qq_listbox.selection_set(idx+1)
-
-    def _refresh_qq_account_list(self):
-        self.qq_listbox.delete(0, tk.END)
-        for p in self.app.qq_account_images:
-            self.qq_listbox.insert(tk.END, os.path.basename(p))
-        self.app.save_accounts()
-
     def _get_autostart_state(self):
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run",
                                  0, winreg.KEY_READ)
             try:
-                winreg.QueryValueEx(key, "DeltaAutoTool")
-                return True
+                value, _ = winreg.QueryValueEx(key, "DeltaAutoTool")
+                # 验证值非空且包含程序路径
+                return bool(value and value.strip())
             except FileNotFoundError:
                 return False
             finally:
@@ -660,23 +554,27 @@ class SettingsWindow:
         except (FileNotFoundError, PermissionError, OSError):
             return False
 
-    def _set_autostart(self, enable):
+    def _set_autostart(self, enable, run_on_startup=False):
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run",
-                                 0, winreg.KEY_SET_VALUE)
+                                 0, winreg.KEY_SET_VALUE | winreg.KEY_READ)
         except (FileNotFoundError, PermissionError):
             return
         try:
             if enable:
+                flags = "--auto-start"
+                if run_on_startup:
+                    flags += " --run-on-startup"
                 if getattr(sys, 'frozen', False):
                     exe_path = sys.executable
-                    winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, f'"{exe_path}" --auto-start')
+                    # 确保路径用双引号包裹，正确处理中文路径和空格
+                    reg_value = f'"{exe_path}" {flags}'
                 else:
                     python_exe = sys.executable
                     script_path = os.path.abspath(sys.argv[0])
-                    winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ,
-                                      f'"{python_exe}" "{script_path}" --auto-start')
+                    reg_value = f'"{python_exe}" "{script_path}" {flags}'
+                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, reg_value)
             else:
                 try:
                     winreg.DeleteValue(key, "DeltaAutoTool")
@@ -691,7 +589,8 @@ class SettingsWindow:
         self.app.settings["delta_path"] = self.delta_var.get()
         self.app.settings["confidence"] = round(self.confidence_var.get(), 2)
         self.app.settings["log_save_path"] = self.log_var.get()
-        self._set_autostart(self.autostart_var.get())
+        self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())
+        self.app.settings["run_on_startup"] = self.run_on_startup_var.get()
 
         # 自动任务设置
         self.app.settings["auto_start"] = self.auto_enable_var.get()
@@ -729,11 +628,8 @@ class SettingsWindow:
         self.app.settings["auto_startup_enabled"] = self.startup_enable_var.get()
         self.app.settings["auto_startup_time"] = self.startup_time_var.get()
 
-        # QQ 设置（互斥单选映射到两个布尔字段）
+        # QQ 设置
         self.app.settings["qq_path"] = self.qq_path_var.get()
-        qq_mode = self.qq_login_mode_var.get()
-        self.app.settings["qq_login_enabled"] = qq_mode in ("login_only", "login_and_run")
-        self.app.settings["qq_login_then_run"] = qq_mode == "login_and_run"
 
         # 邮件通知设置
         self.app.settings["email_enabled"] = self.email_enable_var.get()
@@ -743,7 +639,6 @@ class SettingsWindow:
 
         # 账号列表滚动查找设置
         self.app.settings["qq_mouse_move_distance"] = self.qq_mouse_move_distance_var.get()
-        self.app.settings["wegame_mouse_move_distance"] = self.wegame_mouse_move_distance_var.get()
         self.app.settings["scroll_amount"] = self.scroll_amount_var.get()
         self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
 

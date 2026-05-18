@@ -1,6 +1,6 @@
 """
 图形用户界面模块
-包含多账号管理、快捷登录、游戏内操作、停止机制及快捷键
+包含多账号管理、游戏内操作、停止机制及快捷键
 支持账号列表本地持久化、启动联网时间校验、多时间点定时执行、每日循环、静默托盘、开机自启动
 """
 import os
@@ -68,14 +68,9 @@ class App:
         self.root.title("三角洲行动自动化工具")
         self.root.resizable(False, False)
         self.running = False
-        self.account_images = []
         self.qq_account_images = []
-        self._stop_event = threading.Event()
-        self._qq_running = False
-        self._qq_auto_boot = False  # 标记当前 QQ 登录是否为开机自动触发
-        self._qq_pause_event = threading.Event()
-        self._qq_pause_event.set()  # 初始状态：未暂停
-        self._qq_stop_event = threading.Event()  # QQ 登录专用停止信号
+        self._stop_event = threading.Event()          # 仅用于停止工作线程
+        self._scheduler_stop_event = threading.Event() # 仅用于停止调度器线程
         self._auto_timer = None
         self._schedule_thread = None
         self._daily_loop = False
@@ -84,7 +79,7 @@ class App:
         self._settings_window = None
         # 提醒相关
         self._reminder_shown = False
-        self._reminder_cancelled = False
+        self._reminder_cancelled_time = None  # 记录被取消的具体时间点（不影响其他时间点）
         self._reminder_target = None
         self._reminder_window = None
         self._next_run_time_str = ""
@@ -143,15 +138,20 @@ class App:
         if self.settings.get("auto_start", False):
             self._start_scheduler()
 
-        # QQ 开机自动登录（仅在开机自启动时运行，双击启动不触发）
-        if self.settings.get("qq_login_enabled", False) and self.qq_account_images and '--auto-start' in sys.argv:
-            print(f"🔄 检测到开机自启动，将在 2 秒后自动登录 QQ（共 {len(self.qq_account_images)} 个账号）")
-            self._qq_auto_boot = True
-            self.root.after(2000, self._auto_login_qq)
-
-        # 静默模式（仅开机自启动时生效，双击打开始终显示主界面）
-        if self.settings.get("silent_mode", False) and TRAY_AVAILABLE and '--auto-start' in sys.argv:
-            self.root.withdraw()
+        # 开机自启动检测
+        is_auto_start = '--auto-start' in sys.argv
+        if is_auto_start:
+            print("🔄 检测到开机自启动标志 (--auto-start)")
+            # 开机立即运行（仅在开机自启动且开启该选项时触发）
+            if self.settings.get("run_on_startup", False) and self.qq_account_images:
+                print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
+                self.root.after(2000, self.start)
+            else:
+                print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
+                      f"账号数={len(self.qq_account_images)})")
+            # 静默模式（仅开机自启动时生效，双击打开始终显示主界面）
+            if self.settings.get("silent_mode", False) and TRAY_AVAILABLE:
+                self.root.withdraw()
 
         # 关闭按钮 → 最小化到托盘（而非退出）
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -243,10 +243,20 @@ class App:
     # ---------- 托盘 ----------
     def _setup_tray(self):
         if not TRAY_AVAILABLE:
+            print("⚠️ pystray 或 Pillow 未安装，托盘功能不可用")
             return
         try:
             icon_path = config.resource_path("picture/icon.ico")
+            if not os.path.exists(icon_path):
+                print(f"⚠️ 托盘图标文件不存在: {icon_path}")
+                return
             image = Image.open(icon_path)
+            # pystray 在 Windows 上要求 RGBA 格式，ICO 文件可能是 P 或 RGB 模式
+            if image.mode != "RGBA":
+                image = image.convert("RGBA")
+            # 调整为系统托盘标准尺寸（Windows 托盘推荐 64x64）
+            if image.size != (64, 64):
+                image = image.resize((64, 64), Image.LANCZOS)
             menu = pystray.Menu(
                 pystray.MenuItem("显示窗口", self._show_window, default=True),
                 pystray.MenuItem("设置", self._on_tray_settings),
@@ -254,8 +264,10 @@ class App:
             )
             self.tray_icon = pystray.Icon("delta_tool", image, "三角洲自动化工具", menu)
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            print("✅ 系统托盘图标已创建")
         except Exception as e:
             print(f"⚠️ 托盘创建失败: {e}")
+            self.tray_icon = None
 
     def _on_tray_settings(self):
         """托盘右键菜单「设置」回调——先显示主窗口，再打开设置"""
@@ -333,13 +345,16 @@ class App:
         """关闭按钮：最小化到托盘（如果可用），否则退出"""
         if TRAY_AVAILABLE and self.tray_icon:
             self.root.withdraw()
-            print("ℹ️ 程序已最小化到托盘，右键托盘图标可退出")
+            print("ℹ️ 程序已最小化到系统托盘，双击托盘图标可重新显示，右键可退出")
         else:
             self._quit_all()
 
     def _quit_all(self):
         """真正退出程序"""
         self.stop()
+        self._scheduler_stop_event.set()
+        if self._schedule_thread and self._schedule_thread.is_alive():
+            self._schedule_thread.join(timeout=3)
         # 清理唤醒定时器
         if self._wake_timer_handle:
             utils.cancel_wake_timer(self._wake_timer_handle)
@@ -356,9 +371,9 @@ class App:
     def _start_scheduler(self):
         """启动定时检查线程，若线程已在运行则先停止再重启（以应用新设置）"""
         if self._schedule_thread and self._schedule_thread.is_alive():
-            self._stop_event.set()
+            self._scheduler_stop_event.set()
             self._schedule_thread.join(timeout=5)
-        self._stop_event.clear()
+        self._scheduler_stop_event.clear()
         self._daily_loop = self.settings.get("run_mode") == "每日循环"
         times_str = self.settings.get("schedule_times", [])
         if not times_str:
@@ -395,59 +410,75 @@ class App:
         except Exception as e:
             print(f"❌ 定时调度线程异常退出: {e}")
             traceback.print_exc()
+            # 恢复机制：如果调度器意外退出且未被主动停止，5秒后自动重启
+            if not self._scheduler_stop_event.is_set() and self.settings.get("auto_start", False):
+                print("🔄 调度器将在 5 秒后自动重启...")
+                self.root.after(5000, self._restart_scheduler)
+
+    def _restart_scheduler(self):
+        """调度器异常退出后的恢复入口（由 root.after 调度到主线程）"""
+        if not self._scheduler_stop_event.is_set() and self.settings.get("auto_start", False):
+            print("🔄 正在重启调度器...")
+            self._start_scheduler()
 
     def _schedule_loop_daily(self):
-        """每日循环模式：持续检查时间点（含5分钟容差，防止开机后错过目标时间）"""
+        """每日循环模式：持续检查时间点（含30分钟容差，防止休眠唤醒后错过目标时间）"""
         executed_today = set()  # 记录今天已执行的 (日期, 时间点) 防止重复执行
         try:
-            while not self._stop_event.is_set():
-                now = datetime.datetime.now()
-                today_str = now.strftime("%Y-%m-%d")
-                now_str = now.strftime("%H:%M")
+            while not self._scheduler_stop_event.is_set():
+                try:
+                    now = datetime.datetime.now()
+                    today_str = now.strftime("%Y-%m-%d")
 
-                # 清理非当天的执行记录
-                executed_today = {(d, t) for d, t in executed_today if d == today_str}
+                    # 清理非当天的执行记录
+                    executed_today = {(d, t) for d, t in executed_today if d == today_str}
 
-                # 1. 定时执行（带5分钟容差）
-                matched_time = None
-                for t in self._schedule_times:
-                    if (today_str, t) in executed_today:
+                    # 1. 定时执行（带30分钟容差，覆盖休眠唤醒场景）
+                    matched_time = None
+                    for t in self._schedule_times:
+                        if (today_str, t) in executed_today:
+                            continue
+                        h, m = map(int, t.split(":"))
+                        scheduled_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                        tolerance = datetime.timedelta(minutes=30)
+                        if scheduled_dt <= now <= scheduled_dt + tolerance:
+                            matched_time = t
+                            break
+
+                    if matched_time is not None and not self.running:
+                        if self._reminder_cancelled_time == matched_time:
+                            # 用户取消了这个时间点，跳过但不标记为已执行（不影响其他时间点）
+                            print(f"⏹ 用户取消了 {matched_time} 的定时运行")
+                            executed_today.add((today_str, matched_time))
+                            self._reminder_shown = False
+                            self._reminder_target = None
+                            self._reminder_cancelled_time = None
+                        else:
+                            executed_today.add((today_str, matched_time))
+                            self.root.after(0, lambda mt=matched_time: self._execute_scheduled_run(mt))
+                            self._reminder_cancelled_time = None
+                        time.sleep(60)
                         continue
-                    h, m = map(int, t.split(":"))
-                    scheduled_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                    tolerance = datetime.timedelta(minutes=5)
-                    if scheduled_dt <= now <= scheduled_dt + tolerance:
-                        matched_time = t
-                        break
 
-                if matched_time is not None and not self.running:
-                    executed_today.add((today_str, matched_time))
-                    if not self._reminder_cancelled:
-                        self._execute_scheduled_run(matched_time)
+                    # 在即将运行的时段阻止系统睡眠（唤醒后防止再次休眠）
+                    if self._is_within_pre_run_window(now, minutes=10):
+                        utils.prevent_sleep()
+                        if not self._wake_attempted:
+                            utils.wake_display()
+                            self._wake_attempted = True
                     else:
-                        print(f"⏹ 用户取消了 {matched_time} 的定时运行")
-                        self._reminder_shown = False
-                        self._reminder_target = None
-                        self._reminder_cancelled = False
-                    time.sleep(60)
-                    continue
+                        if not self.running:
+                            utils.allow_sleep()
+                        self._wake_attempted = False
 
-                # 在即将运行的时段阻止系统睡眠（唤醒后防止再次休眠）
-                if self._is_within_pre_run_window(now, minutes=10):
-                    utils.prevent_sleep()
-                    if not self._wake_attempted:
-                        utils.wake_display()
-                        self._wake_attempted = True
-                else:
-                    if not self.running:
-                        utils.allow_sleep()
-                    self._wake_attempted = False
+                    # 2. 运行前提醒
+                    self._check_reminder_daily(now, executed_today)
 
-                # 2. 运行前提醒
-                self._check_reminder_daily(now)
-
-                # 3. 自动关机（每天只触发一次）
-                self._check_shutdown(now)
+                    # 3. 自动关机（每天只触发一次）
+                    self._check_shutdown(now)
+                except Exception as inner_e:
+                    print(f"⚠️ 调度循环内部异常（将继续运行）: {inner_e}")
+                    traceback.print_exc()
 
                 time.sleep(30)
         except Exception as e:
@@ -455,71 +486,99 @@ class App:
             traceback.print_exc()
 
     def _schedule_loop_single(self):
-        """单次模式：等待下一个时间点（含 5 分钟容差，防止定时开机后略过目标时间）"""
+        """单次模式：等待下一个时间点（含 30 分钟容差，防止休眠唤醒后略过目标时间）"""
         try:
             now = datetime.datetime.now()
             targets = []
             for t in self._schedule_times:
                 h, m = map(int, t.split(":"))
                 target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                tolerance = datetime.timedelta(minutes=5)
+                tolerance = datetime.timedelta(minutes=30)
                 if target + tolerance < now:
                     target += datetime.timedelta(days=1)
                 targets.append(target)
             next_target = min(targets)
             print(f"⏰ 单次定时：将在 {next_target.strftime('%Y-%m-%d %H:%M')} 执行，当前时间 {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            while not self._stop_event.is_set():
-                now = datetime.datetime.now()
+            while not self._scheduler_stop_event.is_set():
+                try:
+                    now = datetime.datetime.now()
 
-                # 在即将运行的时段阻止系统睡眠
-                pre_run_start = next_target - datetime.timedelta(minutes=10)
-                if pre_run_start <= now < next_target and not self.running:
-                    utils.prevent_sleep()
-                    if not self._wake_attempted:
-                        utils.wake_display()
-                        self._wake_attempted = True
-                elif now >= next_target or now < pre_run_start:
-                    if not self.running:
-                        utils.allow_sleep()
-                    self._wake_attempted = False
+                    # 在即将运行的时段阻止系统睡眠
+                    pre_run_start = next_target - datetime.timedelta(minutes=10)
+                    if pre_run_start <= now < next_target and not self.running:
+                        utils.prevent_sleep()
+                        if not self._wake_attempted:
+                            utils.wake_display()
+                            self._wake_attempted = True
+                    elif now >= next_target or now < pre_run_start:
+                        if not self.running:
+                            utils.allow_sleep()
+                        self._wake_attempted = False
 
-                # 提醒
-                if self.settings.get("reminder_enabled", False) and not self._reminder_shown and not self.running:
-                    reminder_min = self.settings.get("reminder_minutes", 5)
-                    reminder_time = next_target - datetime.timedelta(minutes=reminder_min)
-                    if reminder_time <= now < next_target:
-                        self._next_run_time_str = next_target.strftime("%H:%M")
-                        self._reminder_shown = True
-                        self._reminder_target = next_target
-                        print(f"🔔 触发运行提醒弹窗，将在 {self._next_run_time_str} 执行")
-                        self.root.after(0, lambda: self._show_reminder(reminder_min))
+                    # 提醒
+                    if self.settings.get("reminder_enabled", False) and not self._reminder_shown and not self.running:
+                        reminder_min = self.settings.get("reminder_minutes", 5)
+                        reminder_time = next_target - datetime.timedelta(minutes=reminder_min)
+                        if reminder_time <= now < next_target:
+                            self._next_run_time_str = next_target.strftime("%H:%M")
+                            self._reminder_shown = True
+                            self._reminder_target = next_target
+                            print(f"🔔 触发运行提醒弹窗，将在 {self._next_run_time_str} 执行")
+                            self.root.after(0, lambda: self._show_reminder(reminder_min))
 
-                # 执行
-                if now >= next_target:
-                    if not self._reminder_cancelled:
-                        self._execute_scheduled_run(next_target.strftime("%H:%M"))
-                    else:
-                        print(f"⏹ 用户取消了 {next_target.strftime('%H:%M')} 的定时运行")
-                    self.settings["auto_start"] = False
-                    config.save_settings(self.settings)
-                    self.root.after(0, self._update_ui_after_single)
-                    break
+                    # 执行
+                    if now >= next_target:
+                        target_str = next_target.strftime("%H:%M")
+                        if self._reminder_cancelled_time == target_str:
+                            print(f"⏹ 用户取消了 {target_str} 的定时运行，跳过本次")
+                            self._reminder_cancelled_time = None
+                            self._reminder_shown = False
+                            # 单次模式：取消后跳过今天，自动计算明天的下一个时间点
+                            self.root.after(0, lambda: self._reschedule_single(next_target))
+                        else:
+                            self.root.after(0, lambda ts=target_str: self._execute_scheduled_run(ts))
+                            self.settings["auto_start"] = False
+                            config.save_settings(self.settings)
+                            self.root.after(0, self._update_ui_after_single)
+                        break
+                except Exception as inner_e:
+                    print(f"⚠️ 调度循环内部异常（将继续运行）: {inner_e}")
+                    traceback.print_exc()
 
                 time.sleep(10)
         except Exception as e:
             print(f"❌ 单次定时调度异常: {e}")
             traceback.print_exc()
 
-    def _check_reminder_daily(self, now):
+    def _check_reminder_daily(self, now, executed_today=None):
         """每日循环模式：检查是否需要弹出运行提醒"""
-        if not self.settings.get("reminder_enabled", False) or self._reminder_shown or self.running:
+        if not self.settings.get("reminder_enabled", False) or self.running:
             return
 
         reminder_min = self.settings.get("reminder_minutes", 5)
         reminder_sec_offset = reminder_min * 60
+        today_str = now.strftime("%Y-%m-%d")
+
+        # 如果已有提醒目标且已过执行时间，重置提醒状态（允许下一个时间点触发提醒）
+        if self._reminder_shown and self._reminder_target:
+            h, m = map(int, self._reminder_target.split(":"))
+            target_sec = h * 3600 + m * 60
+            current_sec = now.hour * 3600 + now.minute * 60 + now.second
+            if current_sec >= target_sec:
+                self._reminder_shown = False
+                self._reminder_target = None
+
+        if self._reminder_shown:
+            return
 
         for t in self._schedule_times:
+            # 跳过已执行或已取消的时间点，防止提醒重复弹出
+            if executed_today and (today_str, t) in executed_today:
+                continue
+            if self._reminder_cancelled_time == t:
+                continue
+
             h, m = map(int, t.split(":"))
             scheduled_sec = h * 3600 + m * 60
             remind_sec = scheduled_sec - reminder_sec_offset
@@ -534,18 +593,9 @@ class App:
                 self._next_run_time_str = t
                 self._reminder_target = t
                 self._reminder_shown = True
+                print(f"🔔 触发运行提醒弹窗，将在 {t} 执行")
                 self.root.after(0, lambda m=reminder_min: self._show_reminder(m))
                 break
-
-        # 如果目标时间已过，重置提醒标志
-        if self._reminder_shown and self._reminder_target:
-            h, m = map(int, self._reminder_target.split(":"))
-            target_sec = h * 3600 + m * 60
-            current_sec = now.hour * 3600 + now.minute * 60 + now.second
-            if current_sec >= target_sec:
-                self._reminder_shown = False
-                self._reminder_target = None
-                self._reminder_cancelled = False
 
     def _check_shutdown(self, now):
         """检查是否需要触发自动关机"""
@@ -603,23 +653,13 @@ class App:
                     pass
                 self._reminder_window = None
             self._reminder_shown = False
-            self._reminder_cancelled = False
+            self._reminder_cancelled_time = None
             # 防止系统在运行时睡眠
             utils.prevent_sleep()
             # 尝试唤醒显示器（从睡眠/息屏状态恢复）
             utils.wake_display()
             time.sleep(2)
-            # 等待 QQ 自动登录完成（如果正在运行），否则 start() 会被 _qq_running 阻止
-            if self._qq_running:
-                print("⏳ 等待 QQ 自动登录完成后再执行定时任务...")
-                wait_start = time.time()
-                while self._qq_running and not self._stop_event.is_set() and not self._qq_stop_event.is_set():
-                    time.sleep(1)
-                    if time.time() - wait_start > 120:
-                        print("⚠️ 等待 QQ 登录超时（2分钟），强制执行定时任务")
-                        break
-                print("✅ QQ 登录已完成（或超时），开始执行定时任务")
-            self.start()
+            self.root.after(0, self.start)
         except Exception as e:
             print(f"❌ 定时执行出错: {e}")
             traceback.print_exc()
@@ -702,21 +742,21 @@ class App:
             except Exception:
                 pass
             self._reminder_window = None
-        self._reminder_cancelled = False
+        self._reminder_cancelled_time = None
         self._reminder_shown = False
         if not self.running:
             utils.prevent_sleep()
             self.start()
 
     def _reminder_cancel(self):
-        """提醒窗口：取消本次运行"""
+        """提醒窗口：取消本次运行（仅取消当前时间点，不影响其他时间点）"""
         if self._reminder_window:
             try:
                 self._reminder_window.destroy()
             except Exception:
                 pass
             self._reminder_window = None
-        self._reminder_cancelled = True
+        self._reminder_cancelled_time = self._next_run_time_str
         print(f"⏹ 用户取消了 {self._next_run_time_str} 的定时运行")
 
     def _reminder_dismiss(self):
@@ -733,20 +773,32 @@ class App:
         self.settings["auto_start"] = False
         config.save_settings(self.settings)
 
+    def _reschedule_single(self, skipped_target):
+        """单次模式取消后，自动跳到明天同一时间重新调度"""
+        now = datetime.datetime.now()
+        tomorrow = skipped_target + datetime.timedelta(days=1)
+        h, m = map(int, self._schedule_times[0].split(":"))
+        next_target = now.replace(hour=h, minute=m, second=0, microsecond=0) + datetime.timedelta(days=1)
+        print(f"ℹ️ 单次定时已跳过，将在明天 {next_target.strftime('%Y-%m-%d %H:%M')} 重新执行")
+        # 重新启动调度器
+        self._reminder_shown = False
+        self._reminder_cancelled_time = None
+        self._start_scheduler()
+
     # ---------- UI 构建 ----------
     def _build_ui(self):
         # ===== 顶部标题栏 =====
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v2.0  |  多账号轮换 · 定时执行 · QQ自动登录", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v2.8  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
         main_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(8, 12))
 
-        # ----- 账号管理 -----
-        account_frame = ttk.LabelFrame(main_container, text=" 账号管理（截图顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
+        # ----- QQ 账号管理 -----
+        account_frame = ttk.LabelFrame(main_container, text=" QQ 账号管理（截图顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
         account_frame.pack(fill=tk.X, pady=(0, 8))
 
         # 按钮行
@@ -841,9 +893,6 @@ class App:
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
         self.settings_btn.pack(side=tk.LEFT, padx=8)
-        self.qq_login_btn = ttk.Button(ctrl_frame, text="QQ一键登录", style='TButton',
-                                       command=self.trigger_qq_login, width=14)
-        self.qq_login_btn.pack(side=tk.LEFT, padx=(8, 0))
 
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self._log_file_path)
@@ -855,7 +904,7 @@ class App:
             self._start_scheduler()
         else:
             if self._schedule_thread and self._schedule_thread.is_alive():
-                self._stop_event.set()
+                self._scheduler_stop_event.set()
                 self._schedule_thread.join(timeout=5)
             self._schedule_thread = None
             print("⏰ 已取消定时执行")
@@ -884,9 +933,8 @@ class App:
     def show_help(self):
         help_text = (
             "【基本操作】\n"
-            "F1 / 「开始运行」 → 执行已添加账号的 WeGame 快捷登录\n"
-            "F2 / 「停止」       → 终止当前运行\n"
-            "「QQ一键登录」       → 手动执行 QQ 自动登录\n\n"
+            "F1 / 「开始运行」 → 依次登录 QQ → WeGame → 进游戏执行任务\n"
+            "F2 / 「停止」       → 终止当前运行\n\n"
             "【定时执行】\n"
             "设置 → 自动任务设置 → 启用定时，可设多个时间点（HH:MM）\n"
             "支持「单次」和「每日循环」两种模式\n"
@@ -896,6 +944,8 @@ class App:
             "取消本次不影响后续时间点\n\n"
             "【电源管理】\n"
             "自动唤醒系统显示器、自动关机、定时开机（需主板支持 RTC）\n\n"
+            "【开机自启动】\n"
+            "设置 → 其他设置 → 可配置开机自启动及开机立即运行\n\n"
             "【注意】\n"
             "• 图像识别依赖固定分辨率/缩放比例\n"
             "• 步骤超时自动跳过当前账号，继续执行下一个\n"
@@ -907,7 +957,7 @@ class App:
     # ---------- 账号持久化 ----------
     def save_accounts(self):
         try:
-            data = {"wegame": self.account_images, "qq": self.qq_account_images}
+            data = {"wegame": [], "qq": self.qq_account_images}
             with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -919,19 +969,16 @@ class App:
         try:
             with open(ACCOUNTS_JSON_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # 兼容旧格式（纯列表 → 仅 WeGame）
+            # 兼容旧格式（纯列表 → 丢弃，不再使用 WeGame 账号列表）
             if isinstance(data, list):
-                self.account_images = [p for p in data if os.path.exists(p)]
                 self.qq_account_images = []
             else:
-                self.account_images = [p for p in data.get("wegame", []) if os.path.exists(p)]
                 self.qq_account_images = [p for p in data.get("qq", []) if os.path.exists(p)]
-            # 刷新 WeGame 列表
+            # 刷新 QQ 账号列表
             self.account_listbox.delete(0, tk.END)
-            for p in self.account_images:
+            for p in self.qq_account_images:
                 self.account_listbox.insert(tk.END, os.path.basename(p))
-            total = len(self.account_images) + len(self.qq_account_images)
-            print(f"✅ 已加载 {len(self.account_images)} 个 WeGame 账号、{len(self.qq_account_images)} 个 QQ 账号")
+            print(f"✅ 已加载 {len(self.qq_account_images)} 个 QQ 账号")
         except Exception as e:
             print(f"⚠️ 加载历史账号失败：{e}")
 
@@ -941,10 +988,10 @@ class App:
             filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
         )
         if file_path:
-            if file_path in self.account_images:
+            if file_path in self.qq_account_images:
                 messagebox.showwarning("提示", "该账号图片已存在，不能重复添加！")
                 return
-            self.account_images.append(file_path)
+            self.qq_account_images.append(file_path)
             self.account_listbox.insert(tk.END, os.path.basename(file_path))
             self.update_account_count()
             self.save_accounts()
@@ -954,18 +1001,18 @@ class App:
         if sel:
             idx = sel[0]
             self.account_listbox.delete(idx)
-            del self.account_images[idx]
+            del self.qq_account_images[idx]
             self.update_account_count()
             self.save_accounts()
 
     def clear_accounts(self):
         self.account_listbox.delete(0, tk.END)
-        self.account_images.clear()
+        self.qq_account_images.clear()
         self.update_account_count()
         self.save_accounts()
 
     def update_account_count(self):
-        self.total_steps = len(self.account_images) * 4
+        self.total_steps = len(self.qq_account_images) * 4
         self.progress['maximum'] = max(1, self.total_steps)
 
     # ---------- 账号排序 ----------
@@ -973,21 +1020,21 @@ class App:
         sel = self.account_listbox.curselection()
         if sel and sel[0] > 0:
             idx = sel[0]
-            self.account_images[idx], self.account_images[idx-1] = self.account_images[idx-1], self.account_images[idx]
+            self.qq_account_images[idx], self.qq_account_images[idx-1] = self.qq_account_images[idx-1], self.qq_account_images[idx]
             self._refresh_account_list()
             self.account_listbox.selection_set(idx-1)
 
     def _move_down(self):
         sel = self.account_listbox.curselection()
-        if sel and sel[0] < len(self.account_images) - 1:
+        if sel and sel[0] < len(self.qq_account_images) - 1:
             idx = sel[0]
-            self.account_images[idx], self.account_images[idx+1] = self.account_images[idx+1], self.account_images[idx]
+            self.qq_account_images[idx], self.qq_account_images[idx+1] = self.qq_account_images[idx+1], self.qq_account_images[idx]
             self._refresh_account_list()
             self.account_listbox.selection_set(idx+1)
 
     def _refresh_account_list(self):
         self.account_listbox.delete(0, tk.END)
-        for p in self.account_images:
+        for p in self.qq_account_images:
             self.account_listbox.insert(tk.END, os.path.basename(p))
         self.save_accounts()
 
@@ -1007,7 +1054,7 @@ class App:
             messagebox.showwarning("提示", "请先选中一个账号")
             return
         idx = sel[0]
-        img_path = self.account_images[idx]
+        img_path = self.qq_account_images[idx]
         if not os.path.exists(img_path):
             messagebox.showerror("错误", "截图文件不存在")
             return
@@ -1040,11 +1087,8 @@ class App:
     def start(self):
         if self.running:
             return
-        if self._qq_running:
-            print("⚠️ QQ 登录正在运行，无法启动脚本")
-            return
-        if not self.account_images:
-            messagebox.showwarning("未添加账号", "请先添加至少一个 WeGame 账号截图！")
+        if not self.qq_account_images:
+            messagebox.showwarning("未添加账号", "请先添加至少一个 QQ 账号截图！")
             return
         self.running = True
         self._stop_event.clear()
@@ -1084,134 +1128,25 @@ class App:
         """从工作线程安全更新当前操作状态文字"""
         self.root.after(0, lambda: self.op_label.config(text=text))
 
-    # ---------- QQ 自动登录 ----------
-    def _auto_login_qq(self):
-        """在后台线程中执行 QQ 自动登录"""
-        if self.running:
-            print("⚠️ 脚本正在运行，跳过 QQ 自动登录")
-            return
-        if self._qq_running:
-            return
-        self._qq_running = True
-        self._qq_pause_event.set()  # 确保未暂停
-        self._qq_stop_event.clear()  # 清除之前的停止信号
-        self.root.after(0, lambda: self.qq_login_btn.config(text="停止"))
-        threading.Thread(target=self._run_qq_login_phase, daemon=True).start()
-
-    def trigger_qq_login(self):
-        """QQ登录按钮点击处理：根据运行状态执行启动/暂停/继续"""
-        if self.running:
-            messagebox.showwarning("提示", "脚本正在运行，请先停止后再执行 QQ 登录")
-            return
-        if self._qq_running:
-            self._toggle_qq_pause()
-            return
-        # 未运行 → 启动（手动触发，非开机自动）
-        self._qq_auto_boot = False
-        qq_path = self.settings.get("qq_path", "")
-        if not qq_path:
-            messagebox.showwarning("提示", "请先在设置中配置 QQ.exe 路径")
-            return
-        if not self.qq_account_images:
-            messagebox.showwarning("提示", "请先在设置中添加 QQ 账号截图")
-            return
-        self._auto_login_qq()
-
-    def _toggle_qq_pause(self):
-        """停止QQ登录"""
-        if not self._qq_running:
-            return
-        self._qq_stop_event.set()
-        self._qq_pause_event.set()  # 解除暂停阻塞，让线程可以退出
-        print("⏹ QQ 登录已停止")
-        self._qq_running = False
-        self.qq_login_btn.config(text="QQ一键登录")
-
-    def _on_qq_login_finish(self):
-        """QQ登录完成后的UI恢复"""
-        self._qq_running = False
-        self.qq_login_btn.config(text="QQ一键登录")
-        # 仅开机自动登录且设置了"登录后立即执行"时，才自动执行主任务
-        if (self._qq_auto_boot
-                and self.settings.get("qq_login_then_run", False)
-                and not self.running):
-            print("🔄 QQ 登录完成，即将自动执行主任务...")
-            self.root.after(1000, self.start)
-        self._qq_auto_boot = False
-
-    # ---------- QQ 自动登录阶段 ----------
-    def _run_qq_login_phase(self):
-        """脚本执行前先完成所有 QQ 账号的自动登录"""
-        try:
-            qq_path = self.settings.get("qq_path", "")
-            if not qq_path or not self.qq_account_images:
-                return
-
-            total = len(self.qq_account_images)
-            print("\n" + "=" * 40)
-            print(f"  QQ 自动登录阶段（共 {total} 个账号）")
-            print("=" * 40)
-
-            for i, img_path in enumerate(self.qq_account_images):
-                if self._qq_stop_event.is_set():
-                    break
-
-                # 暂停检查：暂停时阻塞，直到继续或收到停止信号
-                while not self._qq_pause_event.is_set():
-                    if self._qq_stop_event.wait(timeout=0.5):
-                        break
-                if self._qq_stop_event.is_set():
-                    print("⏹ QQ 登录已停止")
-                    break
-
-                file_name = os.path.basename(img_path)
-                print(f"\n--- QQ 登录 {i+1}/{total}：{file_name} ---")
-
-                # 启动 QQ（等待窗口出现，而非固定延时）
-                self.set_operation(f"启动 QQ ({i+1}/{total})")
-                if not utils.start_app(qq_path, "QQ"):
-                    print("❌ QQ 启动失败，跳过")
-                    continue
-                # 智能等待 QQ 登录窗口出现（每 0.5s 检测一次，最长 15s）
-                qq_ready = False
-                for _ in range(30):
-                    if self._qq_stop_event.is_set():
-                        break
-                    if utils.activate_window_by_title("QQ", partial_match=True,
-                                                       exclude_titles=["WeGame"]):
-                        qq_ready = True
-                        break
-                    time.sleep(0.5)
-                if not qq_ready:
-                    print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
-                time.sleep(1)  # 短暂稳定等待
-
-                if self._qq_stop_event.is_set(): break
-                self.set_operation("QQ 快捷登录")
-                if not utils.qq_quick_login(img_path):
-                    print("❌ QQ 快捷登录失败")
-                    utils.kill_process(config.QQ_PROCESS)
-                    continue
-
-                # 等待登录完成，然后关闭 QQ 窗口（保留后台进程）
-                time.sleep(2)
-                utils.close_window_by_title("QQ", partial_match=True)
-                time.sleep(1)
-
-            print("✅ QQ 自动登录阶段完成\n")
-        finally:
-            self.root.after(0, self._on_qq_login_finish)
-
     # ---------- 主流程 ----------
     def run_script_main(self):
         try:
-            total = len(self.account_images)
+            total = len(self.qq_account_images)
+            qq_path = self.settings.get("qq_path", "")
+
+            # 运行前先退出 QQ 和 WeGame，确保干净状态
+            print("🧹 运行前清理：退出 QQ 和 WeGame...")
+            self.set_operation("清理进程")
+            utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
+            utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+            time.sleep(2)
+
             print("=" * 55)
-            print("  WeGame 快捷登录 + 三角洲行动 多账号轮换脚本")
-            print(f"  本轮将处理 {total} 个 WeGame 账号")
+            print("  QQ 登录 + WeGame 快捷登录 + 三角洲行动 多账号轮换脚本")
+            print(f"  本轮将处理 {total} 个 QQ 账号")
             print("=" * 55)
 
-            for i, img_path in enumerate(self.account_images):
+            for i, img_path in enumerate(self.qq_account_images):
                 if self._stop_event.is_set():
                     break
 
@@ -1224,26 +1159,65 @@ class App:
                 self.run_stats["total"] += 1
                 account_failed = False
 
+                # 步骤1：启动 QQ 并登录
                 if self._stop_event.is_set(): break
-                self.set_operation("启动 WeGame")
-                print("启动 WeGame...")
-                if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
-                    print("❌ WeGame 启动失败，跳过此账号")
+                self.set_operation(f"启动 QQ ({i+1}/{total})")
+                print("启动 QQ...")
+                if not qq_path or not utils.start_app(qq_path, "QQ"):
+                    print("❌ QQ 启动失败，跳过此账号")
                     account_failed = True
+
                 if not account_failed:
-                    time.sleep(3)
+                    # 等待 QQ 窗口出现
+                    qq_ready = False
+                    for _ in range(30):
+                        if self._stop_event.is_set(): break
+                        if utils.activate_window_by_title("QQ", partial_match=True,
+                                                           exclude_titles=["WeGame"]):
+                            qq_ready = True
+                            break
+                        time.sleep(0.5)
+                    if not qq_ready:
+                        print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
+                    time.sleep(1)
+
+                if not account_failed and self._stop_event.is_set(): break
+                if not account_failed:
+                    self.set_operation("QQ 快捷登录")
+                    print("开始 QQ 快捷登录...")
+                    if not utils.qq_quick_login(img_path):
+                        print("❌ QQ 快捷登录失败，跳过此账号")
+                        utils.kill_process(config.QQ_PROCESS)
+                        account_failed = True
+                    else:
+                        time.sleep(2)
+                        # QQ 登录成功后关闭 QQ 窗口（保留后台进程供 WeGame 使用）
+                        utils.close_window_by_title("QQ", partial_match=True)
+                        time.sleep(1)
+
+                # 步骤2：启动 WeGame 并快捷登录（使用当前 QQ 账号）
+                if not account_failed and self._stop_event.is_set(): break
+                if not account_failed:
+                    self.set_operation("启动 WeGame")
+                    print("启动 WeGame...")
+                    if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
+                        print("❌ WeGame 启动失败，跳过此账号")
+                        account_failed = True
+                    else:
+                        time.sleep(3)
 
                 if not account_failed and self._stop_event.is_set(): break
                 if not account_failed:
                     self.set_operation("快捷登录 WeGame")
                     print("开始快捷登录 WeGame ...")
-                    if not utils.wegame_quick_login(img_path):
+                    if not utils.wegame_quick_login():
                         print("❌ WeGame 快捷登录失败，跳过此账号")
                         utils.kill_process(config.WEGAME_PROCESS)
                         account_failed = True
                     else:
                         time.sleep(3)
 
+                # 步骤3：启动三角洲行动
                 if not account_failed and self._stop_event.is_set(): break
                 if not account_failed:
                     self.set_operation("查找三角洲游戏图标")
@@ -1282,7 +1256,6 @@ class App:
 
                 if not account_failed:
                     print("✅ 三角洲正在启动，等待游戏窗口出现...")
-                    # 轮询检测游戏窗口（每2秒检测一次，最长等待90秒）
                     game_loaded = False
                     delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
                     for _ in range(45):
@@ -1298,7 +1271,7 @@ class App:
                         time.sleep(2)
                     if game_loaded:
                         print("✅ 检测到游戏窗口，等待界面就绪...")
-                        time.sleep(8)  # 窗口出现后再等几秒让界面完全加载
+                        time.sleep(8)
                         extra_wait = self.settings.get("game_launch_wait", 0)
                         if extra_wait > 0:
                             print(f"⏳ 额外等待 {extra_wait} 秒（用户设置的游戏启动等待时间）...")
@@ -1309,6 +1282,8 @@ class App:
                     self._game_operations()
                     if self._stop_event.is_set(): break
 
+                # 步骤4：关闭游戏和 WeGame，退出 QQ 和 WeGame 进程
+                if not account_failed:
                     self.set_operation("关闭三角洲游戏")
                     print("\n--- 关闭三角洲游戏 ---")
                     delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
@@ -1318,12 +1293,14 @@ class App:
                     time.sleep(2)
                     utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
 
-                    self.set_operation("关闭 WeGame")
-                    print("\n--- 关闭 WeGame ---")
-                    utils.close_window_by_title("WeGame", partial_match=True)
-                    time.sleep(2)
-                    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
-                    time.sleep(3)
+                # 每轮结束后退出 QQ 和 WeGame，不保留后台
+                self.set_operation("清理进程")
+                print("\n--- 退出 QQ 和 WeGame ---")
+                utils.close_window_by_title("WeGame", partial_match=True)
+                time.sleep(1)
+                utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+                utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
+                time.sleep(2)
 
                 if account_failed:
                     self.run_stats["fail"] += 1
@@ -1446,6 +1423,7 @@ class App:
 
     def on_finish(self):
         self.running = False
+        self._stop_event.clear()  # 清除工作线程停止信号，不影响调度器
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.progress['value'] = self.progress['maximum']
@@ -1455,6 +1433,12 @@ class App:
 
         # 设置下一次唤醒定时器
         self._set_next_wake_timer()
+
+        # 调度器健康检查：如果调度器线程已退出，重新启动
+        if self.settings.get("auto_start", False):
+            if not self._schedule_thread or not self._schedule_thread.is_alive():
+                print("⚠️ 检测到调度器线程已退出，正在重新启动...")
+                self._start_scheduler()
 
         # 显示运行统计
         stats = self.run_stats
@@ -1554,28 +1538,65 @@ def main():
     config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
     config.CONFIDENCE = config.APP_SETTINGS["confidence"]
 
-    net_date = get_network_time()
-    if net_date is None:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("网络错误", "无法连接时间服务器，请检查网络后重试。")
-        sys.exit(1)
-    if net_date > EXPIRY_DATE:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("软件已过期", f"该版本已于 {EXPIRY_DATE} 到期。\n当前网络日期：{net_date}")
-        sys.exit(1)
-
     root = tk.Tk()
+    root.title("三角洲行动自动化工具")
+    root.resizable(False, False)
 
-    # 分辨率校验：检测当前屏幕分辨率是否与模板截图时一致
-    _check_resolution_on_startup(root)
+    # 显示加载界面，避免用户看到空白窗口
+    loading_frame = ttk.Frame(root, padding=40)
+    loading_frame.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(loading_frame, text="三角洲行动自动化工具",
+              font=('Microsoft YaHei UI', 16, 'bold')).pack(pady=(20, 10))
+    status_label = ttk.Label(loading_frame, text="正在连接时间服务器验证...",
+                             font=('Microsoft YaHei UI', 10))
+    status_label.pack(pady=10)
+    progress = ttk.Progressbar(loading_frame, mode='indeterminate', length=250)
+    progress.pack(pady=10)
+    progress.start(15)
 
-    App(root)
-    # 窗口显示到前台
-    root.after(50, lambda: (root.lift(), root.focus_force()))
-    root.after(50, lambda: root.attributes('-topmost', True))
-    root.after(200, lambda: root.attributes('-topmost', False))
+    # 窗口居中显示
+    root.update_idletasks()
+    w, h = 400, 200
+    x = (root.winfo_screenwidth() - w) // 2
+    y = (root.winfo_screenheight() - h) // 2
+    root.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _verify_in_background():
+        """后台线程：执行联网时间校验"""
+        net_date = get_network_time()
+        root.after(0, lambda: _on_verify_done(net_date))
+
+    def _on_verify_done(net_date):
+        """主线程：校验完成后处理结果"""
+        progress.stop()
+
+        if net_date is None:
+            messagebox.showerror("网络错误", "无法连接时间服务器，请检查网络后重试。")
+            root.destroy()
+            return
+        if net_date > EXPIRY_DATE:
+            messagebox.showerror("软件已过期", f"该版本已于 {EXPIRY_DATE} 到期。\n当前网络日期：{net_date}")
+            root.destroy()
+            return
+
+        # 校验通过，销毁加载界面，初始化完整应用
+        loading_frame.destroy()
+
+        # 清除加载窗口的固定尺寸，让后续 UI 自动撑开
+        root.geometry("")
+
+        # 分辨率校验：检测当前屏幕分辨率是否与模板截图时一致
+        _check_resolution_on_startup(root)
+
+        App(root)
+        # 窗口显示到前台
+        root.after(50, lambda: (root.lift(), root.focus_force()))
+        root.after(50, lambda: root.attributes('-topmost', True))
+        root.after(200, lambda: root.attributes('-topmost', False))
+
+    # 启动后台校验线程
+    threading.Thread(target=_verify_in_background, daemon=True).start()
+
     root.mainloop()
 
 

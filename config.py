@@ -39,10 +39,8 @@ DEFAULT_SETTINGS = {
     "auto_shutdown_time": "22:00",    # 关机时间 (HH:MM)
     "auto_startup_enabled": False,    # 是否启用定时开机（从睡眠/休眠唤醒）
     "auto_startup_time": "07:00",     # 开机时间 (HH:MM)
-    # QQ 自动登录
+    # QQ 路径
     "qq_path": "",                    # QQ 程序路径
-    "qq_login_enabled": False,        # 是否在运行脚本前自动登录 QQ
-    "qq_login_then_run": False,       # QQ 登录完成后立即执行主任务
     # 邮件通知
     "email_enabled": False,           # 是否启用邮件通知
     "smtp_code": "",                  # SMTP 授权码
@@ -50,9 +48,9 @@ DEFAULT_SETTINGS = {
     "receiver_email": "",             # 接收者邮箱
     # 账号列表滚动查找设置
     "qq_mouse_move_distance": 100,    # QQ 账号列表鼠标下移距离（像素）
-    "wegame_mouse_move_distance": 100,# WeGame 账号列表鼠标下移距离（像素）
     "scroll_amount": 100,             # 滚动幅度（pyautogui.scroll 的参数值，50-150）
     "game_launch_wait": 0,            # 启动游戏后额外等待时间（秒，0-120）
+    "run_on_startup": False,          # 开机立即运行一次程序
 }
 
 def load_settings():
@@ -117,7 +115,6 @@ def init_settings():
 APP_SETTINGS = {}
 
 # ==================== 图片资源路径（固定） ====================
-IMAGE_ACCOUNT_SELECT = resource_path("picture/account_select.png")
 IMAGE_LOGIN_BTN      = resource_path("picture/login_btn.png")
 
 DELTA_GAME_ICON     = resource_path("picture/delta_game_icon.png")
@@ -193,7 +190,6 @@ TEMPLATE_CAPTURE_LIST = [
     ("Produce_ToolBench",    "picture/produce/produce_tool_bench.png",     "工作台产出项",   "在工作台制造列表，截取要生产的物品"),
     ("Produce_ArmorStation", "picture/produce/produce_armor_station.png",  "防具台产出项",   "在防具台制造列表，截取要生产的物品"),
     ("Produce_PharmacyStation","picture/produce/produce_pharmacy_station.png","制药台产出项","在制药台制造列表，截取要生产的物品"),
-    ("IMAGE_ACCOUNT_SELECT", "picture/account_select.png", "WeGame 账号选择按钮", "在 WeGame 登录界面，截取账号选择下拉按钮"),
     ("IMAGE_LOGIN_BTN",      "picture/login_btn.png",      "WeGame 登录按钮",     "在 WeGame 登录界面，截取「登录」按钮"),
     ("DELTA_GAME_ICON",      "picture/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",     "picture/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),

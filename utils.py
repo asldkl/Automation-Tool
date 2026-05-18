@@ -13,7 +13,7 @@ import win32gui
 import win32con
 import config
 from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS,
-                    IMAGE_ACCOUNT_SELECT, IMAGE_LOGIN_BTN,
+                    IMAGE_LOGIN_BTN,
                     QQ_ACCOUNT_SELECT, QQ_LOGIN_BTN)
 
 def start_app(exe_path, app_name):
@@ -188,44 +188,14 @@ def find_and_click_pos(img_path, timeout=20, region=None):
     print(f"⏳ 超时未找到：{img_path}")
     return False, None
 
-def wegame_quick_login(qq_number_img):
+def wegame_quick_login():
     """
     使用图像识别完成 WeGame 快捷登录：
-    点击账号选择按钮 → 点击目标 QQ 号 → 点击登录按钮
-    支持滚动查找被遮挡的账号（超过3个账号时）
+    直接点击登录按钮（使用当前已登录的 QQ 账号）
+    每轮运行前会先退出 QQ 和 WeGame，确保打开 WeGame 时快捷登录显示的就是当前 QQ 账号
     """
-    print("🔍 点击账号选择按钮...")
-    success, btn_pos = find_and_click_pos(IMAGE_ACCOUNT_SELECT, timeout=15)
-    if not success:
-        print("❌ 未找到账号选择按钮")
-        return False
-    time.sleep(1)  # 等待列表弹出
-
-    print("🔍 选择 QQ 号...")
-    if not find_and_click(qq_number_img, timeout=5):
-        # 未找到目标账号，尝试滚动下拉列表查找
-        if btn_pos:
-            print("🔍 目标账号可能被遮挡，尝试滚动查找...")
-            scroll_x, scroll_y = btn_pos
-            scroll_distance = config.APP_SETTINGS.get("wegame_mouse_move_distance", 100)
-            scroll_amount = config.APP_SETTINGS.get("scroll_amount", 100)
-            for scroll_attempt in range(3):
-                pyautogui.moveTo(scroll_x, scroll_y + scroll_distance, duration=0.1)
-                time.sleep(0.2)
-                pyautogui.scroll(-scroll_amount)
-                time.sleep(0.8)
-                if find_and_click(qq_number_img, timeout=5):
-                    break
-            else:
-                print("❌ 滚动查找后仍未找到目标 QQ 号")
-                return False
-        else:
-            print("❌ 未找到目标 QQ 号")
-            return False
-    time.sleep(0.5)
-
     print("🔍 点击登录按钮...")
-    if not find_and_click(IMAGE_LOGIN_BTN, timeout=10):
+    if not find_and_click(IMAGE_LOGIN_BTN, timeout=15):
         print("❌ 未找到登录按钮")
         return False
     print("✅ 快捷登录完成")
