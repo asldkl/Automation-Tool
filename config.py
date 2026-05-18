@@ -31,7 +31,7 @@ def resolve_template_path(config_path):
     user_path = user_template_path(basename)
     if os.path.exists(user_path):
         return user_path
-    return config_path
+    return resource_path(config_path)
 
 # ==================== 默认设置 ====================
 DEFAULT_SETTINGS = {

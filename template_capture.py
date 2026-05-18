@@ -39,6 +39,13 @@ class TemplateCaptureWizard:
 
         self._build_ui()
         self._update_progress()
+        # 窗口居中
+        self.win.update_idletasks()
+        w = self.win.winfo_width()
+        h = self.win.winfo_height()
+        x = (self.win.winfo_screenwidth() - w) // 2
+        y = (self.win.winfo_screenheight() - h) // 2
+        self.win.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build_ui(self):
         # 标题
@@ -124,8 +131,12 @@ class TemplateCaptureWizard:
             restore_btn = ttk.Button(row, text="恢复默认", width=8,
                                      command=lambda v=var_name, r=rel_path: self._restore_template(v, r))
             restore_btn.pack(side=tk.RIGHT, padx=5)
+            # 预览按钮
+            preview_btn = ttk.Button(row, text="预览", width=6,
+                                     command=lambda r=rel_path, n=name: self._preview_template(r, n))
+            preview_btn.pack(side=tk.RIGHT, padx=5)
 
-            self.rows[var_name] = (status_lbl, btn)
+            self.rows[var_name] = (status_lbl, btn, preview_btn)
 
             # 在最后一个产出项后添加分界线
             if var_name == produce_order[-1]:
@@ -161,7 +172,7 @@ class TemplateCaptureWizard:
             # 更新状态
             self.status[var_name] = "done"
             if var_name in self.rows:
-                status_lbl, btn = self.rows[var_name]
+                status_lbl, btn, _ = self.rows[var_name]
                 status_lbl.config(text="✅")
         except Exception as e:
             messagebox.showerror("错误", f"上传失败：{e}")
@@ -184,10 +195,68 @@ class TemplateCaptureWizard:
         # 更新状态为未完成
         self.status[var_name] = "pending"
         if var_name in self.rows:
-            status_lbl, btn = self.rows[var_name]
+            status_lbl, btn, _ = self.rows[var_name]
             status_lbl.config(text="⬜")
         self._update_progress()
         utils_clear_cache()
+
+    def _preview_template(self, rel_path, name):
+        """弹窗预览当前模板图片（优先显示用户自定义，否则显示内置默认）"""
+        img_path = config.resolve_template_path(rel_path)
+        if not os.path.exists(img_path):
+            messagebox.showinfo("提示", "未找到模板图片文件。")
+            return
+
+        try:
+            img = Image.open(img_path)
+        except Exception as e:
+            messagebox.showerror("错误", f"无法打开图片：{e}")
+            return
+
+        # 限制预览窗口最大尺寸，等比缩放
+        max_w, max_h = 800, 600
+        orig_w, orig_h = img.size
+        scale = min(max_w / orig_w, max_h / orig_h, 1.0)
+        disp_w = int(orig_w * scale)
+        disp_h = int(orig_h * scale)
+        if scale < 1.0:
+            img_resized = img.resize((disp_w, disp_h), Image.LANCZOS)
+        else:
+            img_resized = img
+
+        # 判断来源
+        basename = os.path.basename(rel_path)
+        user_path = config.user_template_path(basename)
+        is_user = os.path.exists(user_path)
+        source_text = "用户自定义模板" if is_user else "内置默认模板"
+
+        win = tk.Toplevel(self.win)
+        win.title(f"预览 - {name}")
+        win.resizable(False, False)
+        win.transient(self.win)
+        win.grab_set()
+
+        # 图片显示区
+        photo = ImageTk.PhotoImage(img_resized)
+        img_label = ttk.Label(win, image=photo)
+        img_label.image = photo  # 保持引用防止被回收
+        img_label.pack(padx=10, pady=10)
+
+        # 信息栏
+        info_frame = ttk.Frame(win)
+        info_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        ttk.Label(info_frame,
+                  text=f"来源：{source_text}  |  原始尺寸：{orig_w}x{orig_h}",
+                  font=('Microsoft YaHei UI', 9), foreground='#555').pack(side=tk.LEFT)
+        ttk.Button(info_frame, text="关闭", command=win.destroy, width=8).pack(side=tk.RIGHT)
+
+        # 居中预览窗口
+        win.update_idletasks()
+        pw = win.winfo_width()
+        ph = win.winfo_height()
+        px = (win.winfo_screenwidth() - pw) // 2
+        py = (win.winfo_screenheight() - ph) // 2
+        win.geometry(f"+{px}+{py}")
 
     def _skip_all(self):
         """跳过所有未完成的上传"""
