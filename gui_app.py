@@ -791,7 +791,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.4  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.4.2  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -1136,6 +1136,7 @@ class App:
         try:
             total = len(self.qq_account_images)
             qq_path = self.settings.get("qq_path", "")
+            processed_accounts = []  # 记录已处理的QQ号名称
 
             # 运行前先退出 QQ 和 WeGame，确保干净状态
             print("🧹 运行前清理：退出 QQ 和 WeGame...")
@@ -1161,6 +1162,7 @@ class App:
                 print(f"{'='*40}")
                 self.run_stats["total"] += 1
                 account_failed = False
+                current_account_name = file_name  # 记录当前QQ号名称
 
                 # 步骤1：启动 QQ 并登录
                 if self._stop_event.is_set(): break
@@ -1307,13 +1309,19 @@ class App:
 
                 if account_failed:
                     self.run_stats["fail"] += 1
+                    processed_accounts.append(f"{current_account_name} (失败)")
                 else:
                     self.run_stats["success"] += 1
+                    processed_accounts.append(f"{current_account_name} (成功)")
 
             print("\n🎉 所有账号处理完毕！")
         except Exception as e:
             print(f"❌ 运行出错: {e}")
             traceback.print_exc()
+            # 程序异常退出时也发送邮件通知
+            self.run_stats["error"] = str(e)
+            self.run_stats["processed_accounts"] = processed_accounts
+            self._send_failure_email(e, processed_accounts)
         finally:
             self.root.after(0, self.on_finish)
 
@@ -1566,9 +1574,10 @@ class App:
             print(f"{'='*40}")
 
         # 发送邮件通知
-        self._send_email_notification(stats, elapsed)
+        processed_accounts = stats.get("processed_accounts", [])
+        self._send_email_notification(stats, elapsed, processed_accounts)
 
-    def _send_email_notification(self, stats, elapsed):
+    def _send_email_notification(self, stats, elapsed, processed_accounts=None):
         """在后台线程中发送邮件通知"""
         if not self.settings.get("email_enabled", False):
             return
@@ -1607,6 +1616,14 @@ class App:
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">未找到</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e67e22' if sell_stats['not_found']>0 else '#2c3e50'};">{sell_stats['not_found']} 件</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if sell_stats['failed']>0 else '#2c3e50'};">{sell_stats['failed']} 件</td></tr>"""
 
+        # QQ号名称列表
+        accounts_section = ""
+        if processed_accounts:
+            accounts_list_html = "".join(f"<li>{acc}</li>" for acc in processed_accounts)
+            accounts_section = f"""
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
+<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{accounts_list_html}</ul></td></tr>"""
+
         body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
 <h2 style="color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;">三角洲行动自动化工具 - 运行报告</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
@@ -1620,6 +1637,7 @@ class App:
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if stats['fail']>0 else '#2c3e50'};">{stats['fail']} 个</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">耗时</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
 {sell_section}
+{accounts_section}
 </table>
 <div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:{status_color}15;border:1px solid {status_color}40;">
 <span style="font-size:16px;font-weight:bold;color:{status_color};">运行状态：{status_text}</span>
@@ -1636,6 +1654,76 @@ class App:
                 print("📧 邮件通知已发送")
             else:
                 print(f"📧 邮件通知发送失败：{msg}")
+
+        threading.Thread(target=_send, daemon=True).start()
+
+    def _send_failure_email(self, error, processed_accounts=None):
+        """程序异常退出时发送失败邮件通知"""
+        if not self.settings.get("email_enabled", False):
+            return
+        smtp_code = self.settings.get("smtp_code", "").strip()
+        sender = self.settings.get("sender_email", "").strip()
+        receiver = self.settings.get("receiver_email", "").strip()
+        if not smtp_code or not sender or not receiver:
+            return
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stats = self.run_stats
+        elapsed = time.time() - stats["start_time"] if stats["start_time"] else 0
+        m, s = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        time_str = f"{h}时{m}分{s}秒" if h > 0 else f"{m}分{s}秒"
+
+        # 已选操作
+        op_names = {"tech_center": "技术中心", "tool_bench": "工作台",
+                    "armor_station": "防具台", "pharmacy_station": "制药台"}
+        selected = self.settings.get("selected_operations", [])
+        ops_text = "、".join(op_names.get(op, op) for op in selected) if selected else "无"
+
+        # 运行模式
+        run_mode = self.settings.get("run_mode", "单次")
+        schedule_times = self.settings.get("schedule_times", [])
+        mode_text = f"每日循环（{', '.join(schedule_times)}）" if run_mode == "每日循环" and schedule_times else "单次执行"
+
+        # QQ号名称列表
+        accounts_section = ""
+        if processed_accounts:
+            accounts_list_html = "".join(f"<li>{acc}</li>" for acc in processed_accounts)
+            accounts_section = f"""
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
+<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{accounts_list_html}</ul></td></tr>"""
+
+        body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
+<h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">三角洲行动自动化工具 - 运行失败通知</h2>
+<table style="border-collapse:collapse;width:100%;margin:15px 0;">
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">基本信息</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">运行模式</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{mode_text}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">运行统计</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{stats['total']} 个</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;">{stats['fail']} 个</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">已运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
+{accounts_section}
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#e74c3c;">错误信息</td></tr>
+<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;background:#fff5f5;color:#e74c3c;">{str(error)}</td></tr>
+</table>
+<div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#e74c3c15;border:1px solid #e74c3c40;">
+<span style="font-size:16px;font-weight:bold;color:#e74c3c;">运行状态：程序异常退出</span>
+</div>
+<p style="color:#7f8c8d;font-size:12px;text-align:center;margin-top:15px;">此邮件由三角洲行动自动化工具自动发送</p>
+</div>"""
+
+        def _send():
+            success, msg = utils.send_email_notification(
+                smtp_code, sender, receiver,
+                "三角洲自动化 - 运行失败通知", body
+            )
+            if success:
+                print("📧 失败通知邮件已发送")
+            else:
+                print(f"📧 失败通知邮件发送失败：{msg}")
 
         threading.Thread(target=_send, daemon=True).start()
 
