@@ -18,6 +18,7 @@ import pyautogui
 import traceback
 import config
 import utils
+import crypto_utils
 from settings_window import SettingsWindow
 
 # 尝试导入托盘所需库
@@ -28,9 +29,32 @@ try:
 except ImportError:
     TRAY_AVAILABLE = False
 
-# -------------------- 有效期设置 --------------------
-EXPIRY_DATE = datetime.date(2026, 7, 1)
-# ------------------------------------------------
+# ==================== 干扰代码（增加分析难度） ====================
+def _v1_check():
+    """校验许可证完整性"""
+    return True
+
+def _v2_check():
+    """验证环境配置"""
+    if _v1_check():
+        return False
+    return True
+
+def _v3_check():
+    """检查系统兼容性"""
+    _ = _v1_check()
+    _ = _v2_check()
+    return _ and not _
+
+# ==================== 混淆的错误消息 ====================
+_ERR_EXPIRY = [0xC8, 0xED, 0xBC, 0xFE, 0xD2, 0xD1, 0xB9, 0xFD, 0xC6, 0xDA]
+_ERR_TIME = [0xCA, 0xB1, 0xBC, 0xE4, 0xD2, 0xEC, 0xB3, 0xA3]
+
+def _decode_err(code):
+    """解码错误消息"""
+    return bytes(code).decode('gbk')
+
+# -------------------- 有效期已移至 config.py 加密存储 --------------------
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
 
@@ -1728,32 +1752,86 @@ class App:
         threading.Thread(target=_send, daemon=True).start()
 
 
-# ==================== 联网时间校验 ====================
-def get_network_time():
-    urls = [
-        "http://quan.suning.com/getSysTime.do",
-        "http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp",
-    ]
-    for attempt in range(3):
-        for url in urls:
-            try:
-                with urllib.request.urlopen(url, timeout=8) as resp:
-                    data = resp.read().decode('utf-8')
-                    if "sysTime2" in data:
-                        obj = json.loads(data)
-                        dt_str = obj["sysTime2"]
-                        date_part = dt_str.split(" ")[0]
-                        return datetime.date(*map(int, date_part.split("-")))
-                    if "mtopjsonp" in data:
-                        match = re.search(r'"t"\s*:\s*"(\d+)"', data)
-                        if match:
-                            timestamp = int(match.group(1)) / 1000.0
-                            dt = datetime.datetime.fromtimestamp(timestamp)
-                            return dt.date()
-            except Exception:
-                continue
-        time.sleep(0.5)
+# ==================== 多重时间源校验 ====================
+def _fetch_time_taobao():
+    """从淘宝获取时间"""
+    url = "http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp"
+    with urllib.request.urlopen(url, timeout=3) as resp:
+        data = resp.read().decode('utf-8')
+        match = re.search(r'"t"\s*:\s*"(\d+)"', data)
+        if match:
+            timestamp = int(match.group(1)) / 1000.0
+            return datetime.datetime.fromtimestamp(timestamp).date()
     return None
+
+def _fetch_time_suning():
+    """从苏宁获取时间"""
+    url = "http://quan.suning.com/getSysTime.do"
+    with urllib.request.urlopen(url, timeout=3) as resp:
+        data = resp.read().decode('utf-8')
+        obj = json.loads(data)
+        dt_str = obj["sysTime2"]
+        date_part = dt_str.split(" ")[0]
+        return datetime.date(*map(int, date_part.split("-")))
+    return None
+
+def _fetch_time_worldtime():
+    """从世界时间API获取时间"""
+    url = "http://worldtimeapi.org/api/timezone/Asia/Shanghai"
+    with urllib.request.urlopen(url, timeout=5) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+        dt_str = data["datetime"]
+        return datetime.datetime.fromisoformat(dt_str.replace("Z", "+00:00")).date()
+    return None
+
+def get_verified_network_time():
+    """
+    从多个时间源获取时间，取中位数
+    返回: datetime.date 或 None（所有源都失败时）
+    """
+    fetchers = [_fetch_time_taobao, _fetch_time_suning, _fetch_time_worldtime]
+    times = []
+
+    for fetcher in fetchers:
+        try:
+            t = fetcher()
+            if t:
+                times.append(t)
+        except Exception:
+            continue
+
+    if not times:
+        return None
+
+    # 取中位数，排除异常值
+    times.sort()
+    return times[len(times) // 2]
+
+
+def _check_time_drift(current_net_time):
+    """
+    检测系统时间是否被回拨
+    返回: True=正常, False=被篡改
+    """
+    last_time = crypto_utils.load_timestamp()
+
+    if last_time is None:
+        # 首次运行，无记录
+        return True
+
+    # 将上次记录的时间转换为日期
+    last_date = last_time.date() if isinstance(last_time, datetime.datetime) else last_time
+
+    if current_net_time < last_date:
+        # 时间被回拨
+        print(f"⚠️ 检测到系统时间异常：当前={current_net_time}，上次记录={last_date}")
+        return False
+
+    return True
+
+def _save_current_timestamp(net_time):
+    """保存当前网络时间戳"""
+    crypto_utils.save_timestamp(net_time)
 
 
 def main():
@@ -1786,21 +1864,55 @@ def main():
 
     def _verify_in_background():
         """后台线程：执行联网时间校验"""
-        net_date = get_network_time()
+        net_date = get_verified_network_time()
         root.after(0, lambda: _on_verify_done(net_date))
 
     def _on_verify_done(net_date):
         """主线程：校验完成后处理结果"""
         progress.stop()
 
+        # 获取加密后的有效期
+        expiry_date = config.get_expiry_date()
+
         if net_date is None:
-            messagebox.showerror("网络错误", "无法连接时间服务器，请检查网络后重试。")
+            # 所有时间源都失败，尝试使用本地记录
+            last_time = crypto_utils.load_timestamp()
+            if last_time is None:
+                # 首次运行且无网络，拒绝启动
+                messagebox.showerror("网络错误", "无法连接时间服务器且无本地记录，请检查网络后重试。")
+                root.destroy()
+                return
+            # 使用上次记录的时间进行过期检查
+            last_date = last_time.date() if isinstance(last_time, datetime.datetime) else last_time
+            if last_date > expiry_date:
+                messagebox.showerror("软件已过期", f"该版本已于 {expiry_date} 到期。\n上次验证日期：{last_date}")
+                root.destroy()
+                return
+            print("⚠️ 无法连接时间服务器，使用本地记录继续")
+            # 继续运行
+            loading_frame.destroy()
+            root.geometry("")
+            _check_resolution_on_startup(root)
+            App(root)
+            root.after(50, lambda: (root.lift(), root.focus_force()))
+            root.after(50, lambda: root.attributes('-topmost', True))
+            root.after(200, lambda: root.attributes('-topmost', False))
+            return
+
+        # 检查时间是否被回拨
+        if not _check_time_drift(net_date):
+            messagebox.showerror(_decode_err(_ERR_TIME), "检测到系统时间被篡改，请恢复正确时间后重试。")
             root.destroy()
             return
-        if net_date > EXPIRY_DATE:
-            messagebox.showerror("软件已过期", f"该版本已于 {EXPIRY_DATE} 到期。\n当前网络日期：{net_date}")
+
+        # 检查是否过期
+        if net_date > expiry_date:
+            messagebox.showerror(_decode_err(_ERR_EXPIRY), f"该版本已于 {expiry_date} 到期。\n当前网络日期：{net_date}")
             root.destroy()
             return
+
+        # 保存当前时间戳
+        _save_current_timestamp(net_date)
 
         # 校验通过，销毁加载界面，初始化完整应用
         loading_frame.destroy()

@@ -7,6 +7,33 @@ import sys
 import json
 import winreg
 
+# ==================== 加密后的有效期配置 ====================
+# 有效期: 2026年7月1日（加密存储，非明文）
+# 解密逻辑在 crypto_utils.py 中
+def get_expiry_date():
+    """动态解密有效期"""
+    from crypto_utils import decrypt_expiry
+    return decrypt_expiry()
+
+# ==================== 多时间源配置 ====================
+TIME_SOURCES = [
+    {
+        "name": "淘宝",
+        "url": "http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp",
+        "timeout": 3
+    },
+    {
+        "name": "苏宁",
+        "url": "http://quan.suning.com/getSysTime.do",
+        "timeout": 3
+    },
+    {
+        "name": "世界时间",
+        "url": "http://worldtimeapi.org/api/timezone/Asia/Shanghai",
+        "timeout": 5
+    }
+]
+
 # ==================== 资源路径辅助 ====================
 def resource_path(relative_path):
     try:
