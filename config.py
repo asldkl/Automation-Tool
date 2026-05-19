@@ -108,6 +108,7 @@ DEFAULT_SETTINGS = {
     "enable_sell_after_run": False,   # 主流程完成后执行一键售卖
     "sell_discount_times": 0,         # 降价次数（0-5）
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
+    "sell_quantity": 1,               # 每个物品出售次数（1-99，用于产出数量>1的物品）
 }
 
 def load_settings():

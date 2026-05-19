@@ -80,6 +80,7 @@ class SettingsWindow:
         self.enable_sell_var = tk.BooleanVar(value=app.settings.get("enable_sell_after_run", False))
         self.sell_discount_var = tk.IntVar(value=app.settings.get("sell_discount_times", 0))
         self.sell_confidence_var = tk.DoubleVar(value=float(app.settings.get("sell_confidence", 0.55)))
+        self.sell_quantity_var = tk.IntVar(value=app.settings.get("sell_quantity", 1))
 
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
@@ -324,6 +325,14 @@ class SettingsWindow:
         ttk.Spinbox(sell_inner, from_=0, to=5, increment=1,
                     textvariable=self.sell_discount_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(sell_inner, text="次（0-5，0=不降价）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        sell_qty_row = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
+        sell_qty_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(sell_qty_row, text="出售数量：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(sell_qty_row, from_=1, to=99, increment=1,
+                    textvariable=self.sell_quantity_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(sell_qty_row, text="个/物品（1-99，适配产出数量>1的物品，也可在模板上传向导中重复添加物品图片）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # 出售置信度滑块
         sell_conf_row = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
@@ -578,7 +587,7 @@ class SettingsWindow:
         """打开模板截图向导"""
         from template_capture import TemplateCaptureWizard
         current_res = config.get_resolution_key()
-        TemplateCaptureWizard(self.win, current_res)
+        TemplateCaptureWizard(self.win, current_res, app=self.app)
 
     def _get_autostart_state(self):
         try:
@@ -688,6 +697,7 @@ class SettingsWindow:
         self.app.settings["enable_sell_after_run"] = self.enable_sell_var.get()
         self.app.settings["sell_discount_times"] = self.sell_discount_var.get()
         self.app.settings["sell_confidence"] = round(self.sell_confidence_var.get(), 2)
+        self.app.settings["sell_quantity"] = self.sell_quantity_var.get()
 
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)

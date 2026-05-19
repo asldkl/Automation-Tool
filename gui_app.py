@@ -917,9 +917,6 @@ class App:
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
         self.settings_btn.pack(side=tk.LEFT, padx=8)
-        self.sell_test_btn = ttk.Button(ctrl_frame, text="出售测试", style='Accent.TButton',
-                                        command=self._test_sell, width=12)
-        self.sell_test_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self._log_file_path)
@@ -1489,75 +1486,62 @@ class App:
 
         sell_confidence = self.settings.get("sell_confidence", 0.55)
         discount_times = self.settings.get("sell_discount_times", 0)
-        sell_stats["total"] = len(sell_items)
+        sell_quantity = self.settings.get("sell_quantity", 1)
+        sell_stats["total"] = len(sell_items) * sell_quantity
 
         for item_path in sell_items:
             if self._stop_event.is_set():
                 return False, sell_stats
             item_name = os.path.basename(item_path)
-            print(f"📦 出售物品：{item_name}")
+            print(f"📦 出售物品：{item_name}（数量：{sell_quantity}）")
 
-            if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
-                print(f"⚠️ 未找到物品 {item_name}，跳过")
-                sell_stats["not_found"] += 1
-                continue
-            time.sleep(0.5)
+            # 对每个物品执行 sell_quantity 次出售
+            for qty in range(sell_quantity):
+                if self._stop_event.is_set():
+                    return False, sell_stats
 
-            if not utils.find_and_click(config.Sell, timeout=10):
-                print(f"❌ 未找到出售按钮")
-                sell_stats["failed"] += 1
-                continue
-            time.sleep(0.5)
+                if sell_quantity > 1:
+                    print(f"  📦 第 {qty + 1}/{sell_quantity} 次出售")
 
-            if not utils.find_and_click(config.List_Item, timeout=10):
-                print(f"❌ 未找到上架按钮")
-                sell_stats["failed"] += 1
-                continue
-            time.sleep(0.5)
+                if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
+                    print(f"⚠️ 未找到物品 {item_name}，跳过")
+                    sell_stats["not_found"] += 1
+                    break  # 找不到物品就跳出内层循环，处理下一个物品
+                time.sleep(0.5)
 
-            for i in range(discount_times):
-                if utils.find_and_click(config.Discount, timeout=5):
-                    print(f"📉 降价 {i + 1}/{discount_times}")
-                    time.sleep(0.3)
+                if not utils.find_and_click(config.Sell, timeout=10):
+                    print(f"❌ 未找到出售按钮")
+                    sell_stats["failed"] += 1
+                    break
+                time.sleep(0.5)
 
-            if not utils.find_and_click(config.Confirm_Listing, timeout=10):
-                print(f"❌ 未找到确认上架按钮")
-                sell_stats["failed"] += 1
-                continue
-            time.sleep(1.5)
-            sell_stats["sold"] += 1
-            print(f"✅ {item_name} 已上架")
+                if not utils.find_and_click(config.List_Item, timeout=10):
+                    print(f"❌ 未找到上架按钮")
+                    sell_stats["failed"] += 1
+                    break
+                time.sleep(0.5)
+
+                for i in range(discount_times):
+                    if utils.find_and_click(config.Discount, timeout=5):
+                        print(f"📉 降价 {i + 1}/{discount_times}")
+                        time.sleep(0.3)
+
+                if not utils.find_and_click(config.Confirm_Listing, timeout=10):
+                    print(f"❌ 未找到确认上架按钮")
+                    sell_stats["failed"] += 1
+                    break
+                time.sleep(1.5)
+                sell_stats["sold"] += 1
+                if sell_quantity > 1:
+                    print(f"  ✅ 第 {qty + 1}/{sell_quantity} 次出售完成")
+
+            print(f"✅ {item_name} 出售完成")
 
         print(f"✅ 一键出售完成：共 {sell_stats['total']} 件，"
               f"成功 {sell_stats['sold']} 件，"
               f"未找到 {sell_stats['not_found']} 件，"
               f"失败 {sell_stats['failed']} 件")
         return True, sell_stats
-
-    def _test_sell(self):
-        """测试一键出售流程（从 Tab 键开始）"""
-        if self.running:
-            messagebox.showwarning("提示", "任务运行中，请等待完成后再测试。")
-            return
-        sell_items = config.get_sell_items()
-        if not sell_items:
-            messagebox.showwarning("提示", "未上传任何售卖物品图片，请先在设置中上传。")
-            return
-
-        def _run():
-            start_time = time.time()
-            pyautogui.press("Tab")
-            time.sleep(1)
-            success, sell_stats = self._sell_operations()
-            elapsed = time.time() - start_time
-            stats_text = (f"测试耗时：{elapsed:.1f} 秒\n"
-                          f"共 {sell_stats['total']} 件物品\n"
-                          f"成功上架：{sell_stats['sold']} 件\n"
-                          f"未找到：{sell_stats['not_found']} 件\n"
-                          f"失败：{sell_stats['failed']} 件")
-            self.root.after(0, lambda: messagebox.showinfo("出售测试完成", stats_text))
-
-        threading.Thread(target=_run, daemon=True).start()
 
     def on_finish(self):
         self.running = False
