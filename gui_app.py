@@ -11,6 +11,7 @@ import datetime
 import threading
 import urllib.request
 import re
+import html
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 import pyautogui
@@ -19,12 +20,13 @@ import traceback
 import config
 import utils
 import crypto_utils
+import cooldown_manager
 from settings_window import SettingsWindow
 
 # 尝试导入托盘所需库
 try:
     import pystray
-    from PIL import Image
+    from PIL import Image, ImageTk
     TRAY_AVAILABLE = True
 except ImportError:
     TRAY_AVAILABLE = False
@@ -112,6 +114,10 @@ class App:
         self._wake_attempted = False  # 是否已尝试唤醒显示器
         # 关机标志（每日只触发一次）
         self._shutdown_handled_today = False
+        # 定时任务触发时跳过冷却检查
+        self._ignore_cooldown_this_run = False
+        # 用户主动停止后阻止冷却监听重新触发
+        self._user_stopped_cooldown = False
         # 窗口图标
         try:
             icon_path = config.resource_path("picture/icon.ico")
@@ -158,9 +164,19 @@ class App:
         # 单实例前台显示事件
         self._setup_show_event()
 
+        # 互斥校验：auto_start 与 cooldown_run_immediately 不能同时启用
+        if self.settings.get("auto_start", False) and self.settings.get("cooldown_run_immediately", False):
+            print("⚠️ 检测到「定时执行」与「冷却完立即运行」同时启用，自动关闭「冷却完立即运行」")
+            self.settings["cooldown_run_immediately"] = False
+            config.save_settings(self.settings)
+
         # 定时任务初始化
         if self.settings.get("auto_start", False):
             self._start_scheduler()
+
+        # 冷却完立即运行：启动冷却到期监听线程
+        if self.settings.get("cooldown_run_immediately", False):
+            self._start_cooldown_watcher()
 
         # 开机自启动检测
         is_auto_start = '--auto-start' in sys.argv
@@ -379,6 +395,10 @@ class App:
         self._scheduler_stop_event.set()
         if self._schedule_thread and self._schedule_thread.is_alive():
             self._schedule_thread.join(timeout=3)
+        # 停止冷却监听
+        self._stop_cooldown_watcher()
+        if hasattr(self, '_cooldown_watcher_thread') and self._cooldown_watcher_thread and self._cooldown_watcher_thread.is_alive():
+            self._cooldown_watcher_thread.join(timeout=3)
         # 清理唤醒定时器
         if self._wake_timer_handle:
             utils.cancel_wake_timer(self._wake_timer_handle)
@@ -444,6 +464,99 @@ class App:
         if not self._scheduler_stop_event.is_set() and self.settings.get("auto_start", False):
             print("🔄 正在重启调度器...")
             self._start_scheduler()
+
+    def _start_cooldown_watcher(self):
+        """启动冷却到期监听线程（cooldown_run_immediately 模式）"""
+        if hasattr(self, '_cooldown_watcher_thread') and self._cooldown_watcher_thread and self._cooldown_watcher_thread.is_alive():
+            return
+
+        # Bug7: 首次启用时，为所有没有冷却记录的账号记录一次冷却时间
+        # 防止所有账号在30秒内全部执行
+        if self.settings.get("enable_cooldown", False):
+            cd_hours = self.settings.get("cooldown_hours", 8)
+            cd_delay = self.settings.get("cooldown_delay_minutes", 5)
+            for img_path in self.qq_account_images:
+                file_name = os.path.basename(img_path)
+                cooling, _ = cooldown_manager.is_cooling_down(file_name)
+                if not cooling:
+                    # 检查是否有历史记录
+                    all_cd = cooldown_manager.get_all_cooldowns()
+                    if file_name not in all_cd:
+                        cooldown_manager.record_run(file_name, cd_hours, cd_delay)
+                        print(f"📝 首次启用冷却监听，为 {file_name} 记录冷却时间")
+
+        self._cooldown_watcher_stop = threading.Event()
+        self._cooldown_watcher_thread = threading.Thread(target=self._cooldown_watcher_loop, daemon=True)
+        self._cooldown_watcher_thread.start()
+        print("👀 冷却到期监听已启动，冷却结束后将自动执行任务")
+
+    def _stop_cooldown_watcher(self):
+        """停止冷却到期监听"""
+        if hasattr(self, '_cooldown_watcher_stop') and self._cooldown_watcher_stop:
+            self._cooldown_watcher_stop.set()
+
+    def _restart_cooldown_watcher(self):
+        """冷却监听异常退出后的恢复入口"""
+        if not self._cooldown_watcher_stop.is_set() and self.settings.get("cooldown_run_immediately", False):
+            print("🔄 正在重启冷却监听...")
+            self._cooldown_watcher_thread = None
+            self._start_cooldown_watcher()
+
+    def _cooldown_watcher_loop(self):
+        """冷却到期监听循环：每30秒检查一次，有账号冷却到期则自动执行"""
+        last_trigger_minute = None
+        try:
+            while not self._cooldown_watcher_stop.is_set():
+                try:
+                    # 用户主动停止后，等待2分钟再恢复监听（防止立即重新触发）
+                    if self._user_stopped_cooldown:
+                        for _ in range(24):  # 2分钟 = 24 * 5秒
+                            if self._cooldown_watcher_stop.is_set():
+                                return
+                            time.sleep(5)
+                        self._user_stopped_cooldown = False
+                        print("ℹ️ 用户停止冷却期已过，恢复冷却监听")
+                        continue
+
+                    if not self.running and self.qq_account_images:
+                        now = datetime.datetime.now()
+                        current_minute = now.strftime("%Y-%m-%d %H:%M")
+                        # 同一分钟内不重复触发
+                        if current_minute != last_trigger_minute:
+                            has_ready = self._check_any_account_ready()
+                            if has_ready:
+                                last_trigger_minute = current_minute
+                                print("🔔 检测到账号冷却到期，自动执行任务...")
+                                utils.prevent_sleep()
+                                utils.wake_display()
+                                time.sleep(2)
+                                self.root.after(0, self.start)
+                except Exception as inner_e:
+                    print(f"⚠️ 冷却监听异常（将继续运行）: {inner_e}")
+                    traceback.print_exc()
+                # 等待30秒，但分段检查停止信号以支持快速退出
+                for _ in range(6):
+                    if self._cooldown_watcher_stop.is_set():
+                        break
+                    time.sleep(5)
+        except Exception as e:
+            print(f"❌ 冷却监听线程异常退出: {e}")
+            traceback.print_exc()
+            # Bug 5: 异常恢复机制
+            if not self._cooldown_watcher_stop.is_set() and self.settings.get("cooldown_run_immediately", False):
+                print("🔄 冷却监听线程将在 5 秒后自动重启...")
+                self.root.after(5000, self._restart_cooldown_watcher)
+
+    def _check_any_account_ready(self):
+        """检查是否有账号冷却到期且未在冷却中，返回是否有可用账号"""
+        if not self.settings.get("cooldown_run_immediately", False):
+            return False
+        for img_path in self.qq_account_images:
+            file_name = os.path.basename(img_path)
+            cooling, _ = cooldown_manager.is_cooling_down(file_name)
+            if not cooling:
+                return True
+        return False
 
     def _schedule_loop_daily(self):
         """每日循环模式：持续检查时间点（含30分钟容差，防止休眠唤醒后错过目标时间）"""
@@ -678,6 +791,8 @@ class App:
                 self._reminder_window = None
             self._reminder_shown = False
             self._reminder_cancelled_time = None
+            # 定时任务触发时临时忽略冷却检查，确保所有账号都能执行
+            self._ignore_cooldown_this_run = True
             # 防止系统在运行时睡眠
             utils.prevent_sleep()
             # 尝试唤醒显示器（从睡眠/息屏状态恢复）
@@ -815,7 +930,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.4.2  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.7.1  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -877,6 +992,8 @@ class App:
         ttk.Label(info_row, text="操作：", style='Info.TLabel').pack(side=tk.LEFT)
         self.op_label = ttk.Label(info_row, text="就绪", style='Warning.TLabel')
         self.op_label.pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Button(info_row, text="查看冷却", style='TButton',
+                   command=self._show_cooldown_window, width=10).pack(side=tk.RIGHT)
 
         # 进度条
         self.progress = ttk.Progressbar(main_container, length=500, mode='determinate',
@@ -926,6 +1043,8 @@ class App:
         """从设置窗口保存后应用自动任务设置"""
         if self.settings.get("auto_start", False):
             self._start_scheduler()
+            # auto_start 启用时停止冷却监听（互斥）
+            self._stop_cooldown_watcher()
         else:
             if self._schedule_thread and self._schedule_thread.is_alive():
                 self._scheduler_stop_event.set()
@@ -936,6 +1055,12 @@ class App:
             if self._wake_timer_handle:
                 utils.cancel_wake_timer(self._wake_timer_handle)
                 self._wake_timer_handle = None
+
+        # 冷却完立即运行监听
+        if self.settings.get("cooldown_run_immediately", False):
+            self._start_cooldown_watcher()
+        else:
+            self._stop_cooldown_watcher()
 
     def open_settings(self):
         if self._settings_window and self._settings_window.win.winfo_exists():
@@ -1107,6 +1232,92 @@ class App:
         except Exception as e:
             messagebox.showerror("测试失败", f"识别过程出错：{e}")
 
+    # ---------- 冷却查看 ----------
+    def _show_cooldown_window(self):
+        """弹出冷却状态查看窗口"""
+        win = tk.Toplevel(self.root)
+        win.title("账号冷却状态")
+        win.geometry("620x400")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+        # 居中
+        win.update_idletasks()
+        x = (win.winfo_screenwidth() - 620) // 2
+        y = (win.winfo_screenheight() - 400) // 2
+        win.geometry(f"620x400+{x}+{y}")
+        # 图标
+        try:
+            icon_path = config.resource_path("picture/icon.ico")
+            if os.path.exists(icon_path):
+                icon_img = Image.open(icon_path)
+                win._icon_photo = ImageTk.PhotoImage(icon_img)
+                win.iconphoto(False, win._icon_photo)
+        except Exception:
+            pass
+
+        # Treeview
+        columns = ("account", "last_run", "remaining", "next_run")
+        tree = ttk.Treeview(win, columns=columns, show="headings", height=12)
+        tree.heading("account", text="账号名称")
+        tree.heading("last_run", text="上次运行时间")
+        tree.heading("remaining", text="冷却剩余")
+        tree.heading("next_run", text="下次运行时间")
+        tree.column("account", width=150, anchor="center")
+        tree.column("last_run", width=150, anchor="center")
+        tree.column("remaining", width=120, anchor="center")
+        tree.column("next_run", width=150, anchor="center")
+
+        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
+        scrollbar.pack(side=tk.LEFT, fill=tk.Y, pady=10, padx=(0, 10))
+
+        def _format_remaining(seconds):
+            if seconds <= 0:
+                return "已冷却"
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            if h > 0:
+                return f"{h}小时{m}分钟"
+            return f"{m}分钟"
+
+        def _refresh():
+            tree.delete(*tree.get_children())
+            all_cd = cooldown_manager.get_all_cooldowns()
+            for name, info in sorted(all_cd.items()):
+                remaining_str = _format_remaining(info["remaining_seconds"])
+                tree.insert("", tk.END, values=(
+                    name,
+                    info["last_run_time"],
+                    remaining_str,
+                    info["next_run_time"],
+                ))
+
+        _refresh()
+
+        # 按钮区域
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def _reset_selected():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("提示", "请先选择要重置的账号。", parent=win)
+                return
+            item = tree.item(sel[0])
+            account_name = item["values"][0]
+            if messagebox.askyesno("确认", f"确定重置「{account_name}」的冷却？", parent=win):
+                cooldown_manager.reset_cooldown(account_name)
+                _refresh()
+
+        ttk.Button(btn_frame, text="重置选中账号冷却", style='TButton',
+                   command=_reset_selected, width=16).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="刷新", style='TButton',
+                   command=_refresh, width=8).pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Button(btn_frame, text="关闭", style='TButton',
+                   command=win.destroy, width=8).pack(side=tk.RIGHT)
+
     # ---------- 启停控制 ----------
     def start(self):
         if self.running:
@@ -1116,6 +1327,7 @@ class App:
             return
         self.running = True
         self._stop_event.clear()
+        self._user_stopped_cooldown = False  # 新运行开始，清除停止标志
         self.current_step = 0
         self.progress['value'] = 0
         self.stats_label.config(text="")
@@ -1135,6 +1347,8 @@ class App:
             return
         self._stop_event.set()
         self.running = False
+        # 标记用户主动停止，阻止冷却监听在短时间内重新触发
+        self._user_stopped_cooldown = True
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         print("\n⏹ 停止信号已发送，将尽快终止...")
@@ -1171,11 +1385,34 @@ class App:
             print(f"  本轮将处理 {total} 个 QQ 账号")
             print("=" * 55)
 
+            last_account_start_time = None  # 记录上一个实际执行的账号开始时间
+
             for i, img_path in enumerate(self.qq_account_images):
                 if self._stop_event.is_set():
                     break
 
                 file_name = os.path.basename(img_path)
+                current_account_name = file_name
+
+                # 冷却检查（定时任务触发时可跳过冷却检查）
+                if self.settings.get("enable_cooldown", False) and not self._ignore_cooldown_this_run:
+                    cooling, next_time = cooldown_manager.is_cooling_down(file_name)
+                    if cooling:
+                        print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
+                        processed_accounts.append(f"{file_name} (冷却中)")
+                        continue
+
+                # 执行间隔限制：相邻实际执行的账号开始时间间隔不得小于4分钟
+                if last_account_start_time is not None:
+                    elapsed_since_last = time.time() - last_account_start_time
+                    min_interval = 240  # 4分钟 = 240秒
+                    if elapsed_since_last < min_interval:
+                        wait_remaining = min_interval - elapsed_since_last
+                        print(f"⏳ 账号切换间隔不足4分钟，等待 {wait_remaining:.0f} 秒...")
+                        self.set_operation(f"等待间隔 ({wait_remaining:.0f}s)")
+                        time.sleep(wait_remaining)
+                last_account_start_time = time.time()
+
                 acc_text = f"第 {i+1}/{total} 个账号"
                 self.root.after(0, self.update_ui, False, acc_text, file_name)
                 print(f"\n{'='*40}")
@@ -1183,7 +1420,6 @@ class App:
                 print(f"{'='*40}")
                 self.run_stats["total"] += 1
                 account_failed = False
-                current_account_name = file_name  # 记录当前QQ号名称
 
                 # 步骤1：启动 QQ 并登录
                 if self._stop_event.is_set(): break
@@ -1194,18 +1430,44 @@ class App:
                     account_failed = True
 
                 if not account_failed:
-                    # 等待 QQ 窗口出现
+                    # 等待 QQ 窗口出现（含降级方案）
                     qq_ready = False
+                    qq_activate_fail_count = 0
+                    qq_degrade_triggered = False
                     for _ in range(30):
                         if self._stop_event.is_set(): break
                         if utils.activate_window_by_title("QQ", partial_match=True,
                                                            exclude_titles=["WeGame"]):
                             qq_ready = True
+                            qq_activate_fail_count = 0
                             break
+                        qq_activate_fail_count += 1
+                        # 连续激活失败5次，启动降级方案：直接图像识别点击 QQ_ACCOUNT_SELECT
+                        if qq_activate_fail_count >= 5:
+                            qq_degrade_triggered = True
+                            print("⚠️ QQ 窗口激活连续失败5次，启动降级方案：尝试图像识别点击...")
+                            img_found = False
+                            for img_retry in range(3):
+                                if self._stop_event.is_set(): break
+                                if utils.find_and_click(config.QQ_ACCOUNT_SELECT, timeout=5):
+                                    img_found = True
+                                    qq_ready = True
+                                    print(f"✅ 降级方案成功：图像识别点击 QQ_ACCOUNT_SELECT（第 {img_retry+1} 次）")
+                                    break
+                                print(f"⚠️ 降级方案重试 ({img_retry+1}/3)...")
+                                time.sleep(1)
+                            if img_found:
+                                break
+                            else:
+                                print(f"❌ 降级方案失败：QQ_ACCOUNT_SELECT 图像识别3次均未找到，账号 {current_account_name} 登录失败，跳过")
+                                self._send_account_failure_email(current_account_name, "未启用", processed_accounts)
+                                account_failed = True
+                                break
                         time.sleep(0.5)
-                    if not qq_ready:
+                    if not qq_ready and not account_failed:
                         print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
-                    time.sleep(1)
+                    if qq_ready:
+                        time.sleep(1)
 
                 if not account_failed and self._stop_event.is_set(): break
                 if not account_failed:
@@ -1300,12 +1562,15 @@ class App:
                         time.sleep(8)
                         extra_wait = self.settings.get("game_launch_wait", 0)
                         if extra_wait > 0:
-                            print(f"⏳ 额外等待 {extra_wait} 秒（用户设置的游戏启动等待时间）...")
+                            print(f"⏳ 游戏已启动，额外等待 {extra_wait} 秒...")
                             time.sleep(extra_wait)
                     else:
                         print("⚠️ 未检测到游戏窗口，继续尝试操作...")
 
-                    self._game_operations()
+                    if not self._game_operations():
+                        if not self._stop_event.is_set():
+                            print("❌ 游戏内操作失败，跳过此账号")
+                            account_failed = True
                     if self._stop_event.is_set(): break
 
                 # 步骤4：关闭游戏和 WeGame，退出 QQ 和 WeGame 进程
@@ -1328,9 +1593,23 @@ class App:
                 utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
                 time.sleep(2)
 
+                # 记录冷却时间（无论成功失败都记录）
+                if self.settings.get("enable_cooldown", False):
+                    cd_hours = self.settings.get("cooldown_hours", 8)
+                    cd_delay = self.settings.get("cooldown_delay_minutes", 5)
+                    cooldown_manager.record_run(current_account_name, cd_hours, cd_delay)
+
+                # 获取下次运行时间
+                next_run_str = "未启用"
+                if self.settings.get("enable_cooldown", False):
+                    _, next_run_str = cooldown_manager.is_cooling_down(current_account_name)
+                    next_run_str = next_run_str or "已冷却"
+
                 if account_failed:
                     self.run_stats["fail"] += 1
                     processed_accounts.append(f"{current_account_name} (失败)")
+                    # 立即发送失败邮件通知
+                    self._send_account_failure_email(current_account_name, next_run_str, processed_accounts)
                 else:
                     self.run_stats["success"] += 1
                     processed_accounts.append(f"{current_account_name} (成功)")
@@ -1339,27 +1618,27 @@ class App:
         except Exception as e:
             print(f"❌ 运行出错: {e}")
             traceback.print_exc()
-            # 程序异常退出时也发送邮件通知
             self.run_stats["error"] = str(e)
-            self.run_stats["processed_accounts"] = processed_accounts
             self._send_failure_email(e, processed_accounts)
         finally:
+            self.run_stats["processed_accounts"] = processed_accounts
             self.root.after(0, self.on_finish)
 
     def _game_operations(self):
+        """执行游戏内操作，返回 True=成功，False=失败"""
         print("\n--- 进入游戏操作 ---")
         self.set_operation("进入烽火地带")
         print("进入烽火地带...")
-        for retry in range(3):
-            if self._stop_event.is_set(): return
+        for retry in range(5):
+            if self._stop_event.is_set(): return False
             if utils.find_and_click(config.Hazard_Operations, timeout=15):
                 break
-            print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/3)...")
+            print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/5)...")
             time.sleep(5)
         else:
-            print("❌ 多次重试后仍未找到烽火地带图标")
+            print("❌ 5次重试后仍未找到烽火地带图标")
             utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
-            return
+            return False
 
         time.sleep(5)
         self.set_operation("进入大厅 / 特勤处")
@@ -1372,7 +1651,7 @@ class App:
         time.sleep(1)
 
         for retry in range(3):
-            if self._stop_event.is_set(): return
+            if self._stop_event.is_set(): return False
             if utils.find_and_click(config.Special_Ops, timeout=15):
                 break
             print(f"⚠️ 未找到特勤处图标，5秒后重试 ({retry + 1}/3)...")
@@ -1380,8 +1659,29 @@ class App:
         else:
             print("❌ 多次重试后仍未找到特勤处图标")
             utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
-            return
+            return False
         time.sleep(0.5)
+
+        # --- 邮箱货币领取 ---
+        if self.settings.get("enable_email_currency", False):
+            self.set_operation("领取邮箱货币")
+            print("📧 检查邮箱货币...")
+            if utils.find_and_click(config.EMAIL_MAIL, timeout=10):
+                time.sleep(1)
+                if utils.find_and_click(config.EMAIL_TRADE_HOUSE, timeout=10):
+                    time.sleep(0.5)
+                    if utils.find_and_click(config.EMAIL_CLAIM_ALL, timeout=10):
+                        time.sleep(0.5)
+                        utils.find_and_click(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
+                        time.sleep(0.5)
+                    pyautogui.press("esc")
+                    time.sleep(0.5)
+                # 无论 TRADE_HOUSE 成功与否，都关闭邮箱界面回到主界面
+                pyautogui.press("esc")
+                time.sleep(0.5)
+                print("✅ 邮箱货币领取流程完成")
+            else:
+                print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
 
         selected_ops = self.settings.get("selected_operations", [])
         all_facilities = [
@@ -1393,30 +1693,37 @@ class App:
         facilities = [(f[1], f[2], f[3]) for f in all_facilities if f[0] in selected_ops]
         if not facilities:
             print("ℹ️ 未选择任何设施操作，跳过游戏内操作")
-            return
+            return True
         op_names = [f[3] for f in all_facilities if f[0] in selected_ops]
         print(f"🔧 将执行：{'、'.join(op_names)}")
+        all_success = True
         for fac_img, prod_img, fac_name in facilities:
-            if self._stop_event.is_set(): break
+            if self._stop_event.is_set(): return False
             self.set_operation(f"处理 {fac_name}")
             if not self._handle_facility(fac_img, prod_img, fac_name):
                 if not self._stop_event.is_set():
                     print(f"❌ 处理{fac_name}失败，终止当前账号")
                     utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
                     utils.kill_process(config.WEGAME_PROCESS)
+                all_success = False
                 break
             pyautogui.press("esc")
             time.sleep(0.5)
-        else:
+        if all_success:
             print("✅ 所有设施处理完成")
+
+        if not all_success:
+            return False
 
         # 主流程完成后执行一键出售
         if self.settings.get("enable_sell_after_run", False):
             print("\n--- 主流程完成，执行一键出售 ---")
             pyautogui.press("esc")
             time.sleep(1)
-            success, sell_stats = self._sell_operations()
+            _, sell_stats = self._sell_operations()
             self.run_stats["sell_stats"] = sell_stats
+
+        return True
 
     def _handle_facility(self, facility_img, produce_item_img, facility_name):
         if self._stop_event.is_set(): return False
@@ -1546,6 +1853,7 @@ class App:
     def on_finish(self):
         self.running = False
         self._stop_event.clear()  # 清除工作线程停止信号，不影响调度器
+        self._ignore_cooldown_this_run = False  # 重置冷却忽略标志
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.progress['value'] = self.progress['maximum']
@@ -1584,6 +1892,82 @@ class App:
         # 发送邮件通知
         processed_accounts = stats.get("processed_accounts", [])
         self._send_email_notification(stats, elapsed, processed_accounts)
+
+    def _get_account_next_run(self, account_name):
+        """获取账号的下次运行时间描述"""
+        if not self.settings.get("enable_cooldown", False):
+            return "未启用"
+        _, next_time = cooldown_manager.is_cooling_down(account_name)
+        return next_time or "已冷却"
+
+    def _build_accounts_html(self, processed_accounts):
+        """构建已处理账号列表的 HTML（含下次运行时间）"""
+        if not processed_accounts:
+            return ""
+        items = []
+        for acc in processed_accounts:
+            # acc 格式: "xxx.png (成功)" 或 "xxx.png (失败)" 或 "xxx.png (冷却中)"
+            next_run = "未启用"
+            if self.settings.get("enable_cooldown", False):
+                # 提取账号文件名（去掉状态后缀）
+                account_name = acc.split(" (")[0] if " (" in acc else acc
+                next_run = self._get_account_next_run(account_name)
+            items.append(f"<li>{html.escape(acc)}　｜　下次运行：{html.escape(next_run)}</li>")
+        accounts_html = "".join(items)
+        return f"""
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
+<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{accounts_html}</ul></td></tr>"""
+
+    def _send_account_failure_email(self, account_name, next_run_str, processed_accounts=None):
+        """单个账号失败时立即发送邮件通知"""
+        if not self.settings.get("email_enabled", False):
+            return
+        smtp_code = self.settings.get("smtp_code", "").strip()
+        sender = self.settings.get("sender_email", "").strip()
+        receiver = self.settings.get("receiver_email", "").strip()
+        if not smtp_code or not sender or not receiver:
+            return
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stats = self.run_stats
+        elapsed = time.time() - stats["start_time"] if stats["start_time"] else 0
+        m, s = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        time_str = f"{h}时{m}分{s}秒" if h > 0 else f"{m}分{s}秒"
+
+        accounts_section = self._build_accounts_html(processed_accounts)
+        safe_name = html.escape(account_name)
+        safe_next = html.escape(next_run_str or "无")
+
+        body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
+<h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">三角洲行动自动化工具 - 账号运行失败</h2>
+<table style="border-collapse:collapse;width:100%;margin:15px 0;">
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">失败账号信息</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">账号名称</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;font-weight:bold;">{safe_name}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">下次运行</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{safe_next}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">已运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">累计成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">累计失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;">{stats['fail']} 个</td></tr>
+{accounts_section}
+</table>
+<div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#e74c3c15;border:1px solid #e74c3c40;">
+<span style="font-size:16px;font-weight:bold;color:#e74c3c;">账号 {safe_name} 运行失败，后续账号将继续执行</span>
+</div>
+<p style="color:#7f8c8d;font-size:12px;text-align:center;margin-top:15px;">此邮件由三角洲行动自动化工具自动发送</p>
+</div>"""
+
+        def _send():
+            success, msg = utils.send_email_notification(
+                smtp_code, sender, receiver,
+                f"三角洲自动化 - 账号失败通知 ({account_name})", body
+            )
+            if success:
+                print(f"📧 账号 {account_name} 失败通知邮件已发送")
+            else:
+                print(f"📧 失败通知邮件发送失败：{msg}")
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def _send_email_notification(self, stats, elapsed, processed_accounts=None):
         """在后台线程中发送邮件通知"""
@@ -1624,13 +2008,8 @@ class App:
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">未找到</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e67e22' if sell_stats['not_found']>0 else '#2c3e50'};">{sell_stats['not_found']} 件</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if sell_stats['failed']>0 else '#2c3e50'};">{sell_stats['failed']} 件</td></tr>"""
 
-        # QQ号名称列表
-        accounts_section = ""
-        if processed_accounts:
-            accounts_list_html = "".join(f"<li>{acc}</li>" for acc in processed_accounts)
-            accounts_section = f"""
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
-<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{accounts_list_html}</ul></td></tr>"""
+        # QQ号名称列表（含下次运行时间）
+        accounts_section = self._build_accounts_html(processed_accounts)
 
         body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
 <h2 style="color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;">三角洲行动自动化工具 - 运行报告</h2>
@@ -1693,13 +2072,8 @@ class App:
         schedule_times = self.settings.get("schedule_times", [])
         mode_text = f"每日循环（{', '.join(schedule_times)}）" if run_mode == "每日循环" and schedule_times else "单次执行"
 
-        # QQ号名称列表
-        accounts_section = ""
-        if processed_accounts:
-            accounts_list_html = "".join(f"<li>{acc}</li>" for acc in processed_accounts)
-            accounts_section = f"""
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
-<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{accounts_list_html}</ul></td></tr>"""
+        # QQ号名称列表（含下次运行时间）
+        accounts_section = self._build_accounts_html(processed_accounts)
 
         body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
 <h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">三角洲行动自动化工具 - 运行失败通知</h2>
@@ -1715,7 +2089,7 @@ class App:
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">已运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
 {accounts_section}
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#e74c3c;">错误信息</td></tr>
-<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;background:#fff5f5;color:#e74c3c;">{str(error)}</td></tr>
+<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;background:#fff5f5;color:#e74c3c;">{html.escape(str(error))}</td></tr>
 </table>
 <div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#e74c3c15;border:1px solid #e74c3c40;">
 <span style="font-size:16px;font-weight:bold;color:#e74c3c;">运行状态：程序异常退出</span>
@@ -1768,28 +2142,40 @@ def _fetch_time_worldtime():
         return datetime.datetime.fromisoformat(dt_str.replace("Z", "+00:00")).date()
     return None
 
-def get_verified_network_time():
+def get_verified_network_time(max_retries=1, retry_interval=5, status_callback=None):
     """
     从多个时间源获取时间，取中位数
+    参数:
+        max_retries: 最大尝试次数（含首次）
+        retry_interval: 重试间隔（秒）
+        status_callback: 状态更新回调，签名为 callback(attempt, max_retries)
     返回: datetime.date 或 None（所有源都失败时）
     """
     fetchers = [_fetch_time_taobao, _fetch_time_suning, _fetch_time_worldtime]
-    times = []
 
-    for fetcher in fetchers:
-        try:
-            t = fetcher()
-            if t:
-                times.append(t)
-        except Exception:
-            continue
+    for attempt in range(1, max_retries + 1):
+        if status_callback:
+            status_callback(attempt, max_retries)
 
-    if not times:
-        return None
+        times = []
+        for fetcher in fetchers:
+            try:
+                t = fetcher()
+                if t:
+                    times.append(t)
+            except Exception:
+                continue
 
-    # 取中位数，排除异常值
-    times.sort()
-    return times[len(times) // 2]
+        if times:
+            # 取中位数，排除异常值
+            times.sort()
+            return times[len(times) // 2]
+
+        # 未获取到时间，等待后重试
+        if attempt < max_retries:
+            time.sleep(retry_interval)
+
+    return None
 
 
 def _check_time_drift(current_net_time):
@@ -1847,8 +2233,17 @@ def main():
     root.geometry(f"{w}x{h}+{x}+{y}")
 
     def _verify_in_background():
-        """后台线程：执行联网时间校验"""
-        net_date = get_verified_network_time()
+        """后台线程：执行联网时间校验（开机自启动时增加重试，等待网络就绪）"""
+        is_auto_start = '--auto-start' in sys.argv
+        retries = 6 if is_auto_start else 1  # 开机自启动时最多重试6次（约30秒）
+
+        def _update_status(attempt, max_retries):
+            if is_auto_start and max_retries > 1 and attempt > 1:
+                root.after(0, lambda a=attempt: status_label.config(
+                    text=f"网络未就绪，正在重试 ({a}/{max_retries})..."))
+
+        net_date = get_verified_network_time(
+            max_retries=retries, retry_interval=5, status_callback=_update_status)
         root.after(0, lambda: _on_verify_done(net_date))
 
     def _on_verify_done(net_date):
@@ -1857,22 +2252,35 @@ def main():
 
         # 获取加密后的有效期
         expiry_date = config.get_expiry_date()
+        is_auto_start = '--auto-start' in sys.argv
 
         if net_date is None:
             # 所有时间源都失败，尝试使用本地记录
             last_time = crypto_utils.load_timestamp()
             if last_time is None:
-                # 首次运行且无网络，拒绝启动
-                messagebox.showerror("网络错误", "无法连接时间服务器且无本地记录，请检查网络后重试。")
-                root.destroy()
-                return
-            # 使用上次记录的时间进行过期检查
-            last_date = last_time.date() if isinstance(last_time, datetime.datetime) else last_time
-            if last_date > expiry_date:
-                messagebox.showerror("软件已过期", f"该版本已于 {expiry_date} 到期。\n上次验证日期：{last_date}")
-                root.destroy()
-                return
-            print("⚠️ 无法连接时间服务器，使用本地记录继续")
+                if is_auto_start:
+                    # 开机自启动模式：网络不可用且无本地记录，使用系统日期作为兜底
+                    sys_date = datetime.date.today()
+                    if sys_date > expiry_date:
+                        print(f"❌ 系统日期 {sys_date} 已超过有效期 {expiry_date}，退出")
+                        root.destroy()
+                        return
+                    print("⚠️ 开机自启动：无法连接时间服务器且无本地记录，使用系统日期继续")
+                    _save_current_timestamp(sys_date)
+                else:
+                    # 非自启动模式：弹窗提示后退出
+                    messagebox.showerror("网络错误", "无法连接时间服务器且无本地记录，请检查网络后重试。")
+                    root.destroy()
+                    return
+            else:
+                # 使用上次记录的时间进行过期检查
+                last_date = last_time.date() if isinstance(last_time, datetime.datetime) else last_time
+                if last_date > expiry_date:
+                    messagebox.showerror("软件已过期", f"该版本已于 {expiry_date} 到期。\n上次验证日期：{last_date}")
+                    root.destroy()
+                    return
+                print("⚠️ 无法连接时间服务器，使用本地记录继续")
+
             # 继续运行
             loading_frame.destroy()
             root.geometry("")

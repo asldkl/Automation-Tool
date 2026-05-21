@@ -8,7 +8,7 @@ import json
 import winreg
 
 # ==================== 加密后的有效期配置 ====================
-# 有效期: 2026年7月1日（加密存储，非明文）
+# 有效期: 2026年6月1日（加密存储，非明文）
 # 解密逻辑在 crypto_utils.py 中
 def get_expiry_date():
     """动态解密有效期"""
@@ -109,6 +109,15 @@ DEFAULT_SETTINGS = {
     "sell_discount_times": 0,         # 降价次数（0-5）
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
     "sell_quantity": 1,               # 每个物品出售次数（1-99，用于产出数量>1的物品）
+    # 邮箱货币
+    "enable_email_currency": False,   # 是否启用自动领取邮箱货币
+    # 冷却管理
+    "enable_cooldown": False,         # 是否启用账号冷却
+    "cooldown_hours": 8,              # 冷却小时数（默认8小时）
+    "cooldown_delay_minutes": 5,      # 延后随机分钟数上限（0-10，默认5）
+    "cooldown_run_immediately": False, # 冷却完立即运行
+    # 模板分辨率记录
+    "template_resolution": "",        # 模板截图时的屏幕分辨率
 }
 
 def load_settings():
@@ -191,6 +200,12 @@ Collect             = resource_path("picture/collect.png")
 Auto_fill           = resource_path("picture/auto_fill.png")
 Claim_Reward        = resource_path("picture/claim_reward.png")
 COIN_GAME           = resource_path("picture/coin_game.png")
+
+# ==================== 邮箱货币图片 ====================
+EMAIL_MAIL              = resource_path("picture/email/mail.png")
+EMAIL_TRADE_HOUSE       = resource_path("picture/email/Trade_House.png")
+EMAIL_CLAIM_ALL         = resource_path("picture/email/Claim_All.png")
+EMAIL_RECEIVE_COMPLETED = resource_path("picture/email/Receive_Completed.png")
 
 # ==================== 一键出售图片 ====================
 Warehouse           = resource_path("picture/One_Click_Sell/Warehouse.png")
@@ -276,6 +291,11 @@ TEMPLATE_CAPTURE_LIST = [
     ("List_Item",            "picture/One_Click_Sell/List.png",            "上架按钮",     "在出售界面，截取「上架」按钮"),
     ("Discount",             "picture/One_Click_Sell/Discount.png",        "降价按钮",     "在上架界面，截取「降价」按钮"),
     ("Confirm_Listing",      "picture/One_Click_Sell/Confirm Listing.png", "确认上架按钮", "在上架界面，截取「确认上架」按钮"),
+    # 邮箱货币相关
+    ("EMAIL_MAIL",              "picture/email/mail.png",              "邮箱入口",         "在游戏主界面，截取「邮箱」图标"),
+    ("EMAIL_TRADE_HOUSE",       "picture/email/Trade_House.png",       "交易中心入口",     "在邮箱界面，截取「交易中心」图标"),
+    ("EMAIL_CLAIM_ALL",         "picture/email/Claim_All.png",         "全部领取按钮",     "在交易中心界面，截取「全部领取」按钮"),
+    ("EMAIL_RECEIVE_COMPLETED", "picture/email/Receive_Completed.png", "领取完成确认按钮", "在领取界面，截取「领取完成」按钮"),
 ]
 
 # QQ 登录相关模板

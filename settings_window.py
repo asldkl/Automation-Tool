@@ -48,6 +48,7 @@ class SettingsWindow:
 
         # 自动任务设置变量
         self.auto_enable_var = tk.BooleanVar(value=app.settings.get("auto_start", False))
+        self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
         self.run_mode_var = tk.StringVar(value=app.settings.get("run_mode", "单次"))
         self.silent_var = tk.BooleanVar(value=app.settings.get("silent_mode", False))
 
@@ -81,6 +82,13 @@ class SettingsWindow:
         self.sell_discount_var = tk.IntVar(value=app.settings.get("sell_discount_times", 0))
         self.sell_confidence_var = tk.DoubleVar(value=float(app.settings.get("sell_confidence", 0.55)))
         self.sell_quantity_var = tk.IntVar(value=app.settings.get("sell_quantity", 1))
+
+        # 邮箱货币变量
+        self.email_currency_var = tk.BooleanVar(value=app.settings.get("enable_email_currency", False))
+
+        # 冷却管理变量
+        self.cooldown_enable_var = tk.BooleanVar(value=app.settings.get("enable_cooldown", False))
+        self.cooldown_delay_var = tk.IntVar(value=app.settings.get("cooldown_delay_minutes", 5))
 
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
@@ -251,6 +259,42 @@ class SettingsWindow:
 
         ttk.Checkbutton(row1, text="静默运行（托盘）",
                        variable=self.silent_var).pack(side=tk.LEFT)
+
+        # 第1.5行：冷却完立即运行（与启用定时执行互斥）
+        row1b = ttk.Frame(parent, style='SettingsInner.TFrame')
+        row1b.pack(fill=tk.X, pady=(0, 12))
+
+        self._cooldown_run_immed_cb = ttk.Checkbutton(
+            row1b, text="冷却完立即运行（冷却结束后自动执行，与定时执行互斥）",
+            variable=self.cooldown_run_immediately_var)
+        self._cooldown_run_immed_cb.pack(side=tk.LEFT, padx=(0, 18))
+
+        # 获取"启用定时执行"Checkbutton 引用（row1 的第一个子控件）
+        self._auto_enable_cb = row1.winfo_children()[0]
+
+        # 互斥逻辑：勾选一个时取消另一个并禁用，取消时恢复另一个
+        def _on_auto_enable_changed(*args):
+            if self.auto_enable_var.get():
+                self.cooldown_run_immediately_var.set(False)
+                self._cooldown_run_immed_cb.state(['disabled'])
+            else:
+                self._cooldown_run_immed_cb.state(['!disabled'])
+
+        def _on_cooldown_run_immed_changed(*args):
+            if self.cooldown_run_immediately_var.get():
+                self.auto_enable_var.set(False)
+                self._auto_enable_cb.state(['disabled'])
+            else:
+                self._auto_enable_cb.state(['!disabled'])
+
+        self.auto_enable_var.trace_add('write', _on_auto_enable_changed)
+        self.cooldown_run_immediately_var.trace_add('write', _on_cooldown_run_immed_changed)
+
+        # 初始化互斥状态
+        if self.auto_enable_var.get():
+            self._cooldown_run_immed_cb.state(['disabled'])
+        if self.cooldown_run_immediately_var.get():
+            self._auto_enable_cb.state(['disabled'])
 
         # 第2行：时间点管理
         row2 = ttk.Frame(parent, style='SettingsInner.TFrame')
@@ -502,6 +546,45 @@ class SettingsWindow:
         ttk.Label(frame1, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
+        # ----- 邮箱货币领取 -----
+        frame_email = ttk.LabelFrame(parent, text="  邮箱货币领取  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_email.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Checkbutton(frame_email, text="启用自动领取邮箱货币",
+                       variable=self.email_currency_var).pack(side=tk.LEFT, padx=5, pady=5)
+
+        # ----- 冷却管理 -----
+        frame_cooldown = ttk.LabelFrame(parent, text="  冷却管理  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_cooldown.pack(fill=tk.X, pady=(0, 8))
+
+        cd_row1 = ttk.Frame(frame_cooldown, style='SettingsInner.TFrame')
+        cd_row1.pack(fill=tk.X, pady=(0, 4))
+        self._cooldown_enable_cb = ttk.Checkbutton(cd_row1, text="启用账号冷却（每次运行完成后进入冷却期）",
+                       variable=self.cooldown_enable_var)
+        self._cooldown_enable_cb.pack(side=tk.LEFT, padx=5, pady=5)
+
+        # 冷却完立即运行与启用账号冷却的联动
+        def _on_cooldown_enable_changed(*args):
+            if not self.cooldown_enable_var.get():
+                # 取消启用账号冷却时，自动取消冷却完立即运行
+                self.cooldown_run_immediately_var.set(False)
+
+        def _on_cooldown_run_immed_changed_for_enable(*args):
+            if self.cooldown_run_immediately_var.get():
+                # 启用冷却完立即运行时，自动勾选启用账号冷却
+                self.cooldown_enable_var.set(True)
+
+        self.cooldown_enable_var.trace_add('write', _on_cooldown_enable_changed)
+        self.cooldown_run_immediately_var.trace_add('write', _on_cooldown_run_immed_changed_for_enable)
+
+        cd_row2 = ttk.Frame(frame_cooldown, style='SettingsInner.TFrame')
+        cd_row2.pack(fill=tk.X)
+        ttk.Label(cd_row2, text="延迟随机时间上限：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
+        ttk.Spinbox(cd_row2, from_=0, to=10, increment=1,
+                    textvariable=self.cooldown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(cd_row2, text="分钟（0-10，冷却8小时 + 随机0~N分钟，防止多账号同时到期）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
         # ----- 账号列表鼠标下移距离设置 -----
         frame2 = ttk.LabelFrame(parent, text="  账号列表鼠标下移距离  ", style='SettingsCard.TLabelframe', padding=12)
         frame2.pack(fill=tk.X, pady=(0, 8))
@@ -645,6 +728,7 @@ class SettingsWindow:
 
         # 自动任务设置
         self.app.settings["auto_start"] = self.auto_enable_var.get()
+        self.app.settings["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
         self.app.settings["run_mode"] = self.run_mode_var.get()
         self.app.settings["silent_mode"] = self.silent_var.get()
         times = [self.time_listbox.get(i) for i in range(self.time_listbox.size())]
@@ -698,6 +782,13 @@ class SettingsWindow:
         self.app.settings["sell_discount_times"] = self.sell_discount_var.get()
         self.app.settings["sell_confidence"] = round(self.sell_confidence_var.get(), 2)
         self.app.settings["sell_quantity"] = self.sell_quantity_var.get()
+
+        # 邮箱货币设置
+        self.app.settings["enable_email_currency"] = self.email_currency_var.get()
+
+        # 冷却管理设置
+        self.app.settings["enable_cooldown"] = self.cooldown_enable_var.get()
+        self.app.settings["cooldown_delay_minutes"] = self.cooldown_delay_var.get()
 
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)
