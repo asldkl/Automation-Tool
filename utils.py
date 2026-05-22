@@ -202,6 +202,171 @@ def find_and_click_pos(img_path, timeout=20, region=None, confidence=None):
     print(f"⏳ 超时未找到：{img_path}")
     return False, None
 
+def _match_template_multiscale(gray_screen, template, threshold, scales=None):
+    """
+    多尺度复合模板匹配：结合灰度匹配和边缘匹配，充分利用头像轮廓、名称文字、
+    QQ号码等结构特征。在多个缩放比例下尝试，返回最佳结果。
+    - 灰度匹配：对整体布局和明暗敏感
+    - 边缘匹配：对头像轮廓、文字笔画、数字形状等结构特征更敏感，抗光照变化
+    两种方法取最高分，确保各类特征都能被利用。
+    返回 (matched, max_val, max_loc, best_scale, (tH, tW))
+    """
+    if scales is None:
+        scales = [1.0, 0.9, 1.1, 0.8, 1.2, 0.7, 1.3]
+
+    best_val = -1
+    best_loc = None
+    best_scale = 1.0
+    best_h, best_w = template.shape
+
+    # 预计算屏幕边缘图（Canny 边缘检测，捕捉头像轮廓和文字笔画）
+    screen_edges = cv2.Canny(gray_screen, 50, 150)
+
+    for scale in scales:
+        if scale == 1.0:
+            scaled = template
+        else:
+            new_w = max(1, int(template.shape[1] * scale))
+            new_h = max(1, int(template.shape[0] * scale))
+            if new_w < 2 or new_h < 2:
+                continue
+            scaled = cv2.resize(template, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        sh, sw = scaled.shape
+        if sh > gray_screen.shape[0] or sw > gray_screen.shape[1]:
+            continue
+
+        # 方法1：灰度模板匹配（整体像素模式）
+        res_gray = cv2.matchTemplate(gray_screen, scaled, cv2.TM_CCOEFF_NORMED)
+        _, gray_val, _, gray_loc = cv2.minMaxLoc(res_gray)
+
+        # 方法2：边缘模板匹配（结构特征：头像轮廓、文字边缘、数字形状）
+        template_edges = cv2.Canny(scaled, 50, 150)
+        if template_edges is not None and template_edges.shape[0] <= screen_edges.shape[0] and template_edges.shape[1] <= screen_edges.shape[1]:
+            res_edge = cv2.matchTemplate(screen_edges, template_edges, cv2.TM_CCOEFF_NORMED)
+            _, edge_val, _, edge_loc = cv2.minMaxLoc(res_edge)
+        else:
+            edge_val = -1
+            edge_loc = gray_loc
+
+        # 取两种方法的平均分，融合灰度和边缘特征
+        if edge_val >= 0:
+            val = (gray_val + edge_val) / 2.0
+        else:
+            val = gray_val
+        # 位置用得分更高的那个（更准确）
+        loc = edge_loc if edge_val > gray_val else gray_loc
+
+        if val > best_val:
+            best_val = val
+            best_loc = loc
+            best_scale = scale
+            best_h, best_w = sh, sw
+
+    matched = best_val >= threshold
+    return matched, best_val, best_loc, best_scale, (best_h, best_w)
+
+
+def find_and_click_multiscale(img_path, timeout=20, region=None, confidence=None):
+    """
+    多尺度复合图像识别：结合灰度匹配和边缘匹配，自动尝试多个缩放比例。
+    边缘匹配对头像轮廓、名称文字、QQ号码等结构特征敏感，能更好地区分不同账号。
+    返回是否成功找到并点击。
+    """
+    threshold = confidence if confidence is not None else CONFIDENCE
+    resolved = config.resolve_template_path(img_path)
+    template = _template_cache.get(resolved)
+    if template is None:
+        template = _imread_unicode(resolved)
+        if template is None:
+            print(f"❌ 图片文件不存在或无法读取：{resolved}")
+            return False
+        _template_cache[resolved] = template
+
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+        except Exception:
+            time.sleep(0.5)
+            continue
+        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+
+        matched, max_val, max_loc, scale, (h, w) = _match_template_multiscale(
+            gray, template, threshold)
+
+        if matched:
+            x = max_loc[0] + w // 2 + (region[0] if region else 0)
+            y = max_loc[1] + h // 2 + (region[1] if region else 0)
+
+            screen_w, screen_h = pyautogui.size()
+            margin = 10
+            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
+                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
+                time.sleep(0.3)
+                continue
+
+            if scale != 1.0:
+                print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
+            pyautogui.moveTo(x, y, duration=0.2)
+            pyautogui.click()
+            time.sleep(WAIT_TIME)
+            return True
+        time.sleep(0.3)
+    print(f"⏳ 超时未找到（复合匹配）：{img_path}")
+    return False
+
+
+def find_and_click_pos_multiscale(img_path, timeout=20, region=None, confidence=None):
+    """
+    多尺度复合图像识别，返回 (是否成功, 坐标元组(x,y)) 或 (False, None)
+    """
+    threshold = confidence if confidence is not None else CONFIDENCE
+    resolved = config.resolve_template_path(img_path)
+    template = _template_cache.get(resolved)
+    if template is None:
+        template = _imread_unicode(resolved)
+        if template is None:
+            print(f"❌ 图片文件不存在或无法读取：{resolved}")
+            return False, None
+        _template_cache[resolved] = template
+
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+        except Exception:
+            time.sleep(0.5)
+            continue
+        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+
+        matched, max_val, max_loc, scale, (h, w) = _match_template_multiscale(
+            gray, template, threshold)
+
+        if matched:
+            x = max_loc[0] + w // 2 + (region[0] if region else 0)
+            y = max_loc[1] + h // 2 + (region[1] if region else 0)
+
+            screen_w, screen_h = pyautogui.size()
+            margin = 10
+            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
+                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
+                time.sleep(0.3)
+                continue
+
+            if scale != 1.0:
+                print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
+            pyautogui.moveTo(x, y, duration=0.2)
+            pyautogui.click()
+            time.sleep(WAIT_TIME)
+            return True, (x, y)
+        time.sleep(0.3)
+    print(f"⏳ 超时未找到（复合匹配）：{img_path}")
+    return False, None
+
+
 def wegame_quick_login():
     """
     使用图像识别完成 WeGame 快捷登录：
@@ -429,6 +594,7 @@ def qq_quick_login(qq_number_img):
     使用图像识别完成 QQ 自动登录：
     点击账号选择 → 点击目标 QQ 号 → 点击登录按钮
     支持滚动查找被遮挡的账号（超过3个账号时）
+    使用多尺度匹配，解决模板与屏幕分辨率不一致的问题
     """
     print("🔍 点击 QQ 账号选择按钮...")
     success, btn_pos = find_and_click_pos(QQ_ACCOUNT_SELECT, timeout=15)
@@ -437,8 +603,8 @@ def qq_quick_login(qq_number_img):
         return False
     time.sleep(1)
 
-    print("🔍 选择 QQ 号...")
-    if not find_and_click(qq_number_img, timeout=5):
+    print("🔍 选择 QQ 号（多尺度匹配）...")
+    if not find_and_click_multiscale(qq_number_img, timeout=5):
         # 未找到目标账号，尝试滚动下拉列表查找
         if btn_pos:
             print("🔍 目标 QQ 号可能被遮挡，尝试滚动查找...")
@@ -450,7 +616,7 @@ def qq_quick_login(qq_number_img):
                 time.sleep(0.2)
                 pyautogui.scroll(-scroll_amount)
                 time.sleep(0.8)
-                if find_and_click(qq_number_img, timeout=5):
+                if find_and_click_multiscale(qq_number_img, timeout=5):
                     break
             else:
                 print("❌ 滚动查找后仍未找到目标 QQ 号")
