@@ -5,7 +5,6 @@
 import os
 import json
 import datetime
-import random
 
 COOLDOWN_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown.json")
 
@@ -61,16 +60,14 @@ def is_cooling_down(account_name):
         return False, None
 
 
-def record_run(account_name, cooldown_hours=8, delay_minutes=5):
+def record_run(account_name, cooldown_hours=8):
     """
     记录账号运行完成，计算下次运行时间
     cooldown_hours: 冷却小时数
-    delay_minutes: 延迟分钟数上限（随机 0 ~ delay_minutes）
     """
     data = _load_data()
     now = datetime.datetime.now()
-    random_delay = random.randint(0, delay_minutes)
-    next_run = now + datetime.timedelta(hours=cooldown_hours, minutes=random_delay)
+    next_run = now + datetime.timedelta(hours=cooldown_hours)
 
     data[account_name] = {
         "last_run_time": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -85,6 +82,11 @@ def reset_cooldown(account_name):
     if account_name in data:
         del data[account_name]
         _save_data(data)
+
+
+def reset_all_cooldowns():
+    """重置所有账号的冷却"""
+    _save_data({})
 
 
 def get_all_cooldowns():

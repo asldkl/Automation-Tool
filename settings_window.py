@@ -88,7 +88,7 @@ class SettingsWindow:
 
         # 冷却管理变量
         self.cooldown_enable_var = tk.BooleanVar(value=app.settings.get("enable_cooldown", False))
-        self.cooldown_delay_var = tk.IntVar(value=app.settings.get("cooldown_delay_minutes", 5))
+        self.cooldown_delay_var = tk.IntVar(value=app.settings.get("cooldown_delay_minutes", 1))
 
         # 电源管理变量
         self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
@@ -579,10 +579,10 @@ class SettingsWindow:
 
         cd_row2 = ttk.Frame(frame_cooldown, style='SettingsInner.TFrame')
         cd_row2.pack(fill=tk.X)
-        ttk.Label(cd_row2, text="延迟随机时间上限：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
-        ttk.Spinbox(cd_row2, from_=0, to=10, increment=1,
+        ttk.Label(cd_row2, text="账号间隔时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
+        ttk.Spinbox(cd_row2, from_=0, to=5, increment=1,
                     textvariable=self.cooldown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(cd_row2, text="分钟（0-10，冷却8小时 + 随机0~N分钟，防止多账号同时到期）",
+        ttk.Label(cd_row2, text="分钟（0-5，相邻账号执行间隔，0=连续执行）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 账号列表鼠标下移距离设置 -----

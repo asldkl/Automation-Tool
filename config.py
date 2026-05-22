@@ -114,7 +114,7 @@ DEFAULT_SETTINGS = {
     # 冷却管理
     "enable_cooldown": False,         # 是否启用账号冷却
     "cooldown_hours": 8,              # 冷却小时数（默认8小时）
-    "cooldown_delay_minutes": 5,      # 延后随机分钟数上限（0-10，默认5）
+    "cooldown_delay_minutes": 1,      # 账号间隔时间（0-5分钟，默认1）
     "cooldown_run_immediately": False, # 冷却完立即运行
     # 模板分辨率记录
     "template_resolution": "",        # 模板截图时的屏幕分辨率

@@ -1,6 +1,6 @@
 """
 v1.7.1 全功能模拟测试脚本
-覆盖：config新选项、互斥逻辑、4分钟间隔、QQ降级方案、烽火地带重试、冷却管理
+覆盖：config新选项、互斥逻辑、QQ降级方案、烽火地带重试、冷却管理
 无需启动GUI，通过模拟环境验证核心逻辑
 """
 import os
@@ -112,7 +112,7 @@ class TestCooldownManager(unittest.TestCase):
 
     def test_record_and_cooldown(self):
         """记录运行后应进入冷却状态"""
-        self.cm.record_run("test_user.png", cooldown_hours=8, delay_minutes=0)
+        self.cm.record_run("test_user.png", cooldown_hours=8)
         cooling, next_time = self.cm.is_cooling_down("test_user.png")
         self.assertTrue(cooling)
         self.assertIsNotNone(next_time)
@@ -123,21 +123,21 @@ class TestCooldownManager(unittest.TestCase):
         self.assertGreater(diff, 7 * 3600)  # 至少7小时
         self.assertLess(diff, 9 * 3600)     # 不超过9小时
 
-    def test_cooldown_with_delay(self):
-        """延迟分钟数应影响冷却时间"""
-        self.cm.record_run("user_delay.png", cooldown_hours=8, delay_minutes=10)
+    def test_cooldown_duration(self):
+        """冷却时间应精确为设定的小时数"""
+        self.cm.record_run("user_delay.png", cooldown_hours=8)
         cooling, next_time = self.cm.is_cooling_down("user_delay.png")
         self.assertTrue(cooling)
         next_dt = datetime.datetime.strptime(next_time, "%Y-%m-%d %H:%M:%S")
         now = datetime.datetime.now()
         diff = (next_dt - now).total_seconds()
-        # 应在 8h 到 8h10min 之间（允许几秒误差）
-        self.assertGreater(diff, 7.5 * 3600)
-        self.assertLess(diff, 8.5 * 3600)
+        # 应在 8h 附近（允许几秒误差）
+        self.assertGreater(diff, 7.9 * 3600)
+        self.assertLess(diff, 8.1 * 3600)
 
     def test_reset_cooldown(self):
         """重置冷却后应不再处于冷却状态"""
-        self.cm.record_run("reset_user.png", cooldown_hours=8, delay_minutes=0)
+        self.cm.record_run("reset_user.png", cooldown_hours=8)
         cooling, _ = self.cm.is_cooling_down("reset_user.png")
         self.assertTrue(cooling)
         self.cm.reset_cooldown("reset_user.png")
@@ -146,8 +146,8 @@ class TestCooldownManager(unittest.TestCase):
 
     def test_get_all_cooldowns(self):
         """get_all_cooldowns 应返回所有账号的冷却信息"""
-        self.cm.record_run("user_a.png", cooldown_hours=8, delay_minutes=0)
-        self.cm.record_run("user_b.png", cooldown_hours=8, delay_minutes=0)
+        self.cm.record_run("user_a.png", cooldown_hours=8)
+        self.cm.record_run("user_b.png", cooldown_hours=8)
         all_cd = self.cm.get_all_cooldowns()
         self.assertIn("user_a.png", all_cd)
         self.assertIn("user_b.png", all_cd)
@@ -171,7 +171,7 @@ class TestCooldownManager(unittest.TestCase):
 
     def test_data_persistence(self):
         """数据应持久化到文件"""
-        self.cm.record_run("persist_user.png", cooldown_hours=8, delay_minutes=0)
+        self.cm.record_run("persist_user.png", cooldown_hours=8)
         self.assertTrue(os.path.exists(self.cm.COOLDOWN_JSON_PATH))
         with open(self.cm.COOLDOWN_JSON_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -186,9 +186,9 @@ class TestCooldownManager(unittest.TestCase):
 
     def test_multiple_accounts_independent(self):
         """多个账号的冷却应独立管理"""
-        self.cm.record_run("acc_1.png", cooldown_hours=8, delay_minutes=0)
+        self.cm.record_run("acc_1.png", cooldown_hours=8)
         time.sleep(0.1)
-        self.cm.record_run("acc_2.png", cooldown_hours=4, delay_minutes=0)
+        self.cm.record_run("acc_2.png", cooldown_hours=4)
         all_cd = self.cm.get_all_cooldowns()
         # acc_1 的冷却时间应比 acc_2 长
         self.assertGreater(
@@ -272,73 +272,6 @@ class TestMutualExclusion(unittest.TestCase):
         auto, cooldown = self._simulate_trace_logic(auto, cooldown)
         # 验证两者不同时为 True
         self.assertFalse(auto and cooldown)
-
-
-# ==================== Test 4: 4分钟间隔模拟 ====================
-class TestAccountInterval(unittest.TestCase):
-    """模拟测试相邻账号执行间隔限制"""
-
-    def _simulate_interval_check(self, last_start_time, current_time, min_interval=240):
-        """模拟间隔检查逻辑，返回需要等待的秒数"""
-        if last_start_time is None:
-            return 0
-        elapsed = current_time - last_start_time
-        if elapsed < min_interval:
-            return min_interval - elapsed
-        return 0
-
-    def test_first_account_no_wait(self):
-        """第一个账号不需要等待"""
-        wait = self._simulate_interval_check(None, time.time())
-        self.assertEqual(wait, 0)
-
-    def test_interval_sufficient(self):
-        """间隔足够时不需要等待"""
-        now = time.time()
-        last = now - 300  # 5分钟前
-        wait = self._simulate_interval_check(last, now)
-        self.assertEqual(wait, 0)
-
-    def test_interval_insufficient(self):
-        """间隔不足时应计算等待时间"""
-        now = time.time()
-        last = now - 120  # 2分钟前
-        wait = self._simulate_interval_check(last, now)
-        self.assertGreater(wait, 0)
-        self.assertAlmostEqual(wait, 120, delta=1)  # 应等待约120秒
-
-    def test_interval_exactly_4min(self):
-        """刚好4分钟间隔不需要等待"""
-        now = time.time()
-        last = now - 240
-        wait = self._simulate_interval_check(last, now)
-        self.assertEqual(wait, 0)
-
-    def test_interval_just_under_4min(self):
-        """差1秒不到4分钟需要等待1秒"""
-        now = time.time()
-        last = now - 239
-        wait = self._simulate_interval_check(last, now)
-        self.assertAlmostEqual(wait, 1, delta=1)
-
-    def test_multiple_accounts_timing(self):
-        """模拟多个账号的间隔计算"""
-        base_time = time.time()
-        accounts = [
-            base_time,           # 账号1开始
-            base_time + 150,     # 账号2开始（2.5分钟后，需等待1.5分钟）
-            base_time + 400,     # 账号3开始（6.7分钟后，无需等待）
-            base_time + 500,     # 账号4开始（1.7分钟后，需等待约1.7分钟）
-        ]
-        waits = []
-        for i, t in enumerate(accounts):
-            last = accounts[i - 1] if i > 0 else None
-            waits.append(self._simulate_interval_check(last, t))
-
-        self.assertEqual(waits[0], 0)       # 第1个无需等待
-        self.assertGreater(waits[1], 0)      # 第2个需等待
-        self.assertEqual(waits[2], 0)        # 第3个无需等待
-        self.assertGreater(waits[3], 0)      # 第4个需等待
 
 
 # ==================== Test 5: QQ 降级方案模拟 ====================
@@ -540,26 +473,14 @@ class TestFullFlowSimulation(unittest.TestCase):
     def _simulate_multi_account_flow(self, accounts, cooldown_enabled=False):
         """
         模拟多账号运行流程
-        返回: (results, waits, total_wait_time)
+        返回: results
         results: 每个账号的处理结果列表
-        waits: 每个账号前的等待时间列表
         """
         results = []
-        waits = []
-        last_start_time = None
         cooldown_data = {}
 
         for i, account in enumerate(accounts):
-            # 模拟间隔检查
-            wait = 0
-            if last_start_time is not None:
-                elapsed = account["start_time"] - last_start_time
-                if elapsed < 240:
-                    wait = 240 - elapsed
-            waits.append(wait)
-
-            actual_start = account["start_time"] + wait
-            last_start_time = actual_start
+            actual_start = account["start_time"]
 
             # 模拟冷却检查
             if cooldown_enabled and account["name"] in cooldown_data:
@@ -583,38 +504,20 @@ class TestFullFlowSimulation(unittest.TestCase):
             if cooldown_enabled:
                 cooldown_data[account["name"]] = actual_start + 8 * 3600
 
-        return results, waits, sum(waits)
+        return results
 
-    def test_normal_flow_no_wait(self):
-        """账号间隔足够时无需等待"""
+    def test_normal_flow(self):
+        """多账号连续执行全部成功"""
         now = time.time()
         accounts = [
             {"name": "user1.png", "start_time": now},
-            {"name": "user2.png", "start_time": now + 300},
-            {"name": "user3.png", "start_time": now + 600},
+            {"name": "user2.png", "start_time": now + 150},
+            {"name": "user3.png", "start_time": now + 300},
         ]
-        results, waits, total_wait = self._simulate_multi_account_flow(accounts)
-        self.assertEqual(waits[0], 0)
-        self.assertEqual(waits[1], 0)
-        self.assertEqual(waits[2], 0)
-        self.assertEqual(total_wait, 0)
+        results = self._simulate_multi_account_flow(accounts)
         self.assertEqual(len(results), 3)
         for r in results:
             self.assertEqual(r["status"], "success")
-
-    def test_flow_with_interval_waits(self):
-        """账号间隔不足时应自动等待"""
-        now = time.time()
-        accounts = [
-            {"name": "user1.png", "start_time": now},
-            {"name": "user2.png", "start_time": now + 100},  # 100秒后，需等140秒（实际开始 now+240）
-            {"name": "user3.png", "start_time": now + 500},  # 500秒后，距上一个实际开始(now+240)已超4分钟
-        ]
-        results, waits, total_wait = self._simulate_multi_account_flow(accounts)
-        self.assertEqual(waits[0], 0)
-        self.assertGreater(waits[1], 0)  # 需要等待
-        self.assertEqual(waits[2], 0)    # 无需等待（500-240=260 > 240）
-        self.assertGreater(total_wait, 0)
 
     def test_flow_with_qq_degradation_success(self):
         """QQ 降级方案成功的场景"""
@@ -622,7 +525,7 @@ class TestFullFlowSimulation(unittest.TestCase):
         accounts = [
             {"name": "user1.png", "start_time": now, "qq_activate_fails": 5, "image_recognition_success": True},
         ]
-        results, waits, _ = self._simulate_multi_account_flow(accounts)
+        results = self._simulate_multi_account_flow(accounts)
         self.assertEqual(results[0]["status"], "success_degraded")
 
     def test_flow_with_qq_degradation_failure(self):
@@ -631,7 +534,7 @@ class TestFullFlowSimulation(unittest.TestCase):
         accounts = [
             {"name": "user1.png", "start_time": now, "qq_activate_fails": 5, "image_recognition_success": False},
         ]
-        results, waits, _ = self._simulate_multi_account_flow(accounts)
+        results = self._simulate_multi_account_flow(accounts)
         self.assertEqual(results[0]["status"], "failed_degraded")
 
     def test_flow_with_cooldown(self):
@@ -642,7 +545,7 @@ class TestFullFlowSimulation(unittest.TestCase):
             {"name": "user1.png", "start_time": now + 300},  # 同一账号，冷却中
             {"name": "user2.png", "start_time": now + 600},
         ]
-        results, waits, _ = self._simulate_multi_account_flow(accounts, cooldown_enabled=True)
+        results = self._simulate_multi_account_flow(accounts, cooldown_enabled=True)
         self.assertEqual(results[0]["status"], "success")
         self.assertEqual(results[1]["status"], "skipped_cooldown")
         self.assertEqual(results[2]["status"], "success")
@@ -655,7 +558,7 @@ class TestFullFlowSimulation(unittest.TestCase):
             {"name": "user2.png", "start_time": now + 300, "fail": True},
             {"name": "user3.png", "start_time": now + 600, "qq_activate_fails": 5, "image_recognition_success": True},
         ]
-        results, waits, _ = self._simulate_multi_account_flow(accounts)
+        results = self._simulate_multi_account_flow(accounts)
         self.assertEqual(results[0]["status"], "success")
         self.assertEqual(results[1]["status"], "failed")
         self.assertEqual(results[2]["status"], "success_degraded")
@@ -744,14 +647,6 @@ class TestCodeConsistency(unittest.TestCase):
             content = f.read()
         self.assertIn('"cooldown_run_immediately"', content)
 
-    def test_gui_app_has_interval_check(self):
-        """gui_app.py 应包含4分钟间隔检查"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("last_account_start_time", content)
-        self.assertIn("min_interval = 240", content)
-
     def test_gui_app_has_degradation_logic(self):
         """gui_app.py 应包含QQ降级逻辑"""
         gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
@@ -764,36 +659,7 @@ class TestCodeConsistency(unittest.TestCase):
 
 # ==================== Test 12: Bug修复验证 ====================
 class TestBugFixes(unittest.TestCase):
-    """验证7个Bug修复的正确性"""
-
-    def test_bug1_interval_after_cooldown_check(self):
-        """Bug1: 4分钟间隔计时器应在冷却检查之后"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        # 找到 run_script_main 方法
-        method_start = content.find("def run_script_main(self):")
-        method_content = content[method_start:method_start+3000]
-        # 冷却检查应在间隔检查之前
-        cooldown_pos = method_content.find("冷却检查")
-        interval_pos = method_content.find("执行间隔限制")
-        self.assertGreater(cooldown_pos, 0, "未找到冷却检查")
-        self.assertGreater(interval_pos, 0, "未找到间隔检查")
-        self.assertLess(cooldown_pos, interval_pos, "冷却检查应在间隔检查之前")
-
-    def test_bug1_timer_after_continue(self):
-        """Bug1: last_account_start_time 应在 continue 之后"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        method_start = content.find("def run_script_main(self):")
-        method_content = content[method_start:method_start+3000]
-        # "last_account_start_time = time.time()" 应在冷却检查的 continue 之后
-        continue_pos = method_content.find("continue")
-        timer_set_pos = method_content.find("last_account_start_time = time.time()")
-        self.assertGreater(continue_pos, 0, "未找到 continue")
-        self.assertGreater(timer_set_pos, 0, "未找到计时器设置")
-        self.assertLess(continue_pos, timer_set_pos, "计时器设置应在 continue 之后")
+    """验证Bug修复的正确性"""
 
     def test_bug2_check_uses_cooldown_run_immediately(self):
         """Bug2: _check_any_account_ready 应检查 cooldown_run_immediately"""

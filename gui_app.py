@@ -474,15 +474,14 @@ class App:
         # 防止所有账号在30秒内全部执行
         if self.settings.get("enable_cooldown", False):
             cd_hours = self.settings.get("cooldown_hours", 8)
-            cd_delay = self.settings.get("cooldown_delay_minutes", 5)
-            for img_path in self.qq_account_images:
+            for acc_idx, img_path in enumerate(self.qq_account_images):
                 file_name = os.path.basename(img_path)
                 cooling, _ = cooldown_manager.is_cooling_down(file_name)
                 if not cooling:
                     # 检查是否有历史记录
                     all_cd = cooldown_manager.get_all_cooldowns()
                     if file_name not in all_cd:
-                        cooldown_manager.record_run(file_name, cd_hours, cd_delay)
+                        cooldown_manager.record_run(file_name, cd_hours)
                         print(f"📝 首次启用冷却监听，为 {file_name} 记录冷却时间")
 
         self._cooldown_watcher_stop = threading.Event()
@@ -975,6 +974,7 @@ class App:
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_listbox.bind("<Button-3>", self._show_account_menu)
+        self.account_listbox.bind("<Double-1>", self._manual_add_cooldown)
 
 
         # ----- 状态信息栏 -----
@@ -1084,6 +1084,17 @@ class App:
             "【基本操作】\n"
             "F1 / 「开始运行」 → 依次登录 QQ → WeGame → 进游戏执行任务\n"
             "F2 / 「停止」       → 终止当前运行\n\n"
+            "【账号管理】\n"
+            "• 添加账号：点击「添加账号」选择 QQ 登录截图\n"
+            "• 删除账号：右键账号 → 删除选中\n"
+            "• 双击账号：手动将该账号加入冷却（需先启用冷却功能）\n"
+            "• 右键账号 → 测试截图识别：验证当前截图能否被识别\n\n"
+            "【账号冷却】\n"
+            "设置 → 其他设置 → 启用账号冷却（默认8小时）\n"
+            "• 点击「查看冷却」可查看所有账号冷却状态\n"
+            "• 在冷却窗口中可重置单个账号或一键重置所有冷却\n"
+            "• 运行失败或手动停止的账号不会记录冷却\n"
+            "• 冷却完立即运行：冷却结束后自动执行任务\n\n"
             "【定时执行】\n"
             "设置 → 自动任务设置 → 启用定时，可设多个时间点（HH:MM）\n"
             "支持「单次」和「每日循环」两种模式\n"
@@ -1197,6 +1208,47 @@ class App:
         finally:
             self.account_menu.grab_release()
 
+    def _manual_add_cooldown(self, event):
+        """双击账号列表手动为该账号记录冷却时间"""
+        sel = self.account_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx >= len(self.qq_account_images):
+            return
+        img_path = self.qq_account_images[idx]
+        account_name = os.path.basename(img_path)
+
+        if not self.settings.get("enable_cooldown", False):
+            messagebox.showinfo("提示",
+                "冷却功能未启用，请先在设置中启用「账号冷却」。",
+                parent=self.root)
+            return
+
+        cooling, next_time = cooldown_manager.is_cooling_down(account_name)
+        cd_hours = self.settings.get("cooldown_hours", 8)
+
+        if cooling:
+            if not messagebox.askyesno("确认加入冷却",
+                    f"「{account_name}」当前仍在冷却中（下次运行：{next_time}）。\n\n"
+                    f"是否重新记录冷却时间（{cd_hours}小时）？",
+                    parent=self.root):
+                return
+        else:
+            if not messagebox.askyesno("确认加入冷却",
+                    f"确定将「{account_name}」加入冷却？\n\n"
+                    f"冷却时间：{cd_hours}小时\n"
+                    f"加入后该账号在冷却期间不会被自动执行。",
+                    parent=self.root):
+                return
+
+        cooldown_manager.record_run(account_name, cd_hours)
+        _, new_next = cooldown_manager.is_cooling_down(account_name)
+        messagebox.showinfo("已记录冷却",
+            f"「{account_name}」已记录冷却时间。\n\n"
+            f"下次运行时间：{new_next or '未知'}",
+            parent=self.root)
+
     def _test_recognition(self):
         sel = self.account_listbox.curselection()
         if not sel:
@@ -1237,15 +1289,15 @@ class App:
         """弹出冷却状态查看窗口"""
         win = tk.Toplevel(self.root)
         win.title("账号冷却状态")
-        win.geometry("620x400")
+        win.geometry("620x480")
         win.resizable(False, False)
         win.transient(self.root)
         win.grab_set()
         # 居中
         win.update_idletasks()
         x = (win.winfo_screenwidth() - 620) // 2
-        y = (win.winfo_screenheight() - 400) // 2
-        win.geometry(f"620x400+{x}+{y}")
+        y = (win.winfo_screenheight() - 480) // 2
+        win.geometry(f"620x480+{x}+{y}")
         # 图标
         try:
             icon_path = config.resource_path("picture/icon.ico")
@@ -1256,9 +1308,12 @@ class App:
         except Exception:
             pass
 
-        # Treeview
+        # Treeview 区域（独立 Frame，确保与按钮区域垂直排列）
+        tree_frame = ttk.Frame(win)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
         columns = ("account", "last_run", "remaining", "next_run")
-        tree = ttk.Treeview(win, columns=columns, show="headings", height=12)
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=10)
         tree.heading("account", text="账号名称")
         tree.heading("last_run", text="上次运行时间")
         tree.heading("remaining", text="冷却剩余")
@@ -1268,10 +1323,10 @@ class App:
         tree.column("remaining", width=120, anchor="center")
         tree.column("next_run", width=150, anchor="center")
 
-        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
-        scrollbar.pack(side=tk.LEFT, fill=tk.Y, pady=10, padx=(0, 10))
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.LEFT, fill=tk.Y, padx=(4, 0))
 
         def _format_remaining(seconds):
             if seconds <= 0:
@@ -1296,9 +1351,18 @@ class App:
 
         _refresh()
 
-        # 按钮区域
+        # 按钮区域（固定在底部）
         btn_frame = ttk.Frame(win)
         btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def _do_reset(account_name):
+            """重置指定账号的冷却"""
+            if messagebox.askyesno("确认",
+                    f"确定重置「{account_name}」的冷却？\n\n"
+                    f"重置后该账号将可以立即运行。",
+                    parent=win):
+                cooldown_manager.reset_cooldown(account_name)
+                _refresh()
 
         def _reset_selected():
             sel = tree.selection()
@@ -1307,14 +1371,40 @@ class App:
                 return
             item = tree.item(sel[0])
             account_name = item["values"][0]
-            if messagebox.askyesno("确认", f"确定重置「{account_name}」的冷却？", parent=win):
-                cooldown_manager.reset_cooldown(account_name)
-                _refresh()
+            _do_reset(account_name)
+
+        def _on_double_click(event):
+            """双击某行直接重置该账号冷却"""
+            sel = tree.identify_row(event.y)
+            if not sel:
+                return
+            tree.selection_set(sel)
+            item = tree.item(sel)
+            account_name = item["values"][0]
+            _do_reset(account_name)
+
+        tree.bind("<Double-1>", _on_double_click)
 
         ttk.Button(btn_frame, text="重置选中账号冷却", style='TButton',
                    command=_reset_selected, width=16).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="刷新", style='TButton',
                    command=_refresh, width=8).pack(side=tk.LEFT, padx=(10, 0))
+
+        def _reset_all():
+            all_cd = cooldown_manager.get_all_cooldowns()
+            if not all_cd:
+                messagebox.showinfo("提示", "当前没有任何冷却记录。", parent=win)
+                return
+            count = len(all_cd)
+            if messagebox.askyesno("确认",
+                    f"确定重置所有 {count} 个账号的冷却？\n\n"
+                    f"重置后所有账号将可以立即运行。",
+                    parent=win):
+                cooldown_manager.reset_all_cooldowns()
+                _refresh()
+
+        ttk.Button(btn_frame, text="一键重置所有", style='TButton',
+                   command=_reset_all, width=12).pack(side=tk.LEFT, padx=(10, 0))
         ttk.Button(btn_frame, text="关闭", style='TButton',
                    command=win.destroy, width=8).pack(side=tk.RIGHT)
 
@@ -1385,8 +1475,6 @@ class App:
             print(f"  本轮将处理 {total} 个 QQ 账号")
             print("=" * 55)
 
-            last_account_start_time = None  # 记录上一个实际执行的账号开始时间
-
             for i, img_path in enumerate(self.qq_account_images):
                 if self._stop_event.is_set():
                     break
@@ -1402,17 +1490,6 @@ class App:
                         processed_accounts.append(f"{file_name} (冷却中)")
                         continue
 
-                # 执行间隔限制：相邻实际执行的账号开始时间间隔不得小于4分钟
-                if last_account_start_time is not None:
-                    elapsed_since_last = time.time() - last_account_start_time
-                    min_interval = 240  # 4分钟 = 240秒
-                    if elapsed_since_last < min_interval:
-                        wait_remaining = min_interval - elapsed_since_last
-                        print(f"⏳ 账号切换间隔不足4分钟，等待 {wait_remaining:.0f} 秒...")
-                        self.set_operation(f"等待间隔 ({wait_remaining:.0f}s)")
-                        time.sleep(wait_remaining)
-                last_account_start_time = time.time()
-
                 acc_text = f"第 {i+1}/{total} 个账号"
                 self.root.after(0, self.update_ui, False, acc_text, file_name)
                 print(f"\n{'='*40}")
@@ -1420,14 +1497,17 @@ class App:
                 print(f"{'='*40}")
                 self.run_stats["total"] += 1
                 account_failed = False
+                account_interrupted = False
 
                 # 步骤1：启动 QQ 并登录
-                if self._stop_event.is_set(): break
-                self.set_operation(f"启动 QQ ({i+1}/{total})")
-                print("启动 QQ...")
-                if not qq_path or not utils.start_app(qq_path, "QQ"):
-                    print("❌ QQ 启动失败，跳过此账号")
-                    account_failed = True
+                if self._stop_event.is_set():
+                    account_interrupted = True
+                if not account_interrupted:
+                    self.set_operation(f"启动 QQ ({i+1}/{total})")
+                    print("启动 QQ...")
+                    if not qq_path or not utils.start_app(qq_path, "QQ"):
+                        print("❌ QQ 启动失败，跳过此账号")
+                        account_failed = True
 
                 if not account_failed:
                     # 等待 QQ 窗口出现（含降级方案）
@@ -1469,8 +1549,9 @@ class App:
                     if qq_ready:
                         time.sleep(1)
 
-                if not account_failed and self._stop_event.is_set(): break
-                if not account_failed:
+                if not account_failed and self._stop_event.is_set():
+                    account_interrupted = True
+                if not account_failed and not account_interrupted:
                     self.set_operation("QQ 快捷登录")
                     print("开始 QQ 快捷登录...")
                     if not utils.qq_quick_login(img_path):
@@ -1484,8 +1565,9 @@ class App:
                         time.sleep(1)
 
                 # 步骤2：启动 WeGame 并快捷登录（使用当前 QQ 账号）
-                if not account_failed and self._stop_event.is_set(): break
-                if not account_failed:
+                if not account_failed and self._stop_event.is_set():
+                    account_interrupted = True
+                if not account_failed and not account_interrupted:
                     self.set_operation("启动 WeGame")
                     print("启动 WeGame...")
                     if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
@@ -1494,8 +1576,9 @@ class App:
                     else:
                         time.sleep(3)
 
-                if not account_failed and self._stop_event.is_set(): break
-                if not account_failed:
+                if not account_failed and self._stop_event.is_set():
+                    account_interrupted = True
+                if not account_failed and not account_interrupted:
                     self.set_operation("快捷登录 WeGame")
                     print("开始快捷登录 WeGame ...")
                     if not utils.wegame_quick_login():
@@ -1506,8 +1589,9 @@ class App:
                         time.sleep(3)
 
                 # 步骤3：启动三角洲行动
-                if not account_failed and self._stop_event.is_set(): break
-                if not account_failed:
+                if not account_failed and self._stop_event.is_set():
+                    account_interrupted = True
+                if not account_failed and not account_interrupted:
                     self.set_operation("查找三角洲游戏图标")
                     print("\n--- 启动三角洲行动 ---")
                     utils.activate_window_by_title("WeGame", partial_match=True)
@@ -1568,36 +1652,35 @@ class App:
                         print("⚠️ 未检测到游戏窗口，继续尝试操作...")
 
                     if not self._game_operations():
-                        if not self._stop_event.is_set():
+                        if self._stop_event.is_set():
+                            account_interrupted = True
+                        else:
                             print("❌ 游戏内操作失败，跳过此账号")
                             account_failed = True
-                    if self._stop_event.is_set(): break
+                    if self._stop_event.is_set():
+                        account_interrupted = True
 
-                # 步骤4：关闭游戏和 WeGame，退出 QQ 和 WeGame 进程
-                if not account_failed:
-                    self.set_operation("关闭三角洲游戏")
-                    print("\n--- 关闭三角洲游戏 ---")
-                    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
-                    for title in delta_titles:
-                        if self._stop_event.is_set(): break
-                        utils.close_window_by_title(title, partial_match=True)
+                # 步骤4 + 清理：仅在未中断时执行
+                if not account_interrupted:
+                    # 步骤4：关闭游戏和 WeGame，退出 QQ 和 WeGame 进程
+                    if not account_failed:
+                        self.set_operation("关闭三角洲游戏")
+                        print("\n--- 关闭三角洲游戏 ---")
+                        delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+                        for title in delta_titles:
+                            if self._stop_event.is_set(): break
+                            utils.close_window_by_title(title, partial_match=True)
+                        time.sleep(2)
+                        utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
+
+                    # 每轮结束后退出 QQ 和 WeGame，不保留后台
+                    self.set_operation("清理进程")
+                    print("\n--- 退出 QQ 和 WeGame ---")
+                    utils.close_window_by_title("WeGame", partial_match=True)
+                    time.sleep(1)
+                    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+                    utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
                     time.sleep(2)
-                    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
-
-                # 每轮结束后退出 QQ 和 WeGame，不保留后台
-                self.set_operation("清理进程")
-                print("\n--- 退出 QQ 和 WeGame ---")
-                utils.close_window_by_title("WeGame", partial_match=True)
-                time.sleep(1)
-                utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
-                utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
-                time.sleep(2)
-
-                # 记录冷却时间（无论成功失败都记录）
-                if self.settings.get("enable_cooldown", False):
-                    cd_hours = self.settings.get("cooldown_hours", 8)
-                    cd_delay = self.settings.get("cooldown_delay_minutes", 5)
-                    cooldown_manager.record_run(current_account_name, cd_hours, cd_delay)
 
                 # 获取下次运行时间
                 next_run_str = "未启用"
@@ -1605,14 +1688,38 @@ class App:
                     _, next_run_str = cooldown_manager.is_cooling_down(current_account_name)
                     next_run_str = next_run_str or "已冷却"
 
-                if account_failed:
+                if account_interrupted:
+                    # 用户手动停止，不记录冷却，不计入成功/失败
+                    print(f"⏹️ 账号 {current_account_name} 被用户中断，跳过冷却记录")
+                    processed_accounts.append(f"{current_account_name} (中断)")
+                    break
+                elif account_failed:
                     self.run_stats["fail"] += 1
                     processed_accounts.append(f"{current_account_name} (失败)")
                     # 立即发送失败邮件通知
                     self._send_account_failure_email(current_account_name, next_run_str, processed_accounts)
                 else:
+                    # 只有成功运行的账号才记录冷却时间
+                    if self.settings.get("enable_cooldown", False):
+                        cd_hours = self.settings.get("cooldown_hours", 8)
+                        cooldown_manager.record_run(current_account_name, cd_hours)
                     self.run_stats["success"] += 1
                     processed_accounts.append(f"{current_account_name} (成功)")
+
+                # 账号间隔等待：非最后一个账号且未被停止时，等待固定间隔再执行下一个
+                if i < total - 1 and not self._stop_event.is_set():
+                    interval = self.settings.get("cooldown_delay_minutes", 1)
+                    if interval > 0:
+                        print(f"⏳ 等待 {interval} 分钟后执行下一个账号...")
+                        self.set_operation(f"账号间隔等待 ({interval}分钟)")
+                        wait_seconds = interval * 60
+                        waited = 0
+                        while waited < wait_seconds and not self._stop_event.is_set():
+                            chunk = min(5, wait_seconds - waited)
+                            time.sleep(chunk)
+                            waited += chunk
+                        if self._stop_event.is_set():
+                            break
 
             print("\n🎉 所有账号处理完毕！")
         except Exception as e:
@@ -1857,6 +1964,15 @@ class App:
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.progress['value'] = self.progress['maximum']
+
+        # 用户手动停止时，清理可能残留的进程
+        if self._user_stopped_cooldown:
+            try:
+                utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
+                utils.kill_process(config.WEGAME_PROCESS, wait_exit=False)
+                utils.kill_process(config.QQ_PROCESS, wait_exit=False)
+            except Exception:
+                pass
 
         # 恢复系统睡眠设置
         utils.allow_sleep()
