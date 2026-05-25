@@ -26,7 +26,7 @@ class TemplateCaptureWizard:
 
         self.win = tk.Toplevel(parent)
         self.win.title("模板上传向导")
-        self.win.geometry("700x700")
+        self.win.geometry("700x800")
         self.win.resizable(False, False)
         self.win.transient(parent)
         self.win.grab_set()
@@ -90,11 +90,35 @@ class TemplateCaptureWizard:
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
-        # 为每个模板创建一行
+        # 分组定义：(标题, 起始变量名集合)
+        section_headers = {
+            "Produce_TechCenter": "产出项设置",
+            "IMAGE_LOGIN_BTN": "WeGame 登录",
+            "Hazard_Operations": "游戏内导航",
+            "Tech_Center": "设施操作",
+            "MAKE": "制造操作",
+            "Warehouse": "一键出售",
+            "EMAIL_MAIL": "邮箱货币",
+            "QQ_ACCOUNT_SELECT": "QQ 登录",
+        }
         produce_vars = {"Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"}
         produce_order = ["Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"]
         self.rows = {}
+
+        def _add_section_header(title):
+            """添加分组标题和下划线"""
+            header_frame = ttk.Frame(self.scroll_frame)
+            header_frame.pack(fill=tk.X, pady=(10, 2), padx=2)
+            ttk.Label(header_frame, text=title,
+                      font=('Microsoft YaHei UI', 10, 'bold'),
+                      foreground='#2c3e50').pack(side=tk.LEFT)
+            ttk.Separator(self.scroll_frame, orient='horizontal').pack(fill=tk.X, pady=(0, 4), padx=2)
+
         for i, (var_name, rel_path, name, hint) in enumerate(self.capture_list):
+            # 在每个分组开始前添加标题
+            if var_name in section_headers:
+                _add_section_header(section_headers[var_name])
+
             is_produce = var_name in produce_vars
             if is_produce:
                 row = tk.Frame(self.scroll_frame, bg='#FFF8F0', bd=1, relief='solid',

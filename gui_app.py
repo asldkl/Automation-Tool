@@ -148,6 +148,8 @@ class App:
         # 快捷键
         root.bind("<F1>", lambda e: self.start())
         root.bind("<F2>", lambda e: self.stop())
+        # 全局拦截空格键，主界面按下空格不进行任何操作
+        root.bind_all("<space>", lambda e: "break")
 
         self._build_ui()
         self._redirect_output()
@@ -507,15 +509,18 @@ class App:
         try:
             while not self._cooldown_watcher_stop.is_set():
                 try:
-                    # 用户主动停止后，等待2分钟再恢复监听（防止立即重新触发）
+                    # 用户主动停止后，等待30秒再恢复监听（防止立即重新触发）
                     if self._user_stopped_cooldown:
-                        for _ in range(24):  # 2分钟 = 24 * 5秒
+                        for _ in range(6):  # 30秒 = 6 * 5秒
                             if self._cooldown_watcher_stop.is_set():
                                 return
                             time.sleep(5)
                         self._user_stopped_cooldown = False
                         print("ℹ️ 用户停止冷却期已过，恢复冷却监听")
                         continue
+
+                    # 更新唤醒定时器（基于最早冷却到期时间）
+                    self._update_cooldown_wake_timer()
 
                     if not self.running and self.qq_account_images:
                         now = datetime.datetime.now()
@@ -526,6 +531,15 @@ class App:
                             if has_ready:
                                 last_trigger_minute = current_minute
                                 print("🔔 检测到账号冷却到期，自动执行任务...")
+                                # 发送冷却到期邮件提醒
+                                ready_list = []
+                                for img_path in self.qq_account_images:
+                                    fname = os.path.basename(img_path)
+                                    cooling, _ = cooldown_manager.is_cooling_down(fname)
+                                    if not cooling:
+                                        ready_list.append(fname)
+                                if ready_list:
+                                    self._send_cooldown_ready_email(ready_list)
                                 utils.prevent_sleep()
                                 utils.wake_display()
                                 time.sleep(2)
@@ -550,11 +564,22 @@ class App:
         """检查是否有账号冷却到期且未在冷却中，返回是否有可用账号"""
         if not self.settings.get("cooldown_run_immediately", False):
             return False
+        ready_accounts = []
         for img_path in self.qq_account_images:
             file_name = os.path.basename(img_path)
-            cooling, _ = cooldown_manager.is_cooling_down(file_name)
+            cooling, next_time = cooldown_manager.is_cooling_down(file_name)
             if not cooling:
-                return True
+                ready_accounts.append(file_name)
+        # 只在状态变化时打印日志，避免重复输出
+        ready_key = tuple(sorted(ready_accounts))
+        if ready_accounts:
+            if not hasattr(self, '_last_ready_key') or self._last_ready_key != ready_key:
+                print(f"🔍 发现 {len(ready_accounts)} 个账号就绪：{', '.join(ready_accounts)}")
+                self._last_ready_key = ready_key
+            return True
+        else:
+            if hasattr(self, '_last_ready_key') and self._last_ready_key:
+                self._last_ready_key = None
         return False
 
     def _schedule_loop_daily(self):
@@ -803,7 +828,7 @@ class App:
             traceback.print_exc()
 
     def _set_next_wake_timer(self):
-        """计算下一个运行时间，提前5分钟设置唤醒定时器"""
+        """计算下一个运行时间，提前5分钟设置唤醒定时器（支持定时和冷却两种模式）"""
         if not self.settings.get("wake_enabled", True):
             return
         try:
@@ -814,6 +839,8 @@ class App:
 
             now = datetime.datetime.now()
             next_run = None
+
+            # 定时执行模式
             for t in self._schedule_times:
                 h, m = map(int, t.split(":"))
                 run_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
@@ -821,6 +848,19 @@ class App:
                     run_time += datetime.timedelta(days=1)
                 if next_run is None or run_time < next_run:
                     next_run = run_time
+
+            # 冷却完立即运行模式：取最早冷却到期时间
+            if self.settings.get("cooldown_run_immediately", False) and self.qq_account_images:
+                for img_path in self.qq_account_images:
+                    fname = os.path.basename(img_path)
+                    cooling, next_time_str = cooldown_manager.is_cooling_down(fname)
+                    if cooling and next_time_str:
+                        try:
+                            cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
+                            if next_run is None or cd_next < next_run:
+                                next_run = cd_next
+                        except Exception:
+                            pass
 
             if next_run:
                 wake_time = next_run - datetime.timedelta(minutes=5)
@@ -833,6 +873,42 @@ class App:
                         print(f"🔔 已设置唤醒定时器：{wake_time.strftime('%H:%M')}")
         except Exception as e:
             print(f"⚠️ 设置唤醒定时器失败: {e}")
+
+    def _update_cooldown_wake_timer(self):
+        """冷却监听专用：根据最早冷却到期时间更新唤醒定时器"""
+        if not self.settings.get("wake_enabled", True):
+            return
+        if not self.settings.get("cooldown_run_immediately", False):
+            return
+        try:
+            now = datetime.datetime.now()
+            earliest_next = None
+            if self.qq_account_images:
+                for img_path in self.qq_account_images:
+                    fname = os.path.basename(img_path)
+                    cooling, next_time_str = cooldown_manager.is_cooling_down(fname)
+                    if cooling and next_time_str:
+                        try:
+                            cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
+                            if earliest_next is None or cd_next < earliest_next:
+                                earliest_next = cd_next
+                        except Exception:
+                            pass
+
+            if earliest_next:
+                wake_time = earliest_next - datetime.timedelta(minutes=5)
+                min_gap = datetime.timedelta(seconds=60)
+                if wake_time > now + min_gap:
+                    # 取消旧定时器后重新设置
+                    if self._wake_timer_handle:
+                        utils.cancel_wake_timer(self._wake_timer_handle)
+                        self._wake_timer_handle = None
+                    handle = utils.set_wake_timer(wake_time)
+                    if handle:
+                        self._wake_timer_handle = handle
+                        print(f"🔔 已设置冷却唤醒定时器：{wake_time.strftime('%H:%M')}")
+        except Exception as e:
+            print(f"⚠️ 更新冷却唤醒定时器失败: {e}")
 
     def _show_reminder(self, minutes):
         """显示运行前提醒弹窗"""
@@ -929,7 +1005,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.7.1  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.0.0  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -1546,6 +1622,8 @@ class App:
                     parent=win):
                 cooldown_manager.reset_cooldown(account_name)
                 _refresh()
+                # 重置后更新唤醒定时器
+                self._set_next_wake_timer()
 
         def _reset_selected():
             sel = tree.selection()
@@ -1585,6 +1663,8 @@ class App:
                     parent=win):
                 cooldown_manager.reset_all_cooldowns()
                 _refresh()
+                # 重置后更新唤醒定时器
+                self._set_next_wake_timer()
 
         ttk.Button(btn_frame, text="一键重置所有", style='TButton',
                    command=_reset_all, width=12).pack(side=tk.LEFT, padx=(10, 0))
@@ -2116,11 +2196,15 @@ class App:
                     print(f"❌ 未找到上架按钮")
                     sell_stats["failed"] += 1
                     break
+                # 将鼠标移至屏幕角落，避免悬浮提示遮挡降价按钮
+                pyautogui.moveTo(0, 0)
                 time.sleep(0.5)
 
                 for i in range(discount_times):
                     if utils.find_and_click(config.Discount, timeout=5):
                         print(f"📉 降价 {i + 1}/{discount_times}")
+                        # 每次点击降价后移至角落，避免悬浮提示遮挡下次点击
+                        pyautogui.moveTo(0, 0)
                         time.sleep(0.3)
 
                 if not utils.find_and_click(config.Confirm_Listing, timeout=10):
@@ -2168,6 +2252,15 @@ class App:
             if not self._schedule_thread or not self._schedule_thread.is_alive():
                 print("⚠️ 检测到调度器线程已退出，正在重新启动...")
                 self._start_scheduler()
+
+        # 冷却监听健康检查：确保冷却到期监听线程正常运行
+        if self.settings.get("cooldown_run_immediately", False):
+            watcher_alive = (hasattr(self, '_cooldown_watcher_thread')
+                            and self._cooldown_watcher_thread
+                            and self._cooldown_watcher_thread.is_alive())
+            if not watcher_alive:
+                print("⚠️ 检测到冷却监听线程已退出，正在重新启动...")
+                self._start_cooldown_watcher()
 
         # 显示运行统计
         stats = self.run_stats
@@ -2265,6 +2358,48 @@ class App:
                 print(f"📧 账号 {account_name} 失败通知邮件已发送")
             else:
                 print(f"📧 失败通知邮件发送失败：{msg}")
+
+        threading.Thread(target=_send, daemon=True).start()
+
+    def _send_cooldown_ready_email(self, ready_accounts):
+        """冷却到期时发送邮件提醒"""
+        if not self.settings.get("cooldown_email_enabled", False):
+            return
+        if not self.settings.get("email_enabled", False):
+            return
+        smtp_code = self.settings.get("smtp_code", "").strip()
+        sender = self.settings.get("sender_email", "").strip()
+        receiver = self.settings.get("receiver_email", "").strip()
+        if not smtp_code or not sender or not receiver:
+            return
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        account_items = "".join(f"<li style='padding:3px 0;'>{html.escape(name)}</li>" for name in ready_accounts)
+        count = len(ready_accounts)
+
+        body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
+<h2 style="color:#27ae60;border-bottom:2px solid #27ae60;padding-bottom:10px;">三角洲行动自动化工具 - 冷却到期提醒</h2>
+<table style="border-collapse:collapse;width:100%;margin:15px 0;">
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">提醒时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">到期账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;font-weight:bold;">{count} 个</td></tr>
+<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">到期账号列表</td></tr>
+<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{account_items}</ul></td></tr>
+</table>
+<div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#27ae6015;border:1px solid #27ae6040;">
+<span style="font-size:16px;font-weight:bold;color:#27ae60;">以上账号冷却已到期，即将自动执行任务</span>
+</div>
+<p style="color:#7f8c8d;font-size:12px;text-align:center;margin-top:15px;">此邮件由三角洲行动自动化工具自动发送</p>
+</div>"""
+
+        def _send():
+            success, msg = utils.send_email_notification(
+                smtp_code, sender, receiver,
+                f"三角洲自动化 - 冷却到期提醒 ({count}个账号)", body
+            )
+            if success:
+                print(f"📧 冷却到期提醒邮件已发送（{count}个账号）")
+            else:
+                print(f"📧 冷却到期提醒邮件发送失败：{msg}")
 
         threading.Thread(target=_send, daemon=True).start()
 
