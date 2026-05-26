@@ -1,0 +1,182 @@
+================================================================================
+三角洲行动自动化工具 - 项目结构说明
+版本: v1.0.0
+用途: 辅助 AI 快速了解项目结构和各模块功能
+================================================================================
+
+【项目概述】
+基于图像识别（OpenCV 模板匹配）的《三角洲行动》游戏日常自动化工具。
+支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知等。
+
+【核心文件】
+
+├── main.py                     # 程序入口
+│   - 单实例保护（Windows Mutex）
+│   - 启动 gui_app.main()
+│   - 异常日志写入 ~/.delta_auto_error.log
+│
+├── gui_app.py                  # 主 GUI 应用（核心模块，约2700行）
+│   - App 类：主窗口、账号管理、日志区域、控制按钮
+│   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→操作→关闭）
+│   - _game_operations()：游戏操作（进入烽火地带→特勤处→制造/收取）
+│   - _handle_facility()：单个设施操作（制造→收取→领取→产出）
+│   - _sell_operations()：一键出售流程（仓库→物品→出售→上架→降价→确认）
+│   - _start_scheduler()：定时执行调度器
+│   - _cooldown_watcher_loop()：冷却到期监听（到期自动执行）
+│   - _send_email_notification()：运行报告邮件
+│   - _send_account_failure_email()：单账号失败邮件
+│   - _send_cooldown_ready_email()：冷却到期提醒邮件
+│   - _send_failure_email()：程序崩溃邮件
+│   - _show_reminder()：运行前提醒弹窗
+│   - 系统托盘（pystray）、联网时间校验（多时间源）
+│
+├── config.py                   # 配置管理（约305行）
+│   - DEFAULT_SETTINGS：所有默认配置项
+│   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json
+│   - resource_path()：PyInstaller 资源路径处理
+│   - resolve_template_path()：用户自定义模板优先
+│   - get_sell_items()：获取售卖物品图片列表
+│   - TEMPLATE_CAPTURE_LIST：所有模板图片定义（变量名、路径、中文描述）
+│   - WeGame 路径自动检测（Windows 注册表）
+│   - 屏幕分辨率检测与模板分辨率记录
+│
+├── utils.py                    # 工具函数（约731行）
+│   - 图像识别：
+│     - find_and_click()：单尺度模板匹配+点击
+│     - find_and_click_multiscale()：多尺度复合匹配（灰度+边缘，0.7x-1.3x）
+│     - _match_template_multiscale()：核心多尺度匹配算法
+│   - 进程管理：
+│     - start_app() / kill_process() / close_window_by_title()
+│     - activate_window_by_title() / wait_for_window()
+│   - QQ/WeGame 登录：
+│     - qq_quick_login()：QQ 账号选择+登录（含滚动查找）
+│     - wegame_quick_login()：WeGame 快捷登录
+│   - 电源管理：
+│     - prevent_sleep() / allow_sleep()：防休眠
+│     - set_wake_timer() / cancel_wake_timer()：定时唤醒
+│     - schedule_shutdown() / cancel_shutdown()：自动关机
+│     - wake_display()：唤醒显示器
+│   - Windows 任务计划：
+│     - schedule_startup_task() / remove_startup_task()
+│   - 邮件发送：
+│     - send_email_notification()：QQ 邮箱 SMTP 发送
+│
+├── settings_window.py          # 设置对话框（约820行）
+│   - SettingsWindow 类：5个选项卡
+│     - Tab 1: 全局设置（路径、置信度、分辨率、日志目录）
+│     - Tab 2: 自动任务（定时、操作选择、一键出售、提醒）
+│     - Tab 3: 电源管理（唤醒、关机、定时开机）
+│     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
+│     - Tab 5: 其他设置（开机自启、冷却管理、滚动设置）
+│
+├── cooldown_manager.py         # 冷却管理（约116行）
+│   - 数据存储：~/.delta_auto_cooldown.json
+│   - is_cooling_down()：检查账号是否在冷却中
+│   - record_run()：记录运行时间，计算下次可运行时间
+│   - reset_cooldown() / reset_all_cooldowns()：重置冷却
+│   - get_all_cooldowns()：获取所有账号冷却信息
+│   - 原子写入（.tmp + os.replace）
+│
+├── crypto_utils.py             # 加密与防篡改（约151行）
+│   - decrypt_expiry()：解密有效期（XOR，当前 2026-06-01）
+│   - save_timestamp() / load_timestamp()：时间戳防篡改
+│   - clear_timestamp()：清除时间戳
+│   - 用途：防止用户回拨系统时间绕过有效期
+│
+├── template_capture.py         # 模板上传向导（约427行）
+│   - TemplateCaptureWizard 类：模态对话框
+│   - 列出所有模板图片（中文名+截图提示）
+│   - 上传/预览/恢复默认
+│   - 售卖物品管理（添加/删除，支持重复添加）
+│   - 出售测试按钮
+│   - 保存到 ~/.delta_auto_templates/
+│
+├── test_all_features.py        # 单元测试（约32KB）
+│   - 测试配置、冷却、互斥、QQ降级、邮件、代码一致性
+
+【资源目录】
+
+├── picture/                    # 游戏 UI 元素截图
+│   ├── *.png                   # 主界面按钮（烽火地带、特勤处、制造等）
+│   ├── icon.ico                # 应用图标
+│   ├── produce/                # 生产设施模板（科技中心、工具台、护甲站、医疗站）
+│   ├── One_Click_Sell/         # 出售流程模板（仓库、出售、上架、降价、确认上架）
+│   ├── email/                  # 邮箱货币模板（邮箱、交易中心、全部领取、领取完成）
+│   └── qq_login/               # QQ 登录模板（账号选择、登录按钮）
+
+【用户数据目录】(~/.delta_auto_*)
+
+├── ~/.delta_auto_settings.json     # 用户设置
+├── ~/.delta_auto_accounts.json     # QQ 账号列表
+├── ~/.delta_auto_cooldown.json     # 冷却数据
+├── ~/.delta_auto_timestamp.dat     # 时间戳防篡改
+├── ~/.delta_auto_templates/        # 用户自定义模板
+├── ~/.delta_auto_sell_items/       # 售卖物品图片
+└── ~/.delta_auto_error.log         # 异常日志
+
+【关键配置项】
+
+| 配置项                      | 说明                           | 默认值   |
+|-----------------------------|-------------------------------|----------|
+| confidence                  | 图像匹配置信度                  | 0.7      |
+| enable_cooldown             | 启用账号冷却                    | False    |
+| cooldown_hours              | 冷却小时数                      | 8        |
+| cooldown_run_immediately    | 冷却完立即运行                  | False    |
+| cooldown_email_enabled      | 冷却到期邮件提醒                | False    |
+| cooldown_delay_minutes      | 账号间隔时间（分钟）            | 1        |
+| enable_sell_after_run       | 主流程后执行一键出售            | False    |
+| sell_discount_times         | 降价次数（0-5）                | 0        |
+| sell_quantity               | 出售数量（1-99）               | 1        |
+| sell_confidence             | 出售物品匹配置信度              | 0.55     |
+| email_enabled               | 启用邮件通知                    | False    |
+| auto_start                  | 启用定时执行                    | False    |
+| run_mode                    | 运行模式（单次/每日循环）       | 单次     |
+| enable_email_currency       | 自动领取邮箱货币                | False    |
+
+【运行流程】
+
+1. 启动 → 单实例检查 → 联网时间校验 → 加载设置 → 显示主界面
+2. 用户点击"开始运行"或定时触发或冷却到期触发
+3. 清理进程（QQ/WeGame）
+4. 逐个账号：
+   a. 冷却检查（跳过冷却中的账号）
+   b. 启动 QQ → 快捷登录
+   c. 启动 WeGame → 快捷登录
+   d. 找到三角洲图标 → 启动游戏
+   e. 进入烽火地带 → 特勤处
+   f. 可选：领取邮箱货币
+   g. 执行选中的设施操作（制造/收取/产出）
+   h. 可选：一键出售
+   i. 关闭游戏/WeGame/QQ
+   j. 记录冷却时间
+   k. 等待账号间隔
+5. 所有账号完成 → 发送邮件报告 → 恢复睡眠设置
+
+【自动化操作流程（_sell_operations）】
+
+打开仓库 → 遍历售卖物品 → 对每个物品执行 sell_quantity 次：
+  找到物品 → 点击出售 → 点击上架 → 鼠标移至角落 → 降价N次 → 确认上架
+
+【模板匹配算法】
+
+1. 单尺度匹配（find_and_click）：
+   - 截图 → 灰度化 → cv2.matchTemplate(TM_CCOEFF_NORMED)
+   - 置信度 >= 阈值 → 点击中心坐标
+   - 边缘坐标过滤（忽略屏幕边缘误匹配）
+
+2. 多尺度复合匹配（find_and_click_multiscale）：
+   - 7个缩放比例：1.0, 0.9, 1.1, 0.8, 1.2, 0.7, 1.3
+   - 每个比例：灰度匹配 + Canny边缘匹配
+   - 取两种匹配分数平均值，选最高分
+   - 返回最佳匹配位置
+
+【技术栈】
+
+Python 3.8+ / Tkinter / OpenCV / PyAutoGUI / psutil / pywin32 / pystray+Pillow / PyInstaller
+
+【打包命令】
+
+pip install pyinstaller
+pyinstaller 三角洲自动工具.spec
+
+================================================================================

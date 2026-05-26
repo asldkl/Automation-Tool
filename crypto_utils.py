@@ -15,11 +15,11 @@ _K3 = 0x19
 _K4 = 0x88
 
 # ==================== 加密后的有效期 ====================
-# 2026年6月1日 加密后的字节
-# 计算方式: plain = [0x07, 0xEA, 0x06, 0x01] (年份高8位, 年份低8位, 月, 日)
+# 2026年8月1日 加密后的字节
+# 计算方式: plain = [0x07, 0xEA, 0x08, 0x01] (年份高8位, 年份低8位, 月, 日)
 #           key = [0x42, 0x37, 0x19, 0x88]
 #           encrypted = plain XOR key
-_ENCRYPTED_EXPIRY = bytes([0x45, 0xDD, 0x1F, 0x89])
+_ENCRYPTED_EXPIRY = bytes([0x45, 0xDD, 0x11, 0x89])
 
 def _get_key():
     """动态组合加密密钥"""
@@ -131,7 +131,7 @@ def _test_encryption():
     print(f"解密后的有效期: {expiry}")
 
     # 测试加密
-    encrypted = encrypt_expiry_date(2026, 6, 1)
+    encrypted = encrypt_expiry_date(2026, 8, 1)
     print(f"加密后的字节: {encrypted}")
 
     # 测试时间戳保存和加载

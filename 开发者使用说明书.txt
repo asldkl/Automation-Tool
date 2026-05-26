@@ -118,7 +118,7 @@
 
 打开 crypto_utils.py 文件，找到以下代码（约第22行）：
 
-    _ENCRYPTED_EXPIRY = bytes([0x45, 0xDD, 0x1E, 0x89])
+    _ENCRYPTED_EXPIRY = bytes([0x45, 0xDD, 0x11, 0x89])
 
 将其替换为新的加密字节，例如：
 
@@ -143,7 +143,7 @@
 打开 docs/superpowers/specs/2026-05-19-anti-crack-protection-design.md
 找到以下代码：
 
-    _ENCRYPTED_EXPIRY = bytes([0x45, 0xDD, 0x1E, 0x89])  # 2026年7月1日加密后
+    _ENCRYPTED_EXPIRY = bytes([0x45, 0xDD, 0x11, 0x89])  # 2026年7月1日加密后
 
 更新为新的值和日期注释。
 

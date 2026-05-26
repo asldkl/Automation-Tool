@@ -8,7 +8,7 @@ import json
 import winreg
 
 # ==================== 加密后的有效期配置 ====================
-# 有效期: 2026年6月1日（加密存储，非明文）
+# 有效期: 2026年8月1日（加密存储，非明文）
 # 解密逻辑在 crypto_utils.py 中
 def get_expiry_date():
     """动态解密有效期"""
@@ -116,8 +116,11 @@ DEFAULT_SETTINGS = {
     "cooldown_hours": 8,              # 冷却小时数（默认8小时）
     "cooldown_delay_minutes": 1,      # 账号间隔时间（0-5分钟，默认1）
     "cooldown_run_immediately": False, # 冷却完立即运行
+    "cooldown_email_enabled": False,  # 冷却结束后发送邮件提醒
     # 模板分辨率记录
     "template_resolution": "",        # 模板截图时的屏幕分辨率
+    # 模板上传状态记录
+    "template_upload_status": {},     # var_name -> "pending" | "done"
 }
 
 def load_settings():
@@ -182,24 +185,28 @@ def init_settings():
 APP_SETTINGS = {}
 
 # ==================== 图片资源路径（固定） ====================
-IMAGE_LOGIN_BTN      = resource_path("picture/login_btn.png")
+# WeGame 登录
+IMAGE_LOGIN_BTN      = resource_path("picture/wegame_login/login_btn.png")
+DELTA_GAME_ICON     = resource_path("picture/wegame_login/delta_game_icon.png")
+DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
 
-DELTA_GAME_ICON     = resource_path("picture/delta_game_icon.png")
-DELTA_LAUNCH_BTN    = resource_path("picture/delta_launch_btn.png")
+# 游戏内导航
+Hazard_Operations   = resource_path("picture/Navigation/hazard_operations.png")
+Special_Ops         = resource_path("picture/Navigation/special_ops.png")
 
-MAKE                = resource_path("picture/make.png")
-Hazard_Operations   = resource_path("picture/hazard_operations.png")
-Special_Ops         = resource_path("picture/special_ops.png")
-Tech_Center         = resource_path("picture/tech_center.png")
-Tool_Bench          = resource_path("picture/tool_bench.png")
-Armor_Station       = resource_path("picture/Armor_Station.png")
-Pharmacy_Station    = resource_path("picture/Pharmacy_Station.png")
+# 设施控制
+Tech_Center         = resource_path("picture/Facility_Controls/tech_center.png")
+Tool_Bench          = resource_path("picture/Facility_Controls/tool_bench.png")
+Armor_Station       = resource_path("picture/Facility_Controls/Armor_Station.png")
+Pharmacy_Station    = resource_path("picture/Facility_Controls/Pharmacy_Station.png")
 
-Produce             = resource_path("picture/produce.png")
-Collect             = resource_path("picture/collect.png")
-Auto_fill           = resource_path("picture/auto_fill.png")
-Claim_Reward        = resource_path("picture/claim_reward.png")
-COIN_GAME           = resource_path("picture/coin_game.png")
+# 制造控制
+MAKE                = resource_path("picture/Crafting_Controls/Make.png")
+Produce             = resource_path("picture/Crafting_Controls/Produce.png")
+Collect             = resource_path("picture/Crafting_Controls/Collect.png")
+Auto_fill           = resource_path("picture/Crafting_Controls/Auto_fill.png")
+Claim_Reward        = resource_path("picture/Crafting_Controls/Claim_Reward.png")
+COIN_GAME           = resource_path("picture/Crafting_Controls/coin_game.png")
 
 # ==================== 邮箱货币图片 ====================
 EMAIL_MAIL              = resource_path("picture/email/mail.png")
@@ -270,21 +277,21 @@ TEMPLATE_CAPTURE_LIST = [
     ("Produce_ToolBench",    "picture/produce/produce_tool_bench.png",     "工作台产出项",   "在工作台制造列表，截取要生产的物品"),
     ("Produce_ArmorStation", "picture/produce/produce_armor_station.png",  "防具台产出项",   "在防具台制造列表，截取要生产的物品"),
     ("Produce_PharmacyStation","picture/produce/produce_pharmacy_station.png","制药台产出项","在制药台制造列表，截取要生产的物品"),
-    ("IMAGE_LOGIN_BTN",      "picture/login_btn.png",      "WeGame 登录按钮",     "在 WeGame 登录界面，截取「登录」按钮"),
-    ("DELTA_GAME_ICON",      "picture/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
-    ("DELTA_LAUNCH_BTN",     "picture/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
-    ("Hazard_Operations",    "picture/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
-    ("Special_Ops",          "picture/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),
-    ("Tech_Center",          "picture/tech_center.png",     "技术中心",           "在特勤处界面，截取「技术中心」设施图标"),
-    ("Tool_Bench",           "picture/tool_bench.png",      "工作台",             "在特勤处界面，截取「工作台」设施图标"),
-    ("Armor_Station",        "picture/Armor_Station.png",   "防具台",             "在特勤处界面，截取「防具台」设施图标"),
-    ("Pharmacy_Station",     "picture/Pharmacy_Station.png","制药台",             "在特勤处界面，截取「制药台」设施图标"),
-    ("MAKE",                 "picture/make.png",            "制造按钮",           "在设施界面，截取「制造」按钮"),
-    ("Produce",              "picture/produce.png",         "产出按钮",           "在制造界面，截取「产出」相关按钮"),
-    ("Collect",              "picture/collect.png",         "收取按钮",           "在制造界面，截取「收取」按钮"),
-    ("Auto_fill",            "picture/auto_fill.png",       "一键补齐按钮",       "在制造界面，截取「一键补齐」按钮"),
-    ("Claim_Reward",         "picture/claim_reward.png",    "领取奖励按钮",       "在制造界面，截取「领取奖励」按钮"),
-    ("COIN_GAME",            "picture/coin_game.png",       "游戏币购买按钮",     "在制造界面，截取游戏币购买按钮"),
+    ("IMAGE_LOGIN_BTN",      "picture/wegame_login/login_btn.png",      "WeGame 登录按钮",     "在 WeGame 登录界面，截取「登录」按钮"),
+    ("DELTA_GAME_ICON",      "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
+    ("DELTA_LAUNCH_BTN",     "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
+    ("Hazard_Operations",    "picture/Navigation/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
+    ("Special_Ops",          "picture/Navigation/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),
+    ("Tech_Center",          "picture/Facility_Controls/tech_center.png",     "技术中心",           "在特勤处界面，截取「技术中心」设施图标"),
+    ("Tool_Bench",           "picture/Facility_Controls/tool_bench.png",      "工作台",             "在特勤处界面，截取「工作台」设施图标"),
+    ("Armor_Station",        "picture/Facility_Controls/Armor_Station.png",   "防具台",             "在特勤处界面，截取「防具台」设施图标"),
+    ("Pharmacy_Station",     "picture/Facility_Controls/Pharmacy_Station.png","制药台",             "在特勤处界面，截取「制药台」设施图标"),
+    ("MAKE",                 "picture/Crafting_Controls/Make.png",            "制造按钮",           "在设施界面，截取「制造」按钮"),
+    ("Produce",              "picture/Crafting_Controls/Produce.png",         "产出按钮",           "在制造界面，截取「产出」相关按钮"),
+    ("Collect",              "picture/Crafting_Controls/Collect.png",         "收取按钮",           "在制造界面，截取「收取」按钮"),
+    ("Auto_fill",            "picture/Crafting_Controls/Auto_fill.png",       "一键补齐按钮",       "在制造界面，截取「一键补齐」按钮"),
+    ("Claim_Reward",         "picture/Crafting_Controls/Claim_Reward.png",    "领取奖励按钮",       "在制造界面，截取「领取奖励」按钮"),
+    ("COIN_GAME",            "picture/Crafting_Controls/coin_game.png",       "游戏币购买按钮",     "在制造界面，截取游戏币购买按钮"),
     # 一键出售相关
     ("Warehouse",            "picture/One_Click_Sell/Warehouse.png",       "仓库入口",     "在游戏主界面，截取「仓库」图标"),
     ("Sell",                 "picture/One_Click_Sell/Sell.png",            "出售按钮",     "在物品详情界面，截取「出售」按钮"),

@@ -21,8 +21,22 @@ class TemplateCaptureWizard:
         self.capture_list = config.TEMPLATE_CAPTURE_LIST + config.QQ_TEMPLATE_CAPTURE_LIST
         self.status = {}  # var_name -> "pending" | "done"
 
+        # 从设置中加载上次的上传状态
+        settings = config.load_settings()
+        saved_status = settings.get("template_upload_status", {})
+
         for item in self.capture_list:
-            self.status[item[0]] = "pending"
+            var_name = item[0]
+            # 如果有保存的状态且模板文件存在，标记为已完成
+            if saved_status.get(var_name) == "done":
+                basename = os.path.basename(item[1])
+                user_path = config.user_template_path(basename)
+                if os.path.exists(user_path):
+                    self.status[var_name] = "done"
+                else:
+                    self.status[var_name] = "pending"
+            else:
+                self.status[var_name] = "pending"
 
         self.win = tk.Toplevel(parent)
         self.win.title("模板上传向导")
@@ -32,7 +46,7 @@ class TemplateCaptureWizard:
         self.win.grab_set()
         # 设置窗口图标
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 icon_img = Image.open(icon_path)
                 self._icon_photo = ImageTk.PhotoImage(icon_img)
@@ -87,7 +101,10 @@ class TemplateCaptureWizard:
 
         # 绑定鼠标滚轮
         def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except tk.TclError:
+                pass
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # 分组定义：(标题, 起始变量名集合)
@@ -164,6 +181,10 @@ class TemplateCaptureWizard:
             preview_btn.pack(side=tk.RIGHT, padx=5)
 
             self.rows[var_name] = (status_lbl, btn, preview_btn)
+
+            # 应用已保存的上传状态
+            if self.status.get(var_name) == "done":
+                status_lbl.config(text="✅")
 
             # 在最后一个产出项后添加分界线
             if var_name == produce_order[-1]:
@@ -313,7 +334,7 @@ class TemplateCaptureWizard:
         win.grab_set()
         # 设置窗口图标
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 icon_img = Image.open(icon_path)
                 win._icon_photo = ImageTk.PhotoImage(icon_img)
@@ -416,12 +437,20 @@ class TemplateCaptureWizard:
 
         threading.Thread(target=_run, daemon=True).start()
 
+    def _save_status(self):
+        """保存当前上传状态到设置文件"""
+        settings = config.load_settings()
+        settings["template_upload_status"] = dict(self.status)
+        config.save_settings(settings)
+
     def _skip_all(self):
         """跳过所有未完成的上传"""
         remaining = sum(1 for s in self.status.values() if s == "pending")
         if remaining > 0:
             if not messagebox.askyesno("确认跳过", f"还有 {remaining} 个模板未上传，确定跳过吗？"):
                 return
+        # 保存上传状态（保留已完成的标记，方便下次查看）
+        self._save_status()
         # 更新分辨率记录（即使跳过也记录当前分辨率，避免重复提示）
         config.save_template_resolution(self.resolution_key)
         self.win.destroy()
@@ -434,6 +463,8 @@ class TemplateCaptureWizard:
             remaining = total - done
             if not messagebox.askyesno("确认完成", f"还有 {remaining} 个模板未上传。确定完成吗？\n未上传的模板将使用旧图片，可能识别失败。"):
                 return
+        # 保存上传状态
+        self._save_status()
         # 保存新分辨率并清除模板缓存
         config.save_template_resolution(self.resolution_key)
         utils_clear_cache()

@@ -111,6 +111,7 @@ class App:
         self._next_run_time_str = ""
         # 唤醒定时器
         self._wake_timer_handle = None
+        self._last_wake_time = None  # 上次设置的唤醒时间，避免重复日志
         self._wake_attempted = False  # 是否已尝试唤醒显示器
         # 关机标志（每日只触发一次）
         self._shutdown_handled_today = False
@@ -120,7 +121,7 @@ class App:
         self._user_stopped_cooldown = False
         # 窗口图标
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 self.root.iconbitmap(icon_path)
         except Exception:
@@ -288,7 +289,7 @@ class App:
             print("⚠️ pystray 或 Pillow 未安装，托盘功能不可用")
             return
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if not os.path.exists(icon_path):
                 print(f"⚠️ 托盘图标文件不存在: {icon_path}")
                 return
@@ -405,6 +406,7 @@ class App:
         if self._wake_timer_handle:
             utils.cancel_wake_timer(self._wake_timer_handle)
             self._wake_timer_handle = None
+            self._last_wake_time = None
         # 恢复睡眠设置
         utils.allow_sleep()
         # 关闭前台显示事件
@@ -521,6 +523,11 @@ class App:
 
                     # 更新唤醒定时器（基于最早冷却到期时间）
                     self._update_cooldown_wake_timer()
+
+                    # 自动移除已过期的冷却记录
+                    expired = cooldown_manager.remove_expired_cooldowns()
+                    if expired:
+                        print(f"🔔 冷却完成，已从冷却列表移除：{', '.join(expired)}")
 
                     if not self.running and self.qq_account_images:
                         now = datetime.datetime.now()
@@ -867,9 +874,13 @@ class App:
                 # 只设置未来的唤醒时间（至少1分钟后）
                 min_gap = datetime.timedelta(seconds=60)
                 if wake_time > now + min_gap:
+                    # 唤醒时间未变化则跳过，避免重复日志
+                    if self._last_wake_time == wake_time:
+                        return
                     handle = utils.set_wake_timer(wake_time)
                     if handle:
                         self._wake_timer_handle = handle
+                        self._last_wake_time = wake_time
                         print(f"🔔 已设置唤醒定时器：{wake_time.strftime('%H:%M')}")
         except Exception as e:
             print(f"⚠️ 设置唤醒定时器失败: {e}")
@@ -899,6 +910,9 @@ class App:
                 wake_time = earliest_next - datetime.timedelta(minutes=5)
                 min_gap = datetime.timedelta(seconds=60)
                 if wake_time > now + min_gap:
+                    # 唤醒时间未变化则跳过，避免重复日志
+                    if self._last_wake_time == wake_time:
+                        return
                     # 取消旧定时器后重新设置
                     if self._wake_timer_handle:
                         utils.cancel_wake_timer(self._wake_timer_handle)
@@ -906,6 +920,7 @@ class App:
                     handle = utils.set_wake_timer(wake_time)
                     if handle:
                         self._wake_timer_handle = handle
+                        self._last_wake_time = wake_time
                         print(f"🔔 已设置冷却唤醒定时器：{wake_time.strftime('%H:%M')}")
         except Exception as e:
             print(f"⚠️ 更新冷却唤醒定时器失败: {e}")
@@ -1005,7 +1020,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.0.0  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.0.1  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -1132,6 +1147,7 @@ class App:
             if self._wake_timer_handle:
                 utils.cancel_wake_timer(self._wake_timer_handle)
                 self._wake_timer_handle = None
+                self._last_wake_time = None
 
         # 冷却完立即运行监听
         if self.settings.get("cooldown_run_immediately", False):
@@ -1417,7 +1433,7 @@ class App:
 
         # 设置图标
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 icon_img = Image.open(icon_path)
                 crop_win._icon_photo = ImageTk.PhotoImage(icon_img)
@@ -1548,18 +1564,18 @@ class App:
         """弹出冷却状态查看窗口"""
         win = tk.Toplevel(self.root)
         win.title("账号冷却状态")
-        win.geometry("620x480")
+        win.geometry("700x480")
         win.resizable(False, False)
         win.transient(self.root)
         win.grab_set()
         # 居中
         win.update_idletasks()
-        x = (win.winfo_screenwidth() - 620) // 2
+        x = (win.winfo_screenwidth() - 700) // 2
         y = (win.winfo_screenheight() - 480) // 2
-        win.geometry(f"620x480+{x}+{y}")
+        win.geometry(f"700x480+{x}+{y}")
         # 图标
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 icon_img = Image.open(icon_path)
                 win._icon_photo = ImageTk.PhotoImage(icon_img)
@@ -1648,6 +1664,61 @@ class App:
 
         ttk.Button(btn_frame, text="重置选中账号冷却", style='TButton',
                    command=_reset_selected, width=16).pack(side=tk.LEFT)
+
+        def _set_custom_time():
+            """为选中账号设置自定义冷却结束时间"""
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("提示", "请先选择要设置的账号。", parent=win)
+                return
+            item = tree.item(sel[0])
+            account_name = item["values"][0]
+
+            # 弹出输入对话框
+            dialog = tk.Toplevel(win)
+            dialog.title("自定义冷却时间")
+            dialog.geometry("350x180")
+            dialog.resizable(False, False)
+            dialog.transient(win)
+            dialog.grab_set()
+            # 居中
+            dialog.update_idletasks()
+            dx = (dialog.winfo_screenwidth() - 350) // 2
+            dy = (dialog.winfo_screenheight() - 180) // 2
+            dialog.geometry(f"350x180+{dx}+{dy}")
+
+            ttk.Label(dialog, text=f"为「{account_name}」设置冷却结束时间",
+                      font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(15, 5))
+            ttk.Label(dialog, text="输入格式：HH:MM（当天/明天）或 YYYY-MM-DD HH:MM:SS",
+                      font=('Microsoft YaHei UI', 8), foreground='#7f8c8d').pack()
+
+            time_var = tk.StringVar()
+            entry = ttk.Entry(dialog, textvariable=time_var, width=25)
+            entry.pack(pady=8)
+            entry.focus_set()
+
+            def _confirm():
+                raw = time_var.get().strip()
+                if not raw:
+                    messagebox.showwarning("提示", "请输入时间", parent=dialog)
+                    return
+                if cooldown_manager.set_custom_cooldown(account_name, raw):
+                    dialog.destroy()
+                    _refresh()
+                    self._set_next_wake_timer()
+                    messagebox.showinfo("完成", f"「{account_name}」冷却时间已更新。", parent=win)
+                else:
+                    messagebox.showerror("错误", "时间格式不正确，请使用 HH:MM 或 YYYY-MM-DD HH:MM:SS", parent=dialog)
+
+            btn_f = ttk.Frame(dialog)
+            btn_f.pack(pady=5)
+            ttk.Button(btn_f, text="确定", command=_confirm, width=8).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_f, text="取消", command=dialog.destroy, width=8).pack(side=tk.LEFT, padx=5)
+            # 回车确认
+            dialog.bind("<Return>", lambda e: _confirm())
+
+        ttk.Button(btn_frame, text="自定义冷却时间", style='TButton',
+                   command=_set_custom_time, width=14).pack(side=tk.LEFT, padx=(10, 0))
         ttk.Button(btn_frame, text="刷新", style='TButton',
                    command=_refresh, width=8).pack(side=tk.LEFT, padx=(10, 0))
 
@@ -2107,8 +2178,12 @@ class App:
         if not utils.find_and_click(config.Collect, timeout=15): return False
         time.sleep(0.5)
 
-        if not utils.find_and_click(config.Claim_Reward, timeout=15): return False
-        time.sleep(0.5)
+        if not utils.find_and_click(config.Claim_Reward, timeout=15):
+            print(f"⚠️ 未找到领取奖励按钮，按 Esc 返回跳过 ({facility_name})")
+            pyautogui.press("esc")
+            time.sleep(0.5)
+        else:
+            time.sleep(0.5)
 
         if not utils.find_and_click(produce_item_img, timeout=15): return False
         time.sleep(0.5)

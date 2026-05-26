@@ -113,3 +113,58 @@ def get_all_cooldowns():
             "remaining_seconds": remaining,
         }
     return result
+
+
+def set_custom_cooldown(account_name, next_run_time_str):
+    """
+    为指定账号设置自定义冷却结束时间
+    next_run_time_str: "YYYY-MM-DD HH:MM:SS" 或 "HH:MM" 格式
+    """
+    data = _load_data()
+    now = datetime.datetime.now()
+
+    # 支持 "HH:MM" 格式（当天或明天的该时间）
+    try:
+        if ":" in next_run_time_str and len(next_run_time_str) <= 5:
+            h, m = map(int, next_run_time_str.split(":"))
+            next_run = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if next_run <= now:
+                next_run += datetime.timedelta(days=1)
+        else:
+            next_run = datetime.datetime.strptime(next_run_time_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return False
+
+    if account_name not in data:
+        data[account_name] = {}
+
+    data[account_name]["last_run_time"] = data[account_name].get("last_run_time", now.strftime("%Y-%m-%d %H:%M:%S"))
+    data[account_name]["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
+    _save_data(data)
+    return True
+
+
+def remove_expired_cooldowns():
+    """
+    移除所有已过期的冷却记录
+    返回: 被移除的账号名称列表
+    """
+    data = _load_data()
+    now = datetime.datetime.now()
+    expired = []
+    for name, entry in list(data.items()):
+        next_run_str = entry.get("next_run_time", "")
+        if not next_run_str:
+            expired.append(name)
+            continue
+        try:
+            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+            if now >= next_run:
+                expired.append(name)
+        except Exception:
+            expired.append(name)
+    for name in expired:
+        del data[name]
+    if expired:
+        _save_data(data)
+    return expired

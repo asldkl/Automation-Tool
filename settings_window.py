@@ -30,7 +30,7 @@ class SettingsWindow:
         self.win.grab_set()
         # 设置窗口图标
         try:
-            icon_path = config.resource_path("picture/icon.ico")
+            icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 icon_img = Image.open(icon_path)
                 self._icon_photo = ImageTk.PhotoImage(icon_img)
@@ -71,6 +71,7 @@ class SettingsWindow:
         self.smtp_code_var = tk.StringVar(value=app.settings.get("smtp_code", ""))
         self.sender_email_var = tk.StringVar(value=app.settings.get("sender_email", ""))
         self.receiver_email_var = tk.StringVar(value=app.settings.get("receiver_email", ""))
+        self.cooldown_email_enabled_var = tk.BooleanVar(value=app.settings.get("cooldown_email_enabled", False))
 
         # 账号列表滚动查找变量
         self.qq_mouse_move_distance_var = tk.IntVar(value=app.settings.get("qq_mouse_move_distance", 100))
@@ -455,6 +456,8 @@ class SettingsWindow:
 
         ttk.Checkbutton(enable_frame, text="启用邮件通知（工作流执行完成后自动发送运行结果）",
                        variable=self.email_enable_var).pack(anchor=tk.W, padx=5, pady=5)
+        ttk.Checkbutton(enable_frame, text="冷却结束后发送邮件提醒（账号冷却到期时自动发送通知）",
+                       variable=self.cooldown_email_enabled_var).pack(anchor=tk.W, padx=5, pady=(0, 5))
 
         # ----- 邮箱配置 -----
         config_frame = ttk.LabelFrame(parent, text="  邮箱配置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -495,7 +498,8 @@ class SettingsWindow:
             "2. 将生成的授权码填入上方「SMTP 授权码」栏\n"
             "3. 发送者邮箱和接收者邮箱可以相同（自己发给自己）\n"
             "4. 点击「发送测试邮件」验证配置是否正确\n"
-            "5. 工作流执行完成后将自动发送包含运行结果的邮件通知"
+            "5. 工作流执行完成后将自动发送包含运行结果的邮件通知\n"
+            "6. 冷却到期提醒需先启用「启用邮件通知」，再单独勾选冷却提醒"
         )
         ttk.Label(tips_frame, text=tips_text, style='SettingsSmall.TLabel',
                  wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
@@ -771,6 +775,7 @@ class SettingsWindow:
         self.app.settings["smtp_code"] = self.smtp_code_var.get()
         self.app.settings["sender_email"] = self.sender_email_var.get()
         self.app.settings["receiver_email"] = self.receiver_email_var.get()
+        self.app.settings["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
 
         # 账号列表滚动查找设置
         self.app.settings["qq_mouse_move_distance"] = self.qq_mouse_move_distance_var.get()
