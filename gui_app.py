@@ -2222,6 +2222,21 @@ class App:
         print("\n--- 一键出售 ---")
         self.set_operation("一键出售")
 
+        # 检查售卖时间区间
+        if self.settings.get("sell_time_enabled", False):
+            now = datetime.datetime.now().time()
+            start_str = self.settings.get("sell_time_start", "08:00")
+            end_str = self.settings.get("sell_time_end", "22:00")
+            try:
+                start_time = datetime.datetime.strptime(start_str, "%H:%M").time()
+                end_time = datetime.datetime.strptime(end_str, "%H:%M").time()
+                if not (start_time <= now <= end_time):
+                    print(f"⏰ 当前时间 {now.strftime('%H:%M')} 不在售卖区间 "
+                          f"{start_str}-{end_str} 内，跳过售卖")
+                    return False, sell_stats
+            except ValueError:
+                print("⚠️ 售卖时间格式错误，跳过时间区间检查")
+
         # 清除模板缓存，确保使用最新模板
         utils.clear_template_cache()
 
@@ -2231,34 +2246,43 @@ class App:
         # 等待仓库界面完全加载
         time.sleep(3)
 
-        sell_items = config.get_sell_items()
+        # 加载物品元数据（每物品独立配置）
+        items_meta = config.load_sell_items_meta()
+        sell_items = items_meta.get("items", [])
         if not sell_items:
-            print("⚠️ 未上传任何售卖物品图片")
+            print("⚠️ 未配置任何售卖物品")
             return False, sell_stats
 
         sell_confidence = self.settings.get("sell_confidence", 0.55)
-        discount_times = self.settings.get("sell_discount_times", 0)
-        sell_quantity = self.settings.get("sell_quantity", 1)
-        sell_stats["total"] = len(sell_items) * sell_quantity
 
-        for item_path in sell_items:
+        for item in sell_items:
             if self._stop_event.is_set():
                 return False, sell_stats
-            item_name = os.path.basename(item_path)
-            print(f"📦 出售物品：{item_name}（数量：{sell_quantity}）")
 
-            # 对每个物品执行 sell_quantity 次出售
-            for qty in range(sell_quantity):
+            item_filename = item.get("filename", "")
+            item_path = os.path.join(config.SELL_ITEMS_DIR, item_filename)
+            if not os.path.exists(item_path):
+                print(f"⚠️ 物品图片不存在：{item_filename}")
+                continue
+
+            item_name = item.get("name", item_filename)
+            discount_times = item.get("discount_times", 0)
+            quantity = item.get("quantity", 1)
+
+            print(f"📦 出售物品：{item_name}（数量：{quantity}，降价：{discount_times}次）")
+            sell_stats["total"] += quantity
+
+            for qty in range(quantity):
                 if self._stop_event.is_set():
                     return False, sell_stats
 
-                if sell_quantity > 1:
-                    print(f"  📦 第 {qty + 1}/{sell_quantity} 次出售")
+                if quantity > 1:
+                    print(f"  📦 第 {qty + 1}/{quantity} 次出售")
 
                 if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
                     print(f"⚠️ 未找到物品 {item_name}，跳过")
                     sell_stats["not_found"] += 1
-                    break  # 找不到物品就跳出内层循环，处理下一个物品
+                    break
                 time.sleep(0.5)
 
                 if not utils.find_and_click(config.Sell, timeout=10):
@@ -2271,14 +2295,12 @@ class App:
                     print(f"❌ 未找到上架按钮")
                     sell_stats["failed"] += 1
                     break
-                # 将鼠标移至屏幕角落，避免悬浮提示遮挡降价按钮
                 pyautogui.moveTo(0, 0)
                 time.sleep(0.5)
 
                 for i in range(discount_times):
                     if utils.find_and_click(config.Discount, timeout=5):
                         print(f"📉 降价 {i + 1}/{discount_times}")
-                        # 每次点击降价后移至角落，避免悬浮提示遮挡下次点击
                         pyautogui.moveTo(0, 0)
                         time.sleep(0.3)
 
@@ -2288,8 +2310,8 @@ class App:
                     break
                 time.sleep(1.5)
                 sell_stats["sold"] += 1
-                if sell_quantity > 1:
-                    print(f"  ✅ 第 {qty + 1}/{sell_quantity} 次出售完成")
+                if quantity > 1:
+                    print(f"  ✅ 第 {qty + 1}/{quantity} 次出售完成")
 
             print(f"✅ {item_name} 出售完成")
 

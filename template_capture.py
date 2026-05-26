@@ -191,47 +191,11 @@ class TemplateCaptureWizard:
                 sep = ttk.Separator(self.scroll_frame, orient='horizontal')
                 sep.pack(fill=tk.X, pady=8, padx=10)
 
-        # 售卖物品管理区域
+        # 售卖物品提示（已移至设置 → 售卖物品 Tab）
         sell_sep = ttk.Separator(self.win, orient='horizontal')
         sell_sep.pack(fill=tk.X, padx=15, pady=(5, 5))
-
-        sell_frame = ttk.LabelFrame(self.win, text="  售卖物品（可上传多个，同一物品可重复添加以匹配产出数量）  ", padding=8)
-        sell_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
-
-        sell_list_frame = ttk.Frame(sell_frame)
-        sell_list_frame.pack(fill=tk.X, pady=(0, 5))
-        sell_scrollbar = ttk.Scrollbar(sell_list_frame, orient=tk.VERTICAL)
-        self.sell_listbox = tk.Listbox(sell_list_frame, height=3,
-                                       yscrollcommand=sell_scrollbar.set,
-                                       selectmode=tk.SINGLE,
-                                       font=('Microsoft YaHei UI', 9),
-                                       bg='#fafbfc', fg='#2c3e50',
-                                       selectbackground='#3498db',
-                                       selectforeground='#ffffff',
-                                       relief='flat', highlightthickness=1,
-                                       highlightcolor='#dcdde1', borderwidth=0)
-        sell_scrollbar.config(command=self.sell_listbox.yview)
-        self.sell_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        sell_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
-
-        sell_btn_frame = ttk.Frame(sell_frame)
-        sell_btn_frame.pack(fill=tk.X)
-        ttk.Button(sell_btn_frame, text="添加物品", width=10,
-                   command=self._add_sell_item).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(sell_btn_frame, text="删除选中", width=10,
-                   command=self._delete_sell_item).pack(side=tk.LEFT)
-
-        # 出售测试按钮和使用说明（仅在从设置窗口打开时可用）
-        if self.app:
-            sell_test_frame = ttk.Frame(sell_frame)
-            sell_test_frame.pack(fill=tk.X, pady=(8, 0))
-            ttk.Button(sell_test_frame, text="出售测试", width=10,
-                       command=self._sell_test).pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Label(sell_test_frame,
-                      text="说明：测试前请先回到游戏仓库界面，点击后会按 Tab 键开始识别物品并执行出售流程",
-                      font=('Microsoft YaHei UI', 8), foreground='#7f8c8d').pack(side=tk.LEFT)
-
-        self._refresh_sell_list()
+        ttk.Label(self.win, text="售卖物品请在 设置 → 售卖物品 中管理",
+                  font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(pady=(0, 5))
 
         # 底部按钮
         btn_frame = ttk.Frame(self.win)
@@ -363,79 +327,6 @@ class TemplateCaptureWizard:
         px = (win.winfo_screenwidth() - pw) // 2
         py = (win.winfo_screenheight() - ph) // 2
         win.geometry(f"+{px}+{py}")
-
-    def _refresh_sell_list(self):
-        """刷新售卖物品列表显示"""
-        self.sell_listbox.delete(0, tk.END)
-        items = config.get_sell_items()
-        for item in items:
-            self.sell_listbox.insert(tk.END, os.path.basename(item))
-
-    def _add_sell_item(self):
-        """添加售卖物品图片（支持重复添加同一物品）"""
-        filetypes = [("图片文件", "*.png;*.jpg;*.jpeg;*.bmp"), ("所有文件", "*.*")]
-        src = filedialog.askopenfilename(title="选择售卖物品图片", filetypes=filetypes)
-        if not src:
-            return
-        try:
-            os.makedirs(config.SELL_ITEMS_DIR, exist_ok=True)
-            basename = os.path.basename(src)
-            name, ext = os.path.splitext(basename)
-            # 支持重复添加：同名文件自动加序号后缀
-            save_path = os.path.join(config.SELL_ITEMS_DIR, basename)
-            counter = 1
-            while os.path.exists(save_path):
-                save_path = os.path.join(config.SELL_ITEMS_DIR, f"{name}_{counter}{ext}")
-                counter += 1
-            with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
-                f_out.write(f_in.read())
-            self._refresh_sell_list()
-        except Exception as e:
-            messagebox.showerror("错误", f"添加失败：{e}")
-
-    def _delete_sell_item(self):
-        """删除选中的售卖物品"""
-        sel = self.sell_listbox.curselection()
-        if not sel:
-            messagebox.showinfo("提示", "请先选择要删除的物品。")
-            return
-        name = self.sell_listbox.get(sel[0])
-        if not messagebox.askyesno("确认", f"确定删除售卖物品「{name}」？"):
-            return
-        try:
-            os.remove(os.path.join(config.SELL_ITEMS_DIR, name))
-        except Exception:
-            pass
-        self._refresh_sell_list()
-
-    def _sell_test(self):
-        """测试一键出售流程（从 Tab 键开始）"""
-        if not self.app:
-            messagebox.showwarning("提示", "无法访问主程序，请从主界面启动出售测试。")
-            return
-        if self.app.running:
-            messagebox.showwarning("提示", "任务运行中，请等待完成后再测试。")
-            return
-        sell_items = config.get_sell_items()
-        if not sell_items:
-            messagebox.showwarning("提示", "未上传任何售卖物品图片，请先添加物品。")
-            return
-
-        def _run():
-            import pyautogui
-            start_time = time.time()
-            pyautogui.press("Tab")
-            time.sleep(1)
-            success, sell_stats = self.app._sell_operations()
-            elapsed = time.time() - start_time
-            stats_text = (f"测试耗时：{elapsed:.1f} 秒\n"
-                          f"共 {sell_stats['total']} 件物品\n"
-                          f"成功上架：{sell_stats['sold']} 件\n"
-                          f"未找到：{sell_stats['not_found']} 件\n"
-                          f"失败：{sell_stats['failed']} 件")
-            self.win.after(0, lambda: messagebox.showinfo("出售测试完成", stats_text))
-
-        threading.Thread(target=_run, daemon=True).start()
 
     def _save_status(self):
         """保存当前上传状态到设置文件"""

@@ -71,6 +71,32 @@ def get_sell_items():
                     if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))])
     return [os.path.join(SELL_ITEMS_DIR, f) for f in items]
 
+# ==================== 售卖物品元数据 ====================
+ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
+
+def load_sell_items_meta():
+    """加载物品元数据，无文件时自动为已有图片生成默认配置"""
+    if os.path.exists(ITEMS_META_PATH):
+        with open(ITEMS_META_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    items = []
+    if os.path.exists(SELL_ITEMS_DIR):
+        for filename in sorted(os.listdir(SELL_ITEMS_DIR)):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                items.append({
+                    "filename": filename,
+                    "name": os.path.splitext(filename)[0],
+                    "discount_times": 0,
+                    "quantity": 1
+                })
+    return {"items": items}
+
+def save_sell_items_meta(data):
+    """保存物品元数据"""
+    os.makedirs(SELL_ITEMS_DIR, exist_ok=True)
+    with open(ITEMS_META_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 # ==================== 默认设置 ====================
 DEFAULT_SETTINGS = {
     "wegame_path": "",                # 若空则自动从注册表获取
@@ -109,6 +135,9 @@ DEFAULT_SETTINGS = {
     "sell_discount_times": 0,         # 降价次数（0-5）
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
     "sell_quantity": 1,               # 每个物品出售次数（1-99，用于产出数量>1的物品）
+    "sell_time_enabled": False,       # 是否启用售卖时间区间
+    "sell_time_start": "08:00",       # 售卖开始时间 (HH:MM)
+    "sell_time_end": "22:00",         # 售卖结束时间 (HH:MM)
     # 邮箱货币
     "enable_email_currency": False,   # 是否启用自动领取邮箱货币
     # 冷却管理

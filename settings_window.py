@@ -84,6 +84,11 @@ class SettingsWindow:
         self.sell_confidence_var = tk.DoubleVar(value=float(app.settings.get("sell_confidence", 0.55)))
         self.sell_quantity_var = tk.IntVar(value=app.settings.get("sell_quantity", 1))
 
+        # 售卖时间区间变量
+        self.sell_time_enabled_var = tk.BooleanVar(value=app.settings.get("sell_time_enabled", False))
+        self.sell_time_start_var = tk.StringVar(value=app.settings.get("sell_time_start", "08:00"))
+        self.sell_time_end_var = tk.StringVar(value=app.settings.get("sell_time_end", "22:00"))
+
         # 邮箱货币变量
         self.email_currency_var = tk.BooleanVar(value=app.settings.get("enable_email_currency", False))
 
@@ -148,6 +153,11 @@ class SettingsWindow:
         other_tab = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(other_tab, text="  其他设置  ")
         self._build_other_tab(other_tab)
+
+        # ----- Tab 6: 售卖物品 -----
+        sell_tab = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(sell_tab, text="  售卖物品  ")
+        self._build_sell_tab(sell_tab)
 
         # ----- 底部操作按钮 -----
         btn_frame = ttk.Frame(main_frame, style='Settings.TFrame')
@@ -357,43 +367,6 @@ class SettingsWindow:
                                       state="readonly", width=5)
         reminder_combo.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(reminder_inner, text="分钟弹出提示", style='Settings.TLabel').pack(side=tk.LEFT)
-
-        # ----- 一键出售设置 -----
-        sell_frame = ttk.LabelFrame(parent, text="  一键出售  ", style='SettingsCard.TLabelframe', padding=10)
-        sell_frame.pack(fill=tk.X, pady=(8, 0))
-
-        sell_inner = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
-        sell_inner.pack(fill=tk.X)
-        ttk.Checkbutton(sell_inner, text="主流程完成后执行一键售卖",
-                        variable=self.enable_sell_var).pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(sell_inner, text="降价次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Spinbox(sell_inner, from_=0, to=5, increment=1,
-                    textvariable=self.sell_discount_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(sell_inner, text="次（0-5，0=不降价）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-
-        sell_qty_row = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
-        sell_qty_row.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(sell_qty_row, text="出售数量：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Spinbox(sell_qty_row, from_=1, to=99, increment=1,
-                    textvariable=self.sell_quantity_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(sell_qty_row, text="个/物品（1-99，适配产出数量>1的物品，也可在模板上传向导中重复添加物品图片）",
-                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-
-        # 出售置信度滑块
-        sell_conf_row = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
-        sell_conf_row.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(sell_conf_row, text="物品匹配置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        sell_scale = ttk.Scale(sell_conf_row, from_=0.40, to=0.80, variable=self.sell_confidence_var,
-                               length=180, orient=tk.HORIZONTAL)
-        sell_scale.pack(side=tk.LEFT, padx=(0, 8))
-        self.sell_conf_label = ttk.Label(sell_conf_row, text="", style='SettingsSmall.TLabel', width=4)
-        self.sell_conf_label.pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Label(sell_conf_row, text="(0.40 - 0.80)", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        self._update_sell_conf_display()
-
-        def on_sell_conf_change(*args):
-            self._update_sell_conf_display()
-        self.sell_confidence_var.trace_add('write', on_sell_conf_change)
 
 
     def _build_power_tab(self, parent):
@@ -622,6 +595,274 @@ class SettingsWindow:
                     textvariable=self.game_launch_wait_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(f4, text="秒（0-120，机器配置较低时可增加等待，默认 0）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
+    def _build_sell_tab(self, parent):
+        """售卖物品选项卡内容"""
+        # ----- 物品列表 -----
+        list_frame = ttk.LabelFrame(parent, text="  售卖物品列表  ", style='SettingsCard.TLabelframe', padding=10)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        # Treeview
+        columns = ("name", "discount_times", "quantity", "filename")
+        self.sell_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
+        self.sell_tree.heading("name", text="名称")
+        self.sell_tree.heading("discount_times", text="降价次数")
+        self.sell_tree.heading("quantity", text="出售数量")
+        self.sell_tree.heading("filename", text="图片文件")
+        self.sell_tree.column("name", width=150)
+        self.sell_tree.column("discount_times", width=80, anchor="center")
+        self.sell_tree.column("quantity", width=80, anchor="center")
+        self.sell_tree.column("filename", width=120)
+
+        tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.sell_tree.yview)
+        self.sell_tree.configure(yscrollcommand=tree_scroll.set)
+        self.sell_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 双击编辑
+        self.sell_tree.bind("<Double-1>", self._on_sell_treeview_edit)
+
+        # 按钮行
+        btn_row = ttk.Frame(list_frame, style='SettingsInner.TFrame')
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_row, text="添加物品", width=10,
+                   command=self._add_sell_item).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="删除选中", width=10,
+                   command=self._delete_sell_item).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="上移", width=6,
+                   command=lambda: self._move_sell_item(-1)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="下移", width=6,
+                   command=lambda: self._move_sell_item(1)).pack(side=tk.LEFT)
+
+        # 加载物品元数据
+        self._sell_items_meta = config.load_sell_items_meta()
+        self._refresh_sell_treeview()
+
+        # ----- 售卖时间区间 -----
+        time_frame = ttk.LabelFrame(parent, text="  售卖时间区间  ", style='SettingsCard.TLabelframe', padding=10)
+        time_frame.pack(fill=tk.X, pady=(0, 8))
+
+        time_row1 = ttk.Frame(time_frame, style='SettingsInner.TFrame')
+        time_row1.pack(fill=tk.X)
+        ttk.Checkbutton(time_row1, text="启用时间区间限制",
+                        variable=self.sell_time_enabled_var).pack(side=tk.LEFT, padx=(0, 15))
+
+        time_row2 = ttk.Frame(time_frame, style='SettingsInner.TFrame')
+        time_row2.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(time_row2, text="开始时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(time_row2, textvariable=self.sell_time_start_var, width=8).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(time_row2, text="结束时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(time_row2, textvariable=self.sell_time_end_var, width=8).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(time_row2, text="格式 HH:MM，仅在此时间段内执行售卖",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        # ----- 出售设置 -----
+        sell_frame = ttk.LabelFrame(parent, text="  出售设置  ", style='SettingsCard.TLabelframe', padding=10)
+        sell_frame.pack(fill=tk.X, pady=(0, 8))
+
+        sell_row1 = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
+        sell_row1.pack(fill=tk.X)
+        ttk.Checkbutton(sell_row1, text="主流程完成后执行一键售卖",
+                        variable=self.enable_sell_var).pack(side=tk.LEFT, padx=(0, 15))
+
+        sell_row2 = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
+        sell_row2.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(sell_row2, text="物品匹配置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        sell_scale = ttk.Scale(sell_row2, from_=0.40, to=0.80, variable=self.sell_confidence_var,
+                               length=180, orient=tk.HORIZONTAL)
+        sell_scale.pack(side=tk.LEFT, padx=(0, 8))
+        self.sell_conf_label = ttk.Label(sell_row2, text="", style='SettingsSmall.TLabel', width=4)
+        self.sell_conf_label.pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Label(sell_row2, text="(0.40 - 0.80)", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self._update_sell_conf_display()
+
+        def on_sell_conf_change(*args):
+            self._update_sell_conf_display()
+        self.sell_confidence_var.trace_add('write', on_sell_conf_change)
+
+        sell_row3 = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
+        sell_row3.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(sell_row3, text="出售测试", width=10,
+                   command=self._sell_test_from_tab).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(sell_row3, text="说明：测试前请先回到游戏仓库界面",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+    def _refresh_sell_treeview(self):
+        """刷新售卖物品 Treeview"""
+        for item in self.sell_tree.get_children():
+            self.sell_tree.delete(item)
+        for item in self._sell_items_meta.get("items", []):
+            self.sell_tree.insert("", tk.END, values=(
+                item.get("name", ""),
+                item.get("discount_times", 0),
+                item.get("quantity", 1),
+                item.get("filename", "")
+            ))
+
+    def _add_sell_item(self):
+        """添加售卖物品图片"""
+        filetypes = [("图片文件", "*.png;*.jpg;*.jpeg;*.bmp"), ("所有文件", "*.*")]
+        src = filedialog.askopenfilename(title="选择售卖物品图片", filetypes=filetypes)
+        if not src:
+            return
+        try:
+            os.makedirs(config.SELL_ITEMS_DIR, exist_ok=True)
+            basename = os.path.basename(src)
+            name, ext = os.path.splitext(basename)
+            save_path = os.path.join(config.SELL_ITEMS_DIR, basename)
+            counter = 1
+            while os.path.exists(save_path):
+                save_path = os.path.join(config.SELL_ITEMS_DIR, f"{name}_{counter}{ext}")
+                counter += 1
+            with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
+                f_out.write(f_in.read())
+            saved_name = os.path.basename(save_path)
+            self._sell_items_meta.setdefault("items", []).append({
+                "filename": saved_name,
+                "name": os.path.splitext(saved_name)[0],
+                "discount_times": 0,
+                "quantity": 1
+            })
+            self._refresh_sell_treeview()
+        except Exception as e:
+            messagebox.showerror("错误", f"添加失败：{e}")
+
+    def _delete_sell_item(self):
+        """删除选中的售卖物品"""
+        sel = self.sell_tree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先选择要删除的物品。")
+            return
+        item_vals = self.sell_tree.item(sel[0], "values")
+        item_name = item_vals[0]
+        filename = item_vals[3]
+        if not messagebox.askyesno("确认", f"确定删除售卖物品「{item_name}」？"):
+            return
+        try:
+            os.remove(os.path.join(config.SELL_ITEMS_DIR, filename))
+        except Exception:
+            pass
+        self._sell_items_meta["items"] = [
+            i for i in self._sell_items_meta["items"] if i["filename"] != filename
+        ]
+        self._refresh_sell_treeview()
+
+    def _move_sell_item(self, direction):
+        """上移/下移物品 (-1=上移, 1=下移)"""
+        sel = self.sell_tree.selection()
+        if not sel:
+            return
+        items = self._sell_items_meta.get("items", [])
+        idx = self.sell_tree.index(sel[0])
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(items):
+            return
+        items[idx], items[new_idx] = items[new_idx], items[idx]
+        self._refresh_sell_treeview()
+        # 重新选中移动后的项
+        children = self.sell_tree.get_children()
+        if new_idx < len(children):
+            self.sell_tree.selection_set(children[new_idx])
+
+    def _on_sell_treeview_edit(self, event):
+        """双击编辑 Treeview 单元格"""
+        region = self.sell_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+        column = self.sell_tree.identify_column(event.x)
+        row_id = self.sell_tree.identify_row(event.y)
+        if not row_id:
+            return
+
+        col_idx = int(column.replace("#", "")) - 1  # 0-based
+        # 只允许编辑 name(0), discount_times(1), quantity(2)
+        if col_idx > 2:
+            return
+
+        item_idx = self.sell_tree.index(row_id)
+        items = self._sell_items_meta.get("items", [])
+        if item_idx >= len(items):
+            return
+
+        bbox = self.sell_tree.bbox(row_id, column)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+
+        current_val = self.sell_tree.item(row_id, "values")[col_idx]
+
+        if col_idx == 0:
+            # 名称 - Entry
+            entry = ttk.Entry(self.sell_tree, width=15)
+            entry.insert(0, current_val)
+            entry.select_range(0, tk.END)
+            entry.place(x=x, y=y, width=w, height=h)
+            entry.focus_set()
+
+            def _confirm_name(e=None):
+                items[item_idx]["name"] = entry.get()
+                entry.destroy()
+                self._refresh_sell_treeview()
+
+            entry.bind("<Return>", _confirm_name)
+            entry.bind("<FocusOut>", _confirm_name)
+        else:
+            # 降价次数/出售数量 - Spinbox
+            from_ = 0 if col_idx == 1 else 1
+            to_ = 5 if col_idx == 1 else 99
+            spin = ttk.Spinbox(self.sell_tree, from_=from_, to=to_, width=5)
+            spin.delete(0, tk.END)
+            spin.insert(0, current_val)
+            spin.place(x=x, y=y, width=w, height=h)
+            spin.focus_set()
+
+            field = "discount_times" if col_idx == 1 else "quantity"
+
+            def _confirm_spin(e=None):
+                try:
+                    val = int(spin.get())
+                    items[item_idx][field] = val
+                except ValueError:
+                    pass
+                spin.destroy()
+                self._refresh_sell_treeview()
+
+            spin.bind("<Return>", _confirm_spin)
+            spin.bind("<FocusOut>", _confirm_spin)
+
+    def _save_sell_items_meta(self):
+        """保存物品元数据到文件"""
+        config.save_sell_items_meta(self._sell_items_meta)
+
+    def _sell_test_from_tab(self):
+        """从售卖物品Tab触发出售测试"""
+        if not self.app:
+            messagebox.showwarning("提示", "无法访问主程序。")
+            return
+        if self.app.running:
+            messagebox.showwarning("提示", "任务运行中，请等待完成后再测试。")
+            return
+        items = self._sell_items_meta.get("items", [])
+        if not items:
+            messagebox.showwarning("提示", "未配置任何售卖物品，请先添加物品。")
+            return
+        import threading
+
+        def _run():
+            import pyautogui
+            start_time = __import__('time').time()
+            pyautogui.press("Tab")
+            __import__('time').sleep(1)
+            success, sell_stats = self.app._sell_operations()
+            elapsed = __import__('time').time() - start_time
+            stats_text = (f"测试耗时：{elapsed:.1f} 秒\n"
+                          f"共 {sell_stats['total']} 件物品\n"
+                          f"成功上架：{sell_stats['sold']} 件\n"
+                          f"未找到：{sell_stats['not_found']} 件\n"
+                          f"失败：{sell_stats['failed']} 件")
+            self.win.after(0, lambda: messagebox.showinfo("出售测试完成", stats_text))
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _add_time(self):
         raw = self.time_var.get().strip()
         if re.match(r'^\d{1,2}:\d{2}$', raw):
@@ -784,9 +1025,15 @@ class SettingsWindow:
 
         # 一键出售设置
         self.app.settings["enable_sell_after_run"] = self.enable_sell_var.get()
-        self.app.settings["sell_discount_times"] = self.sell_discount_var.get()
         self.app.settings["sell_confidence"] = round(self.sell_confidence_var.get(), 2)
-        self.app.settings["sell_quantity"] = self.sell_quantity_var.get()
+
+        # 售卖时间区间
+        self.app.settings["sell_time_enabled"] = self.sell_time_enabled_var.get()
+        self.app.settings["sell_time_start"] = self.sell_time_start_var.get().strip()
+        self.app.settings["sell_time_end"] = self.sell_time_end_var.get().strip()
+
+        # 保存物品元数据
+        self._save_sell_items_meta()
 
         # 邮箱货币设置
         self.app.settings["enable_email_currency"] = self.email_currency_var.get()

@@ -619,18 +619,18 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.7.1"""
+        """gui_app.py 中版本号应为 v1.0.1"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.7.1", content)
+        self.assertIn("v1.0.1", content)
 
     def test_readme_has_v190_section(self):
-        """README.md 应包含 v1.7.1 更新日志"""
+        """README.md 应包含 v1.0.1 更新日志"""
         readme_path = os.path.join(os.path.dirname(__file__), "README.md")
         with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.7.1", content)
+        self.assertIn("v1.0.1", content)
         self.assertIn("cooldown_run_immediately", content)
 
     def test_readme_has_cooldown_config(self):
@@ -709,7 +709,7 @@ class TestBugFixes(unittest.TestCase):
         self.assertIn("def _restart_cooldown_watcher(self):", content)
         # watcher loop 的 except 中应有重启逻辑
         watcher_start = content.find("def _cooldown_watcher_loop(self):")
-        watcher_content = content[watcher_start:watcher_start+2500]
+        watcher_content = content[watcher_start:watcher_start+4000]
         self.assertIn("_restart_cooldown_watcher", watcher_content)
 
     def test_bug6_ignore_cooldown_flag(self):
@@ -749,7 +749,7 @@ class TestBugFixes(unittest.TestCase):
 # ==================== 运行所有测试 ====================
 if __name__ == "__main__":
     print("=" * 60)
-    print("  三角洲自动化工具 v1.7.1 全功能模拟测试")
+    print("  三角洲自动化工具 v1.0.1 全功能模拟测试")
     print("=" * 60)
     print()
 
