@@ -523,13 +523,6 @@ class SettingsWindow:
         ttk.Label(frame1, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
-        # ----- 邮箱货币领取 -----
-        frame_email = ttk.LabelFrame(parent, text="  邮箱货币领取  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_email.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Checkbutton(frame_email, text="启用自动领取邮箱货币",
-                       variable=self.email_currency_var).pack(side=tk.LEFT, padx=5, pady=5)
-
         # ----- 冷却管理 -----
         frame_cooldown = ttk.LabelFrame(parent, text="  冷却管理  ", style='SettingsCard.TLabelframe', padding=12)
         frame_cooldown.pack(fill=tk.X, pady=(0, 8))
@@ -603,7 +596,7 @@ class SettingsWindow:
 
         # Treeview
         columns = ("name", "discount_times", "quantity", "filename")
-        self.sell_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
+        self.sell_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=4)
         self.sell_tree.heading("name", text="名称")
         self.sell_tree.heading("discount_times", text="降价次数")
         self.sell_tree.heading("quantity", text="出售数量")
@@ -613,29 +606,39 @@ class SettingsWindow:
         self.sell_tree.column("quantity", width=80, anchor="center")
         self.sell_tree.column("filename", width=120)
 
-        tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.sell_tree.yview)
-        self.sell_tree.configure(yscrollcommand=tree_scroll.set)
-        self.sell_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.sell_tree.configure(yscrollcommand=tree_scroll.set)
+        tree_scroll.configure(command=self.sell_tree.yview)
+        self.sell_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # 双击编辑
         self.sell_tree.bind("<Double-1>", self._on_sell_treeview_edit)
 
-        # 按钮行
-        btn_row = ttk.Frame(list_frame, style='SettingsInner.TFrame')
-        btn_row.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(btn_row, text="添加物品", width=10,
-                   command=self._add_sell_item).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_row, text="删除选中", width=10,
-                   command=self._delete_sell_item).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_row, text="上移", width=6,
-                   command=lambda: self._move_sell_item(-1)).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_row, text="下移", width=6,
-                   command=lambda: self._move_sell_item(1)).pack(side=tk.LEFT)
-
         # 加载物品元数据
         self._sell_items_meta = config.load_sell_items_meta()
         self._refresh_sell_treeview()
+
+        # ----- 物品操作按钮 -----
+        btn_frame = ttk.LabelFrame(parent, text="  物品操作  ", style='SettingsCard.TLabelframe', padding=10)
+        btn_frame.pack(fill=tk.X, pady=(0, 8))
+
+        btn_row = ttk.Frame(btn_frame, style='SettingsInner.TFrame')
+        btn_row.pack(fill=tk.X)
+        ttk.Button(btn_row, text="添加物品", width=10,
+                   command=self._add_sell_item).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="删除选中", width=10,
+                   command=self._delete_sell_item).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="上移", width=8,
+                   command=lambda: self._move_sell_item(-1)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="下移", width=8,
+                   command=lambda: self._move_sell_item(1)).pack(side=tk.LEFT)
+
+        # ----- 邮箱货币领取 -----
+        frame_email = ttk.LabelFrame(parent, text="  邮箱货币领取  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_email.pack(fill=tk.X, pady=(0, 8))
+        ttk.Checkbutton(frame_email, text="启用自动领取邮箱货币",
+                       variable=self.email_currency_var).pack(side=tk.LEFT, padx=5, pady=5)
 
         # ----- 售卖时间区间 -----
         time_frame = ttk.LabelFrame(parent, text="  售卖时间区间  ", style='SettingsCard.TLabelframe', padding=10)

@@ -3,7 +3,7 @@
 
 a = Analysis(
     ['main.py'],
-    pathex=[r'C:\Users\Administrator\PycharmProjects\PythonProject(联网时间校验版)'],
+    pathex=[r'C:\Users\Administrator\Downloads\Automation-Tool-main\Automation-Tool-main'],
     binaries=[],
     datas=[('picture', 'picture'), ('picture\\produce', 'picture\\produce'),
            ('picture\\qq_login', 'picture\\qq_login'), ('picture\\One_Click_Sell', 'picture\\One_Click_Sell'),
