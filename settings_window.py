@@ -80,9 +80,7 @@ class SettingsWindow:
 
         # 一键出售变量
         self.enable_sell_var = tk.BooleanVar(value=app.settings.get("enable_sell_after_run", False))
-        self.sell_discount_var = tk.IntVar(value=app.settings.get("sell_discount_times", 0))
         self.sell_confidence_var = tk.DoubleVar(value=float(app.settings.get("sell_confidence", 0.55)))
-        self.sell_quantity_var = tk.IntVar(value=app.settings.get("sell_quantity", 1))
 
         # 售卖时间区间变量
         self.sell_time_enabled_var = tk.BooleanVar(value=app.settings.get("sell_time_enabled", False))

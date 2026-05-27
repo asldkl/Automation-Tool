@@ -39,6 +39,7 @@
 项目根目录/
 ├── main.py                  # 主入口文件
 ├── gui_app.py               # 图形界面主程序
+├── automation.py            # 自动化流程模块（从 gui_app.py 拆分）
 ├── config.py                # 配置管理模块
 ├── crypto_utils.py          # 加密工具模块（防破解核心）
 ├── utils.py                 # 工具函数模块

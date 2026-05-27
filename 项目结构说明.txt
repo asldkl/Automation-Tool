@@ -1,6 +1,6 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.0.0
+版本: v1.0.2
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
@@ -15,12 +15,11 @@
 │   - 启动 gui_app.main()
 │   - 异常日志写入 ~/.delta_auto_error.log
 │
-├── gui_app.py                  # 主 GUI 应用（核心模块，约2700行）
+├── gui_app.py                  # 主 GUI 应用（核心模块，约2500行）
 │   - App 类：主窗口、账号管理、日志区域、控制按钮
 │   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→操作→关闭）
-│   - _game_operations()：游戏操作（进入烽火地带→特勤处→制造/收取）
-│   - _handle_facility()：单个设施操作（制造→收取→领取→产出）
-│   - _sell_operations()：一键出售流程（仓库→物品→出售→上架→降价→确认）
+│   - _game_operations()：委托 automation.game_operations() 执行游戏操作
+│   - _sell_operations()：委托 automation.sell_operations() 执行一键出售
 │   - _start_scheduler()：定时执行调度器
 │   - _cooldown_watcher_loop()：冷却到期监听（到期自动执行）
 │   - _send_email_notification()：运行报告邮件
@@ -29,6 +28,11 @@
 │   - _send_failure_email()：程序崩溃邮件
 │   - _show_reminder()：运行前提醒弹窗
 │   - 系统托盘（pystray）、联网时间校验（多时间源）
+│
+├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
+│   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
+│   - handle_facility()：单个设施操作（制造→收取→领取→产出→购买材料）
+│   - sell_operations()：一键出售流程（仓库→物品→出售→上架→降价→确认）
 │
 ├── config.py                   # 配置管理（约305行）
 │   - DEFAULT_SETTINGS：所有默认配置项
@@ -152,9 +156,9 @@
    k. 等待账号间隔
 5. 所有账号完成 → 发送邮件报告 → 恢复睡眠设置
 
-【自动化操作流程（_sell_operations）】
+【自动化操作流程（automation.sell_operations）】
 
-打开仓库 → 遍历售卖物品 → 对每个物品执行 sell_quantity 次：
+打开仓库 → 遍历售卖物品 → 对每个物品执行 quantity 次：
   找到物品 → 点击出售 → 点击上架 → 鼠标移至角落 → 降价N次 → 确认上架
 
 【模板匹配算法】

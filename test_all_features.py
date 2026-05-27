@@ -377,15 +377,15 @@ class TestQQDegradation(unittest.TestCase):
 
 # ==================== Test 6: 烽火地带重试次数 ====================
 class TestHazardOperationsRetry(unittest.TestCase):
-    """测试 _game_operations 中烽火地带的重试次数"""
+    """测试 game_operations 中烽火地带的重试次数"""
 
     def test_retry_count_in_source(self):
-        """gui_app.py 中烽火地带重试应为 5 次"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
+        """automation.py 中烽火地带重试应为 5 次"""
+        automation_path = os.path.join(os.path.dirname(__file__), "automation.py")
+        with open(automation_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 查找 _game_operations 方法中的重试循环
+        # 查找 game_operations 函数中的重试循环
         import re
         # 匹配 "for retry in range(N)" 紧跟在 "进入烽火地带" 之后的模式
         pattern = r'进入烽火地带.*?for retry in range\((\d+)\)'
@@ -396,8 +396,8 @@ class TestHazardOperationsRetry(unittest.TestCase):
 
     def test_error_message_matches_retry_count(self):
         """错误消息中的重试次数应与 range() 一致"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
+        automation_path = os.path.join(os.path.dirname(__file__), "automation.py")
+        with open(automation_path, "r", encoding="utf-8") as f:
             content = f.read()
         # 检查 else 分支中的消息
         self.assertIn("5次重试后仍未找到烽火地带图标", content)
@@ -619,14 +619,14 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.0.1"""
+        """gui_app.py 中版本号应为 v1.0.2"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.0.1", content)
+        self.assertIn("v1.0.2", content)
 
     def test_readme_has_v190_section(self):
-        """README.md 应包含 v1.0.1 更新日志"""
+        """README.md 应包含 v1.0.2 更新日志"""
         readme_path = os.path.join(os.path.dirname(__file__), "README.md")
         with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -749,7 +749,7 @@ class TestBugFixes(unittest.TestCase):
 # ==================== 运行所有测试 ====================
 if __name__ == "__main__":
     print("=" * 60)
-    print("  三角洲自动化工具 v1.0.1 全功能模拟测试")
+    print("  三角洲自动化工具 v1.0.2 全功能模拟测试")
     print("=" * 60)
     print()
 
