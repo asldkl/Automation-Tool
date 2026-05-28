@@ -1,12 +1,13 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.0.2
+版本: v1.0.3
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
 【项目概述】
 基于图像识别（OpenCV 模板匹配）的《三角洲行动》游戏日常自动化工具。
-支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知等。
+支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知。
+v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步、运行完成后延迟关机。
 
 【核心文件】
 
@@ -15,36 +16,47 @@
 │   - 启动 gui_app.main()
 │   - 异常日志写入 ~/.delta_auto_error.log
 │
-├── gui_app.py                  # 主 GUI 应用（核心模块，约2500行）
+├── gui_app.py                  # 主 GUI 应用（核心模块）
 │   - App 类：主窗口、账号管理、日志区域、控制按钮
+│   - _validate_with_server()：服务器验证（机器指纹+有效期）
 │   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→操作→关闭）
 │   - _game_operations()：委托 automation.game_operations() 执行游戏操作
 │   - _sell_operations()：委托 automation.sell_operations() 执行一键出售
 │   - _start_scheduler()：定时执行调度器
 │   - _cooldown_watcher_loop()：冷却到期监听（到期自动执行）
+│   - _start_heartbeat() / _stop_heartbeat()：心跳线程管理
+│   - _heartbeat_loop() / _send_heartbeat()：心跳数据发送
+│   - _update_account_status()：更新账号运行状态
 │   - _send_email_notification()：运行报告邮件
-│   - _send_account_failure_email()：单账号失败邮件
-│   - _send_cooldown_ready_email()：冷却到期提醒邮件
-│   - _send_failure_email()：程序崩溃邮件
 │   - _show_reminder()：运行前提醒弹窗
-│   - 系统托盘（pystray）、联网时间校验（多时间源）
+│   - 系统托盘（pystray）
+│   - 每天首次运行时重新验证服务器（防长期不退出绕过验证）
+│   - on_finish()：任务完成后延迟关机（可选 0-5 分钟）
 │
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
 │   - handle_facility()：单个设施操作（制造→收取→领取→产出→购买材料）
 │   - sell_operations()：一键出售流程（仓库→物品→出售→上架→降价→确认）
 │
-├── config.py                   # 配置管理（约305行）
-│   - DEFAULT_SETTINGS：所有默认配置项
+├── config.py                   # 配置管理
+│   - DEFAULT_SETTINGS：所有默认配置项（含 server_url、client_key、post_run_shutdown_delay）
 │   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json
 │   - resource_path()：PyInstaller 资源路径处理
 │   - resolve_template_path()：用户自定义模板优先
 │   - get_sell_items()：获取售卖物品图片列表
+│   - load_sell_items_meta() / save_sell_items_meta()：售卖物品元数据
 │   - TEMPLATE_CAPTURE_LIST：所有模板图片定义（变量名、路径、中文描述）
 │   - WeGame 路径自动检测（Windows 注册表）
 │   - 屏幕分辨率检测与模板分辨率记录
 │
-├── utils.py                    # 工具函数（约731行）
+├── machine_fingerprint.py      # 机器指纹模块（v1.0.3 新增）
+│   - get_machine_id()：获取本机 SHA256 指纹（32位十六进制）
+│   - _get_disk_serial()：WMI 获取硬盘序列号
+│   - _get_baseboard_serial()：WMI 获取主板序列号
+│   - _get_fallback_id()：降级方案（hostname + MAC）
+│   - 可独立运行测试: python machine_fingerprint.py
+│
+├── utils.py                    # 工具函数
 │   - 图像识别：
 │     - find_and_click()：单尺度模板匹配+点击
 │     - find_and_click_multiscale()：多尺度复合匹配（灰度+边缘，0.7x-1.3x）
@@ -65,15 +77,15 @@
 │   - 邮件发送：
 │     - send_email_notification()：QQ 邮箱 SMTP 发送
 │
-├── settings_window.py          # 设置对话框（约820行）
+├── settings_window.py          # 设置对话框
 │   - SettingsWindow 类：5个选项卡
 │     - Tab 1: 全局设置（路径、置信度、分辨率、日志目录）
 │     - Tab 2: 自动任务（定时、操作选择、一键出售、提醒）
-│     - Tab 3: 电源管理（唤醒、关机、定时开机）
+│     - Tab 3: 电源管理（唤醒、关机、定时开机、运行完成后延迟关机）
 │     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
-│     - Tab 5: 其他设置（开机自启、冷却管理、滚动设置）
+│     - Tab 5: 其他设置（开机自启、冷却管理、滚动设置、机器指纹查看/复制）
 │
-├── cooldown_manager.py         # 冷却管理（约116行）
+├── cooldown_manager.py         # 冷却管理
 │   - 数据存储：~/.delta_auto_cooldown.json
 │   - is_cooling_down()：检查账号是否在冷却中
 │   - record_run()：记录运行时间，计算下次可运行时间
@@ -81,13 +93,7 @@
 │   - get_all_cooldowns()：获取所有账号冷却信息
 │   - 原子写入（.tmp + os.replace）
 │
-├── crypto_utils.py             # 加密与防篡改（约151行）
-│   - decrypt_expiry()：解密有效期（XOR，当前 2026-06-01）
-│   - save_timestamp() / load_timestamp()：时间戳防篡改
-│   - clear_timestamp()：清除时间戳
-│   - 用途：防止用户回拨系统时间绕过有效期
-│
-├── template_capture.py         # 模板上传向导（约427行）
+├── template_capture.py         # 模板上传向导
 │   - TemplateCaptureWizard 类：模态对话框
 │   - 列出所有模板图片（中文名+截图提示）
 │   - 上传/预览/恢复默认
@@ -95,55 +101,80 @@
 │   - 出售测试按钮
 │   - 保存到 ~/.delta_auto_templates/
 │
-├── test_all_features.py        # 单元测试（约32KB）
+├── test_all_features.py        # 单元测试
 │   - 测试配置、冷却、互斥、QQ降级、邮件、代码一致性
+
+【服务器端文件】（部署到云端，不在客户端打包）
+
+├── server.py服务器主程序.txt   # FastAPI 后端
+│   - POST /api/v1/validate：客户端启动验证（白名单+有效期）
+│   - POST /api/v1/heartbeat：客户端心跳（账号状态同步）
+│   - POST /api/v1/admin/add_to_whitelist：添加机器到白名单
+│   - POST /api/v1/admin/remove_from_whitelist：移除机器
+│   - POST /api/v1/admin/set_user_expiry：设置独立有效期
+│   - GET  /api/v1/admin/get_all_users：查看所有用户
+│   - GET  /api/v1/admin/get_machine_status：查看机器实时状态
+│   - 数据存储：user_data.json
+│
+├── 图形化可视管理后台代码.txt   # 管理后台前端
+│   - 用户列表管理（添加/删除/查看）
+│   - 有效期设置
+│   - 机器实时状态面板（每10秒自动刷新）
+│   - 显示各账号运行状态和最后心跳时间
 
 【资源目录】
 
 ├── picture/                    # 游戏 UI 元素截图
-│   ├── *.png                   # 主界面按钮（烽火地带、特勤处、制造等）
 │   ├── icon.ico                # 应用图标
-│   ├── produce/                # 生产设施模板（科技中心、工具台、护甲站、医疗站）
+│   ├── Facility_Controls/      # 设施图标（技术中心、工作台、防具台、制药台）
+│   ├── Crafting_Controls/      # 制造按钮（制造、产出、收取、一键补齐、领取奖励）
+│   ├── Navigation/             # 导航图标（烽火地带、特勤处）
 │   ├── One_Click_Sell/         # 出售流程模板（仓库、出售、上架、降价、确认上架）
 │   ├── email/                  # 邮箱货币模板（邮箱、交易中心、全部领取、领取完成）
-│   └── qq_login/               # QQ 登录模板（账号选择、登录按钮）
+│   ├── wegame_login/           # WeGame 登录模板（登录按钮、游戏图标、启动按钮）
+│   ├── qq_login/               # QQ 登录模板（账号选择、登录按钮）
+│   └── produce/                # 生产设施模板（各设施产出项截图）
 
 【用户数据目录】(~/.delta_auto_*)
 
 ├── ~/.delta_auto_settings.json     # 用户设置
 ├── ~/.delta_auto_accounts.json     # QQ 账号列表
 ├── ~/.delta_auto_cooldown.json     # 冷却数据
-├── ~/.delta_auto_timestamp.dat     # 时间戳防篡改
 ├── ~/.delta_auto_templates/        # 用户自定义模板
-├── ~/.delta_auto_sell_items/       # 售卖物品图片
+├── ~/.delta_auto_sell_items/       # 售卖物品图片 + items_meta.json
 └── ~/.delta_auto_error.log         # 异常日志
 
 【关键配置项】
 
-| 配置项                      | 说明                           | 默认值   |
-|-----------------------------|-------------------------------|----------|
-| confidence                  | 图像匹配置信度                  | 0.7      |
-| enable_cooldown             | 启用账号冷却                    | False    |
-| cooldown_hours              | 冷却小时数                      | 8        |
-| cooldown_run_immediately    | 冷却完立即运行                  | False    |
-| cooldown_email_enabled      | 冷却到期邮件提醒                | False    |
-| cooldown_delay_minutes      | 账号间隔时间（分钟）            | 1        |
-| enable_sell_after_run       | 主流程后执行一键出售            | False    |
-| sell_discount_times         | 降价次数（0-5）                | 0        |
-| sell_quantity               | 出售数量（1-99）               | 1        |
-| sell_confidence             | 出售物品匹配置信度              | 0.55     |
-| email_enabled               | 启用邮件通知                    | False    |
-| auto_start                  | 启用定时执行                    | False    |
-| run_mode                    | 运行模式（单次/每日循环）       | 单次     |
-| enable_email_currency       | 自动领取邮箱货币                | False    |
+| 配置项                      | 说明                              | 默认值                        |
+|-----------------------------|----------------------------------|------------------------------|
+| confidence                  | 图像匹配置信度                     | 0.7                          |
+| server_url                  | 服务器地址                         | http://112.74.106.69:8000    |
+| client_key                  | 客户端密钥                         | Client_Normal_Key_2026       |
+| post_run_shutdown_delay     | 运行完成后延迟关机（分钟，0=不关机）  | 0                            |
+| enable_cooldown             | 启用账号冷却                       | False                        |
+| cooldown_hours              | 冷却小时数                         | 8                            |
+| cooldown_run_immediately    | 冷却完立即运行                     | False                        |
+| cooldown_email_enabled      | 冷却到期邮件提醒                   | False                        |
+| cooldown_delay_minutes      | 账号间隔时间（分钟）               | 1                            |
+| enable_sell_after_run       | 主流程后执行一键出售               | False                        |
+| sell_discount_times         | 降价次数（0-5）                    | 0                            |
+| sell_quantity               | 出售数量（1-99）                   | 1                            |
+| sell_confidence             | 出售物品匹配置信度                  | 0.55                         |
+| email_enabled               | 启用邮件通知                       | False                        |
+| auto_start                  | 启用定时执行                       | False                        |
+| run_mode                    | 运行模式（单次/每日循环）           | 单次                         |
+| enable_email_currency       | 自动领取邮箱货币                   | False                        |
 
 【运行流程】
 
-1. 启动 → 单实例检查 → 联网时间校验 → 加载设置 → 显示主界面
+1. 启动 → 单实例检查 → 服务器验证（机器指纹+有效期） → 加载设置 → 显示主界面
 2. 用户点击"开始运行"或定时触发或冷却到期触发
-3. 清理进程（QQ/WeGame）
-4. 逐个账号：
-   a. 冷却检查（跳过冷却中的账号）
+3. 每天首次运行时再次验证服务器（防长期不退出绕过）
+4. 启动心跳线程（每30秒同步账号状态）
+5. 清理进程（QQ/WeGame）
+6. 逐个账号：
+   a. 冷却检查（跳过冷却中的账号，状态标记为 "cooling"）
    b. 启动 QQ → 快捷登录
    c. 启动 WeGame → 快捷登录
    d. 找到三角洲图标 → 启动游戏
@@ -154,7 +185,8 @@
    i. 关闭游戏/WeGame/QQ
    j. 记录冷却时间
    k. 等待账号间隔
-5. 所有账号完成 → 发送邮件报告 → 恢复睡眠设置
+7. 所有账号完成 → 停止心跳线程 → 发送邮件报告 → 恢复睡眠设置
+8. 如果设置了延迟关机 → 等待指定分钟后关机
 
 【自动化操作流程（automation.sell_operations）】
 
@@ -177,6 +209,8 @@
 【技术栈】
 
 Python 3.8+ / Tkinter / OpenCV / PyAutoGUI / psutil / pywin32 / pystray+Pillow / PyInstaller
+
+服务器端: Python / FastAPI / uvicorn
 
 【打包命令】
 

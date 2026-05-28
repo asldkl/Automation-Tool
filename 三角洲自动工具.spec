@@ -14,7 +14,7 @@ a = Analysis(
            ('picture\\wegame_login', 'picture\\wegame_login'),
            ('picture\\icon', 'picture\\icon')],
     hiddenimports=[
-        'config', 'utils', 'settings_window', 'template_capture', 'crypto_utils', 'cooldown_manager', 'automation',
+        'config', 'utils', 'settings_window', 'template_capture', 'crypto_utils', 'cooldown_manager', 'automation', 'machine_fingerprint',
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',
         'cv2', 'numpy', 'pyautogui',

@@ -7,32 +7,7 @@ import sys
 import json
 import winreg
 
-# ==================== 加密后的有效期配置 ====================
-# 有效期: 2026年8月1日（加密存储，非明文）
-# 解密逻辑在 crypto_utils.py 中
-def get_expiry_date():
-    """动态解密有效期"""
-    from crypto_utils import decrypt_expiry
-    return decrypt_expiry()
-
-# ==================== 多时间源配置 ====================
-TIME_SOURCES = [
-    {
-        "name": "淘宝",
-        "url": "http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp",
-        "timeout": 3
-    },
-    {
-        "name": "苏宁",
-        "url": "http://quan.suning.com/getSysTime.do",
-        "timeout": 3
-    },
-    {
-        "name": "世界时间",
-        "url": "http://worldtimeapi.org/api/timezone/Asia/Shanghai",
-        "timeout": 5
-    }
-]
+# ==================== 有效期由服务器端统一校验 ====================
 
 # ==================== 资源路径辅助 ====================
 def resource_path(relative_path):
@@ -150,6 +125,11 @@ DEFAULT_SETTINGS = {
     "template_resolution": "",        # 模板截图时的屏幕分辨率
     # 模板上传状态记录
     "template_upload_status": {},     # var_name -> "pending" | "done"
+    # 运行完成后关机
+    "post_run_shutdown_delay": 0,     # 运行完成后延迟关机（0-5分钟，0=不关机）
+    # 服务器配置
+    "server_url": "http://112.74.106.69:8000",  # 服务器地址
+    "client_key": "Client_Normal_Key_2026",      # 客户端密钥
 }
 
 def load_settings():

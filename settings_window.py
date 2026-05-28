@@ -100,6 +100,7 @@ class SettingsWindow:
         self.shutdown_time_var = tk.StringVar(value=app.settings.get("auto_shutdown_time", "22:00"))
         self.startup_enable_var = tk.BooleanVar(value=app.settings.get("auto_startup_enabled", False))
         self.startup_time_var = tk.StringVar(value=app.settings.get("auto_startup_time", "07:00"))
+        self.post_run_shutdown_delay_var = tk.IntVar(value=app.settings.get("post_run_shutdown_delay", 0))
 
         self._setup_styles()
         self._build_ui()
@@ -400,6 +401,21 @@ class SettingsWindow:
         ttk.Label(note2, text="到达设定时间后系统将自动关机（任务运行中会等待完成后执行）",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
 
+        # ----- 运行完成后延迟关机 -----
+        frame2b = ttk.LabelFrame(parent, text="  运行完成后关机  ", style='SettingsCard.TLabelframe', padding=12)
+        frame2b.pack(fill=tk.X, pady=(0, 8))
+
+        f2b = ttk.Frame(frame2b, style='SettingsInner.TFrame')
+        f2b.pack(fill=tk.X)
+        ttk.Label(f2b, text="所有账号运行完成后延迟关机：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f2b, from_=0, to=5, increment=1,
+                    textvariable=self.post_run_shutdown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f2b, text="分钟（0=不关机，1-5分钟延迟）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+        note2b = ttk.Frame(frame2b, style='SettingsInner.TFrame')
+        note2b.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(note2b, text="所有账号处理完毕后，按设定延迟时间自动关机（0表示不关机）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
+
         # ----- 自动开机（唤醒） -----
         frame3 = ttk.LabelFrame(parent, text="  定时开机（从睡眠/休眠唤醒）  ", style='SettingsCard.TLabelframe', padding=12)
         frame3.pack(fill=tk.X, pady=(0, 8))
@@ -506,6 +522,22 @@ class SettingsWindow:
 
     def _build_other_tab(self, parent):
         """其他设置选项卡内容"""
+        # ----- 机器指纹 -----
+        frame_fp = ttk.LabelFrame(parent, text="  机器指纹（本机唯一标识）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_fp.pack(fill=tk.X, pady=(0, 8))
+
+        fp_row = ttk.Frame(frame_fp, style='SettingsInner.TFrame')
+        fp_row.pack(fill=tk.X, pady=(0, 4))
+        self._fingerprint_var = tk.StringVar(value="点击按钮获取...")
+        ttk.Entry(fp_row, textvariable=self._fingerprint_var, width=36,
+                  state='readonly', font=('Consolas', 9)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(fp_row, text="查看指纹", width=10,
+                   command=self._show_fingerprint).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(fp_row, text="复制", width=6,
+                   command=self._copy_fingerprint).pack(side=tk.LEFT)
+        ttk.Label(frame_fp, text="此指纹用于服务器绑定验证，需告知管理员添加到白名单后方可使用",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
+
         # ----- 开机自启动 -----
         frame1 = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=12)
         frame1.pack(fill=tk.X, pady=(0, 8))
@@ -912,6 +944,23 @@ class SettingsWindow:
         if path:
             self.log_var.set(path)
 
+    def _show_fingerprint(self):
+        """获取并显示本机机器指纹"""
+        try:
+            import machine_fingerprint
+            info = machine_fingerprint.get_machine_info()
+            self._fingerprint_var.set(info["machine_id"])
+        except Exception as e:
+            messagebox.showerror("错误", f"获取机器指纹失败：{e}")
+
+    def _copy_fingerprint(self):
+        """复制机器指纹到剪贴板"""
+        fp = self._fingerprint_var.get()
+        if fp and fp != "点击按钮获取...":
+            self.win.clipboard_clear()
+            self.win.clipboard_append(fp)
+            messagebox.showinfo("已复制", f"机器指纹已复制到剪贴板：\n{fp}")
+
     def _open_capture_wizard(self):
         """打开模板截图向导"""
         from template_capture import TemplateCaptureWizard
@@ -1008,6 +1057,7 @@ class SettingsWindow:
         self.app.settings["auto_shutdown_time"] = self.shutdown_time_var.get()
         self.app.settings["auto_startup_enabled"] = self.startup_enable_var.get()
         self.app.settings["auto_startup_time"] = self.startup_time_var.get()
+        self.app.settings["post_run_shutdown_delay"] = self.post_run_shutdown_delay_var.get()
 
         # QQ 设置
         self.app.settings["qq_path"] = self.qq_path_var.get()

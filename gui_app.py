@@ -19,9 +19,9 @@ import pyautogui
 import traceback
 import config
 import utils
-import crypto_utils
 import cooldown_manager
 import automation
+import machine_fingerprint
 from settings_window import SettingsWindow
 
 # 尝试导入托盘所需库
@@ -49,15 +49,7 @@ def _v3_check():
     _ = _v2_check()
     return _ and not _
 
-# ==================== 混淆的错误消息 ====================
-_ERR_EXPIRY = [0xC8, 0xED, 0xBC, 0xFE, 0xD2, 0xD1, 0xB9, 0xFD, 0xC6, 0xDA]
-_ERR_TIME = [0xCA, 0xB1, 0xBC, 0xE4, 0xD2, 0xEC, 0xB3, 0xA3]
-
-def _decode_err(code):
-    """解码错误消息"""
-    return bytes(code).decode('gbk')
-
-# -------------------- 有效期已移至 config.py 加密存储 --------------------
+# -------------------- 有效期由服务器端统一校验 --------------------
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
 
@@ -132,6 +124,61 @@ class App:
         self.settings = config.APP_SETTINGS
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
         config.CONFIDENCE = self.settings["confidence"]
+
+        # 服务器验证（机器指纹 + 远程有效期）
+        self._server_validated = False
+        self._server_expiry = None
+        try:
+            machine_id = machine_fingerprint.get_machine_id()
+        except Exception:
+            machine_id = "获取失败"
+
+        try:
+            allowed, expiry, error = self._validate_with_server()
+            if allowed is True:
+                self._server_validated = True
+                self._server_expiry = expiry
+                print(f"✅ 服务器验证通过，有效期至：{expiry}")
+            elif allowed is False:
+                print(f"❌ 服务器验证失败：{error}")
+                messagebox.showerror("验证失败",
+                    f"程序无法启动：{error}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"本机机器指纹（请发送给管理员）：\n\n"
+                    f"  {machine_id}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━")
+                self.root.after(100, self.root.destroy)
+                return
+            else:
+                # 服务器不可达 = 拒绝启动（防止绕过验证）
+                print(f"❌ 服务器验证失败：{error}")
+                messagebox.showerror("验证失败",
+                    f"无法连接到验证服务器，程序无法启动。\n\n"
+                    f"错误信息：{error}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"本机机器指纹（请发送给管理员）：\n\n"
+                    f"  {machine_id}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"请将此指纹发送给管理员添加白名单。")
+                self.root.after(100, self.root.destroy)
+                return
+        except Exception as e:
+            print(f"❌ 服务器验证异常: {e}")
+            messagebox.showerror("验证失败",
+                f"服务器验证异常，程序无法启动。\n\n"
+                f"错误信息：{e}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"本机机器指纹（请发送给管理员）：\n\n"
+                f"  {machine_id}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"请将此指纹发送给管理员添加白名单。")
+            self.root.after(100, self.root.destroy)
+            return
+
+        # 心跳相关
+        self._heartbeat_thread = None
+        self._heartbeat_stop = None
+        self._account_status = {}
 
         # 运行统计
         self.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": None}
@@ -385,6 +432,111 @@ class App:
                 pass
             self._show_event = None
 
+    # ---------- 服务器验证与心跳 ----------
+    def _validate_with_server(self):
+        """
+        启动时向服务器验证机器指纹和有效期
+        返回 (allowed: bool, expiry: str, error: str)
+        """
+        server_url = self.settings.get("server_url", "").strip()
+        client_key = self.settings.get("client_key", "").strip()
+        if not server_url or not client_key:
+            return None, None, "服务器配置为空，跳过远程验证"
+
+        try:
+            machine_id = machine_fingerprint.get_machine_id()
+            import urllib.request
+            import json as _json
+
+            url = f"{server_url}/api/v1/validate"
+            payload = _json.dumps({
+                "machine_id": machine_id,
+                "current_date": datetime.datetime.now().strftime("%Y-%m-%d")
+            }).encode("utf-8")
+
+            req = urllib.request.Request(url, data=payload, method="POST")
+            req.add_header("Authorization", client_key)
+            req.add_header("Content-Type", "application/json")
+
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = _json.loads(resp.read().decode("utf-8"))
+
+            if result.get("status") == "granted":
+                return True, result.get("expiry", ""), ""
+            else:
+                reason = result.get("reason", "未知原因")
+                return False, None, reason
+        except Exception as e:
+            return None, None, f"服务器连接失败: {e}"
+
+    def _start_heartbeat(self):
+        """启动心跳线程，实时同步账号状态到服务器"""
+        if hasattr(self, '_heartbeat_thread') and self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_stop = threading.Event()
+        self._account_status = {}  # {filename: "running|cooling|success|failed|idle"}
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self):
+        """停止心跳线程"""
+        if hasattr(self, '_heartbeat_stop') and self._heartbeat_stop:
+            self._heartbeat_stop.set()
+
+    def _heartbeat_loop(self):
+        """心跳循环：每30秒向服务器发送账号状态"""
+        server_url = self.settings.get("server_url", "").strip()
+        client_key = self.settings.get("client_key", "").strip()
+        if not server_url or not client_key:
+            return
+
+        try:
+            machine_id = machine_fingerprint.get_machine_id()
+        except Exception:
+            return
+
+        while not self._heartbeat_stop.is_set():
+            try:
+                self._send_heartbeat(server_url, client_key, machine_id)
+            except Exception as e:
+                print(f"⚠️ 心跳发送失败: {e}")
+
+            # 等待30秒，分段检查停止信号
+            for _ in range(6):
+                if self._heartbeat_stop.is_set():
+                    break
+                time.sleep(5)
+
+    def _send_heartbeat(self, server_url, client_key, machine_id):
+        """发送一次心跳到服务器"""
+        import urllib.request
+        import json as _json
+
+        accounts = []
+        for img_path in self.qq_account_images:
+            fname = os.path.basename(img_path)
+            status = self._account_status.get(fname, "idle")
+            accounts.append({"name": fname, "status": status})
+
+        url = f"{server_url}/api/v1/heartbeat"
+        payload = _json.dumps({
+            "machine_id": machine_id,
+            "accounts": accounts,
+            "is_running": self.running
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header("Authorization", client_key)
+        req.add_header("Content-Type", "application/json")
+
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            pass
+
+    def _update_account_status(self, account_name, status):
+        """更新单个账号的状态（线程安全）"""
+        if hasattr(self, '_account_status'):
+            self._account_status[account_name] = status
+
     def _on_close(self):
         """关闭按钮：最小化到托盘（如果可用），否则退出"""
         if TRAY_AVAILABLE and self.tray_icon:
@@ -396,6 +548,7 @@ class App:
     def _quit_all(self):
         """真正退出程序"""
         self.stop()
+        self._stop_heartbeat()
         self._scheduler_stop_event.set()
         if self._schedule_thread and self._schedule_thread.is_alive():
             self._schedule_thread.join(timeout=3)
@@ -1021,7 +1174,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.0.2  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.0.3  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -1764,6 +1917,8 @@ class App:
         self.log_area.configure(state='disabled')
         # 阻止系统睡眠，确保脚本执行不中断
         utils.prevent_sleep()
+        # 启动心跳同步
+        self._start_heartbeat()
         self.work_thread = threading.Thread(target=self.run_script_main, daemon=True)
         self.work_thread.start()
 
@@ -1798,6 +1953,38 @@ class App:
             qq_path = self.settings.get("qq_path", "")
             processed_accounts = []  # 记录已处理的QQ号名称
 
+            # 每日首次运行时进行服务器验证
+            today_str = datetime.date.today().isoformat()
+            if not hasattr(self, '_last_validated_date') or self._last_validated_date != today_str:
+                print("🔒 每日验证：正在连接服务器...")
+                self.set_operation("服务器验证中")
+                allowed, expiry, error = self._validate_with_server()
+                if allowed is True:
+                    self._last_validated_date = today_str
+                    print(f"✅ 每日验证通过，有效期至：{expiry}")
+                elif allowed is False:
+                    print(f"❌ 验证失败：{error}")
+                    self.root.after(0, lambda: messagebox.showerror("验证失败",
+                        f"每日验证未通过，程序将退出。\n\n"
+                        f"原因：{error}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"本机机器指纹：\n\n"
+                        f"  {machine_fingerprint.get_machine_id()}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━━"))
+                    self.root.after(100, self.root.destroy)
+                    return
+                else:
+                    print(f"❌ 服务器连接失败：{error}")
+                    self.root.after(0, lambda: messagebox.showerror("验证失败",
+                        f"无法连接验证服务器，程序将退出。\n\n"
+                        f"错误：{error}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"本机机器指纹：\n\n"
+                        f"  {machine_fingerprint.get_machine_id()}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━━"))
+                    self.root.after(100, self.root.destroy)
+                    return
+
             # 运行前先退出 QQ 和 WeGame，确保干净状态
             print("🧹 运行前清理：退出 QQ 和 WeGame...")
             self.set_operation("清理进程")
@@ -1823,6 +2010,7 @@ class App:
                     if cooling:
                         print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
                         processed_accounts.append(f"{file_name} (冷却中)")
+                        self._update_account_status(file_name, "cooling")
                         continue
 
                 acc_text = f"第 {i+1}/{total} 个账号"
@@ -1833,6 +2021,7 @@ class App:
                 self.run_stats["total"] += 1
                 account_failed = False
                 account_interrupted = False
+                self._update_account_status(file_name, "running")
 
                 # 步骤1：启动 QQ 并登录
                 if self._stop_event.is_set():
@@ -2027,10 +2216,12 @@ class App:
                     # 用户手动停止，不记录冷却，不计入成功/失败
                     print(f"⏹️ 账号 {current_account_name} 被用户中断，跳过冷却记录")
                     processed_accounts.append(f"{current_account_name} (中断)")
+                    self._update_account_status(current_account_name, "idle")
                     break
                 elif account_failed:
                     self.run_stats["fail"] += 1
                     processed_accounts.append(f"{current_account_name} (失败)")
+                    self._update_account_status(current_account_name, "failed")
                     # 立即发送失败邮件通知
                     self._send_account_failure_email(current_account_name, next_run_str, processed_accounts)
                 else:
@@ -2040,6 +2231,7 @@ class App:
                         cooldown_manager.record_run(current_account_name, cd_hours)
                     self.run_stats["success"] += 1
                     processed_accounts.append(f"{current_account_name} (成功)")
+                    self._update_account_status(current_account_name, "success")
 
                 # 账号间隔等待：非最后一个账号且未被停止时，等待固定间隔再执行下一个
                 if i < total - 1 and not self._stop_event.is_set():
@@ -2087,6 +2279,8 @@ class App:
         self.running = False
         self._stop_event.clear()  # 清除工作线程停止信号，不影响调度器
         self._ignore_cooldown_this_run = False  # 重置冷却忽略标志
+        # 停止心跳同步
+        self._stop_heartbeat()
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.progress['value'] = self.progress['maximum']
@@ -2143,6 +2337,14 @@ class App:
         # 发送邮件通知
         processed_accounts = stats.get("processed_accounts", [])
         self._send_email_notification(stats, elapsed, processed_accounts)
+
+        # 运行完成后延迟关机
+        shutdown_delay = self.settings.get("post_run_shutdown_delay", 0)
+        if shutdown_delay > 0:
+            delay_seconds = shutdown_delay * 60
+            utils.schedule_shutdown(delay_seconds)
+            print(f"🔌 所有账号运行完毕，系统将在 {shutdown_delay} 分钟后关机")
+            print(f"   如需取消关机，请在命令行执行: shutdown /a")
 
     def _get_account_next_run(self, account_name):
         """获取账号的下次运行时间描述"""
@@ -2403,100 +2605,6 @@ class App:
         threading.Thread(target=_send, daemon=True).start()
 
 
-# ==================== 多重时间源校验 ====================
-def _fetch_time_taobao():
-    """从淘宝获取时间"""
-    url = "http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp"
-    with urllib.request.urlopen(url, timeout=3) as resp:
-        data = resp.read().decode('utf-8')
-        match = re.search(r'"t"\s*:\s*"(\d+)"', data)
-        if match:
-            timestamp = int(match.group(1)) / 1000.0
-            return datetime.datetime.fromtimestamp(timestamp).date()
-    return None
-
-def _fetch_time_suning():
-    """从苏宁获取时间"""
-    url = "http://quan.suning.com/getSysTime.do"
-    with urllib.request.urlopen(url, timeout=3) as resp:
-        data = resp.read().decode('utf-8')
-        obj = json.loads(data)
-        dt_str = obj["sysTime2"]
-        date_part = dt_str.split(" ")[0]
-        return datetime.date(*map(int, date_part.split("-")))
-    return None
-
-def _fetch_time_worldtime():
-    """从世界时间API获取时间"""
-    url = "http://worldtimeapi.org/api/timezone/Asia/Shanghai"
-    with urllib.request.urlopen(url, timeout=5) as resp:
-        data = json.loads(resp.read().decode('utf-8'))
-        dt_str = data["datetime"]
-        return datetime.datetime.fromisoformat(dt_str.replace("Z", "+00:00")).date()
-    return None
-
-def get_verified_network_time(max_retries=1, retry_interval=5, status_callback=None):
-    """
-    从多个时间源获取时间，取中位数
-    参数:
-        max_retries: 最大尝试次数（含首次）
-        retry_interval: 重试间隔（秒）
-        status_callback: 状态更新回调，签名为 callback(attempt, max_retries)
-    返回: datetime.date 或 None（所有源都失败时）
-    """
-    fetchers = [_fetch_time_taobao, _fetch_time_suning, _fetch_time_worldtime]
-
-    for attempt in range(1, max_retries + 1):
-        if status_callback:
-            status_callback(attempt, max_retries)
-
-        times = []
-        for fetcher in fetchers:
-            try:
-                t = fetcher()
-                if t:
-                    times.append(t)
-            except Exception:
-                continue
-
-        if times:
-            # 取中位数，排除异常值
-            times.sort()
-            return times[len(times) // 2]
-
-        # 未获取到时间，等待后重试
-        if attempt < max_retries:
-            time.sleep(retry_interval)
-
-    return None
-
-
-def _check_time_drift(current_net_time):
-    """
-    检测系统时间是否被回拨
-    返回: True=正常, False=被篡改
-    """
-    last_time = crypto_utils.load_timestamp()
-
-    if last_time is None:
-        # 首次运行，无记录
-        return True
-
-    # 将上次记录的时间转换为日期
-    last_date = last_time.date() if isinstance(last_time, datetime.datetime) else last_time
-
-    if current_net_time < last_date:
-        # 时间被回拨
-        print(f"⚠️ 检测到系统时间异常：当前={current_net_time}，上次记录={last_date}")
-        return False
-
-    return True
-
-def _save_current_timestamp(net_time):
-    """保存当前网络时间戳"""
-    crypto_utils.save_timestamp(net_time)
-
-
 def main():
     config.APP_SETTINGS = config.init_settings()
     config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
@@ -2511,7 +2619,7 @@ def main():
     loading_frame.pack(fill=tk.BOTH, expand=True)
     ttk.Label(loading_frame, text="三角洲行动自动化工具",
               font=('Microsoft YaHei UI', 16, 'bold')).pack(pady=(20, 10))
-    status_label = ttk.Label(loading_frame, text="正在连接时间服务器验证...",
+    status_label = ttk.Label(loading_frame, text="正在连接服务器验证...",
                              font=('Microsoft YaHei UI', 10))
     status_label.pack(pady=10)
     progress = ttk.Progressbar(loading_frame, mode='indeterminate', length=250)
@@ -2525,97 +2633,19 @@ def main():
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _verify_in_background():
-        """后台线程：执行联网时间校验（开机自启动时增加重试，等待网络就绪）"""
-        is_auto_start = '--auto-start' in sys.argv
-        retries = 6 if is_auto_start else 1  # 开机自启动时最多重试6次（约30秒）
-
-        def _update_status(attempt, max_retries):
-            if is_auto_start and max_retries > 1 and attempt > 1:
-                root.after(0, lambda a=attempt: status_label.config(
-                    text=f"网络未就绪，正在重试 ({a}/{max_retries})..."))
-
-        net_date = get_verified_network_time(
-            max_retries=retries, retry_interval=5, status_callback=_update_status)
-        root.after(0, lambda: _on_verify_done(net_date))
-
-    def _on_verify_done(net_date):
-        """主线程：校验完成后处理结果"""
+    def _init_app():
+        """服务器验证通过后初始化应用"""
         progress.stop()
-
-        # 获取加密后的有效期
-        expiry_date = config.get_expiry_date()
-        is_auto_start = '--auto-start' in sys.argv
-
-        if net_date is None:
-            # 所有时间源都失败，尝试使用本地记录
-            last_time = crypto_utils.load_timestamp()
-            if last_time is None:
-                if is_auto_start:
-                    # 开机自启动模式：网络不可用且无本地记录，使用系统日期作为兜底
-                    sys_date = datetime.date.today()
-                    if sys_date > expiry_date:
-                        print(f"❌ 系统日期 {sys_date} 已超过有效期 {expiry_date}，退出")
-                        root.destroy()
-                        return
-                    print("⚠️ 开机自启动：无法连接时间服务器且无本地记录，使用系统日期继续")
-                    _save_current_timestamp(sys_date)
-                else:
-                    # 非自启动模式：弹窗提示后退出
-                    messagebox.showerror("网络错误", "无法连接时间服务器且无本地记录，请检查网络后重试。")
-                    root.destroy()
-                    return
-            else:
-                # 使用上次记录的时间进行过期检查
-                last_date = last_time.date() if isinstance(last_time, datetime.datetime) else last_time
-                if last_date > expiry_date:
-                    messagebox.showerror("软件已过期", f"该版本已于 {expiry_date} 到期。\n上次验证日期：{last_date}")
-                    root.destroy()
-                    return
-                print("⚠️ 无法连接时间服务器，使用本地记录继续")
-
-            # 继续运行
-            loading_frame.destroy()
-            root.geometry("")
-            _check_resolution_on_startup(root)
-            App(root)
-            root.after(50, lambda: (root.lift(), root.focus_force()))
-            root.after(50, lambda: root.attributes('-topmost', True))
-            root.after(200, lambda: root.attributes('-topmost', False))
-            return
-
-        # 检查时间是否被回拨
-        if not _check_time_drift(net_date):
-            messagebox.showerror(_decode_err(_ERR_TIME), "检测到系统时间被篡改，请恢复正确时间后重试。")
-            root.destroy()
-            return
-
-        # 检查是否过期
-        if net_date > expiry_date:
-            messagebox.showerror(_decode_err(_ERR_EXPIRY), f"该版本已于 {expiry_date} 到期。\n当前网络日期：{net_date}")
-            root.destroy()
-            return
-
-        # 保存当前时间戳
-        _save_current_timestamp(net_date)
-
-        # 校验通过，销毁加载界面，初始化完整应用
         loading_frame.destroy()
-
-        # 清除加载窗口的固定尺寸，让后续 UI 自动撑开
         root.geometry("")
-
-        # 分辨率校验：检测当前屏幕分辨率是否与模板截图时一致
         _check_resolution_on_startup(root)
-
         App(root)
-        # 窗口显示到前台
         root.after(50, lambda: (root.lift(), root.focus_force()))
         root.after(50, lambda: root.attributes('-topmost', True))
         root.after(200, lambda: root.attributes('-topmost', False))
 
-    # 启动后台校验线程
-    threading.Thread(target=_verify_in_background, daemon=True).start()
+    # 直接初始化（服务器验证在 App.__init__ 中执行，失败会自动退出）
+    root.after(300, _init_app)
 
     root.mainloop()
 
