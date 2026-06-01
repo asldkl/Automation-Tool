@@ -145,8 +145,13 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None):
                 time.sleep(0.3)
                 continue
 
-            pyautogui.moveTo(x, y, duration=0.2)
-            pyautogui.click()
+            try:
+                pyautogui.moveTo(x, y, duration=0.2)
+                pyautogui.click()
+            except pyautogui.FailSafeException:
+                print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
+                time.sleep(0.5)
+                continue
             time.sleep(WAIT_TIME)
             return True
         time.sleep(0.3)
@@ -309,12 +314,53 @@ def find_and_click_multiscale(img_path, timeout=20, region=None, confidence=None
 
             if scale != 1.0:
                 print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
-            pyautogui.moveTo(x, y, duration=0.2)
-            pyautogui.click()
+            try:
+                pyautogui.moveTo(x, y, duration=0.2)
+                pyautogui.click()
+            except pyautogui.FailSafeException:
+                print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
+                time.sleep(0.5)
+                continue
             time.sleep(WAIT_TIME)
             return True
         time.sleep(0.3)
     print(f"⏳ 超时未找到（复合匹配）：{img_path}")
+    return False
+
+
+def find_multiscale(img_path, timeout=20, region=None, confidence=None):
+    """
+    多尺度复合图像识别，仅检测不点击。
+    返回 True 表示找到，False 表示超时未找到。
+    """
+    threshold = confidence if confidence is not None else CONFIDENCE
+    resolved = config.resolve_template_path(img_path)
+    template = _template_cache.get(resolved)
+    if template is None:
+        template = _imread_unicode(resolved)
+        if template is None:
+            print(f"❌ 图片文件不存在或无法读取：{resolved}")
+            return False
+        _template_cache[resolved] = template
+
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+        except Exception:
+            time.sleep(0.5)
+            continue
+        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+
+        matched, max_val, max_loc, scale, (h, w) = _match_template_multiscale(
+            gray, template, threshold)
+
+        if matched:
+            if scale != 1.0:
+                print(f"🔍 复合匹配成功（仅检测）：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
+            return True
+        time.sleep(0.3)
     return False
 
 

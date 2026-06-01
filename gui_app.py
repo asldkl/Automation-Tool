@@ -2115,14 +2115,14 @@ class App:
                         # 连续激活失败5次，启动降级方案：直接图像识别点击 QQ_ACCOUNT_SELECT
                         if qq_activate_fail_count >= 5:
                             qq_degrade_triggered = True
-                            print("⚠️ QQ 窗口激活连续失败5次，启动降级方案：尝试图像识别点击...")
+                            print("⚠️ QQ 窗口激活连续失败5次，启动降级方案：尝试图像识别...")
                             img_found = False
                             for img_retry in range(3):
                                 if self._stop_event.is_set(): break
-                                if utils.find_and_click_multiscale(config.QQ_ACCOUNT_SELECT, timeout=5):
+                                if utils.find_multiscale(config.QQ_ACCOUNT_SELECT, timeout=5):
                                     img_found = True
                                     qq_ready = True
-                                    print(f"✅ 降级方案成功：图像识别点击 QQ_ACCOUNT_SELECT（第 {img_retry+1} 次）")
+                                    print(f"✅ 降级方案成功：检测到 QQ_ACCOUNT_SELECT（第 {img_retry+1} 次），等待后续登录流程处理")
                                     break
                                 print(f"⚠️ 降级方案重试 ({img_retry+1}/3)...")
                                 time.sleep(1)
