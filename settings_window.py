@@ -20,7 +20,8 @@ class SettingsWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("设置")
         self.win.geometry("660x780")
-        self.win.resizable(False, False)
+        self.win.resizable(True, True)
+        self.win.minsize(660, 500)
         # 窗口居中
         self.win.update_idletasks()
         x = (self.win.winfo_screenwidth() - 660) // 2
@@ -102,8 +103,10 @@ class SettingsWindow:
         self.startup_time_var = tk.StringVar(value=app.settings.get("auto_startup_time", "07:00"))
         self.post_run_shutdown_delay_var = tk.IntVar(value=app.settings.get("post_run_shutdown_delay", 0))
 
+        self._active_canvas = None
         self._setup_styles()
         self._build_ui()
+        self.win.bind_all("<MouseWheel>", self._on_mousewheel)
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -119,52 +122,100 @@ class SettingsWindow:
         style.configure('SettingsSmall.TLabel', background='#ffffff', foreground='#7f8c8d',
                         font=('Microsoft YaHei UI', 8))
 
+    def _on_mousewheel(self, event):
+        """全局滚轮事件处理，仅滚动当前激活的 canvas"""
+        if self._active_canvas:
+            try:
+                self._active_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except tk.TclError:
+                pass
+
+    def _create_scrollable_tab(self, parent):
+        """为 Tab 内容创建 Canvas+Scrollbar 滚动容器，返回内部 Frame"""
+        canvas = tk.Canvas(parent, highlightthickness=0, bg='#ffffff')
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+        inner_frame = ttk.Frame(canvas, style='Settings.TFrame')
+
+        inner_frame_id = canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(inner_frame_id, width=event.width)
+
+        def _on_enter(event):
+            self._active_canvas = canvas
+
+        def _on_leave(event):
+            if self._active_canvas is canvas:
+                self._active_canvas = None
+
+        inner_frame.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<Enter>", _on_enter)
+        canvas.bind("<Leave>", _on_leave)
+        inner_frame.bind("<Enter>", _on_enter)
+        inner_frame.bind("<Leave>", _on_leave)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        return inner_frame
+
     def _build_ui(self):
         # 主容器
         main_frame = ttk.Frame(self.win, style='Settings.TFrame', padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 选项卡
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
-
-        # ----- Tab 1: 全局设置 -----
-        global_tab = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(global_tab, text="  全局设置  ")
-        self._build_global_tab(global_tab)
-
-        # ----- Tab 2: 自动任务设置 -----
-        auto_tab = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(auto_tab, text="  自动任务设置  ")
-        self._build_auto_tab(auto_tab)
-
-        # ----- Tab 3: 电源管理 -----
-        power_tab = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(power_tab, text="  电源管理  ")
-        self._build_power_tab(power_tab)
-
-        # ----- Tab 4: 邮件通知 -----
-        email_tab = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(email_tab, text="  邮件通知  ")
-        self._build_email_tab(email_tab)
-
-        # ----- Tab 5: 其他设置 -----
-        other_tab = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(other_tab, text="  其他设置  ")
-        self._build_other_tab(other_tab)
-
-        # ----- Tab 6: 售卖物品 -----
-        sell_tab = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(sell_tab, text="  售卖物品  ")
-        self._build_sell_tab(sell_tab)
-
-        # ----- 底部操作按钮 -----
+        # ----- 底部操作按钮（先 pack 到底部，确保始终可见） -----
         btn_frame = ttk.Frame(main_frame, style='Settings.TFrame')
-        btn_frame.pack(fill=tk.X)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
         ttk.Button(btn_frame, text="✓ 保存设置", style='Success.TButton',
                    command=self._save, width=14).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(btn_frame, text="✕ 取消", style='TButton',
                    command=self.win.destroy, width=10).pack(side=tk.LEFT)
+
+        # 选项卡
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        # ----- Tab 1: 全局设置 -----
+        global_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(global_tab_outer, text="  全局设置  ")
+        global_tab = self._create_scrollable_tab(global_tab_outer)
+        self._build_global_tab(global_tab)
+
+        # ----- Tab 2: 自动任务设置 -----
+        auto_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(auto_tab_outer, text="  自动任务设置  ")
+        auto_tab = self._create_scrollable_tab(auto_tab_outer)
+        self._build_auto_tab(auto_tab)
+
+        # ----- Tab 3: 电源管理 -----
+        power_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(power_tab_outer, text="  电源管理  ")
+        power_tab = self._create_scrollable_tab(power_tab_outer)
+        self._build_power_tab(power_tab)
+
+        # ----- Tab 4: 邮件通知 -----
+        email_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(email_tab_outer, text="  邮件通知  ")
+        email_tab = self._create_scrollable_tab(email_tab_outer)
+        self._build_email_tab(email_tab)
+
+        # ----- Tab 5: 其他设置 -----
+        other_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(other_tab_outer, text="  其他设置  ")
+        other_tab = self._create_scrollable_tab(other_tab_outer)
+        self._build_other_tab(other_tab)
+
+        # ----- Tab 6: 售卖物品 -----
+        sell_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(sell_tab_outer, text="  售卖物品  ")
+        sell_tab = self._create_scrollable_tab(sell_tab_outer)
+        self._build_sell_tab(sell_tab)
 
     def _build_global_tab(self, parent):
         """全局设置选项卡内容"""

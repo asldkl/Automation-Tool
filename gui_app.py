@@ -85,7 +85,8 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("三角洲行动自动化工具")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self.root.minsize(640, 800)
         self.running = False
         self.qq_account_images = []
         self._stop_event = threading.Event()          # 仅用于停止工作线程
@@ -110,6 +111,8 @@ class App:
         self._shutdown_handled_today = False
         # 定时任务触发时跳过冷却检查
         self._ignore_cooldown_this_run = False
+        # 开机自启动标志（开机启动时强制检查冷却，防止冷却中的账号被意外执行）
+        self._is_boot_startup = False
         # 用户主动停止后阻止冷却监听重新触发
         self._user_stopped_cooldown = False
         # 窗口图标
@@ -236,6 +239,7 @@ class App:
             # 开机立即运行（仅在开机自启动且开启该选项时触发）
             if self.settings.get("run_on_startup", False) and self.qq_account_images:
                 print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
+                self._is_boot_startup = True
                 self.root.after(2000, self.start)
             else:
                 print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
@@ -349,7 +353,7 @@ class App:
             if image.size != (64, 64):
                 image = image.resize((64, 64), Image.LANCZOS)
             menu = pystray.Menu(
-                pystray.MenuItem("显示窗口", self._show_window, default=True),
+                pystray.MenuItem("显示窗口", lambda: self.root.after(0, self._show_window), default=True),
                 pystray.MenuItem("设置", self._on_tray_settings),
                 pystray.MenuItem("退出", self._quit_all),
             )
@@ -368,26 +372,51 @@ class App:
         self.root.after(0, _show_then_settings)
 
     def _show_window(self):
-        self.root.deiconify()
-        self.root.lift()
-        # 如果设置窗口（模态）处于打开状态，临时释放 grab 使主窗口可获焦
-        had_settings = False
-        if self._settings_window and self._settings_window.win.winfo_exists():
+        try:
+            # 确保窗口状态正确：先 withdraw 再 deiconify 可以重置窗口状态
             try:
-                self._settings_window.win.grab_release()
-                had_settings = True
+                self.root.withdraw()
             except Exception:
                 pass
-        self.root.focus_force()
-        # 闪烁任务栏图标以吸引注意力
-        self.root.attributes('-topmost', True)
-        self.root.after(100, lambda: self.root.attributes('-topmost', False))
-        # 恢复设置窗口 grab
-        if had_settings:
+            self.root.after(50, self._do_show_window)
+        except Exception:
             try:
-                self._settings_window.win.grab_set()
-                self._settings_window.win.lift()
-                self._settings_window.win.focus_force()
+                self.root.deiconify()
+                self.root.lift()
+            except Exception:
+                pass
+
+    def _do_show_window(self):
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            # 如果设置窗口（模态）处于打开状态，临时释放 grab 使主窗口可获焦
+            had_settings = False
+            if self._settings_window and self._settings_window.win.winfo_exists():
+                try:
+                    self._settings_window.win.grab_release()
+                    had_settings = True
+                except Exception:
+                    pass
+            self.root.focus_force()
+            # 闪烁任务栏图标以吸引注意力
+            self.root.attributes('-topmost', True)
+            self.root.after(100, lambda: self.root.attributes('-topmost', False))
+            # 恢复设置窗口 grab
+            if had_settings:
+                try:
+                    self._settings_window.win.grab_set()
+                    self._settings_window.win.lift()
+                    self._settings_window.win.focus_force()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"⚠️ 恢复窗口失败: {e}")
+            # 最后尝试：强制重建窗口状态
+            try:
+                self.root.state('normal')
+                self.root.deiconify()
+                self.root.lift()
             except Exception:
                 pass
 
@@ -540,8 +569,13 @@ class App:
     def _on_close(self):
         """关闭按钮：最小化到托盘（如果可用），否则退出"""
         if TRAY_AVAILABLE and self.tray_icon:
-            self.root.withdraw()
-            print("ℹ️ 程序已最小化到系统托盘，双击托盘图标可重新显示，右键可退出")
+            try:
+                self.root.attributes('-topmost', False)
+                self.root.withdraw()
+                print("ℹ️ 程序已最小化到系统托盘，双击托盘图标可重新显示，右键可退出")
+            except Exception as e:
+                print(f"⚠️ 最小化到托盘失败: {e}")
+                self._quit_all()
         else:
             self._quit_all()
 
@@ -692,6 +726,7 @@ class App:
                             if has_ready:
                                 last_trigger_minute = current_minute
                                 print("🔔 检测到账号冷却到期，自动执行任务...")
+
                                 # 发送冷却到期邮件提醒
                                 ready_list = []
                                 for img_path in self.qq_account_images:
@@ -701,10 +736,30 @@ class App:
                                         ready_list.append(fname)
                                 if ready_list:
                                     self._send_cooldown_ready_email(ready_list)
+
+                                # ✅ 修复：直接设置标志位并安全调用 start()，不再使用 event_generate
+                                self._ignore_cooldown_this_run = True
                                 utils.prevent_sleep()
                                 utils.wake_display()
-                                time.sleep(2)
+
+                                print("🚀 冷却到期，正在启动自动任务...")
+
+                                # 直接在主线程调度 start()，这是最可靠的方式
                                 self.root.after(0, self.start)
+
+                                # 等待并验证任务是否成功启动
+                                time.sleep(3)
+                                if not self.running:
+                                    print("⚠️ 首次启动未生效，正在进行二次重试...")
+                                    self.root.after(0, self.start)
+                                    time.sleep(3)
+                                    if not self.running:
+                                        print("❌ 自动启动失败，请检查程序状态或手动按 F1")
+                                    else:
+                                        print("✅ 二次重试成功，任务已启动")
+                                else:
+                                    print("✅ 自动任务已成功启动")
+
                 except Exception as inner_e:
                     print(f"⚠️ 冷却监听异常（将继续运行）: {inner_e}")
                     traceback.print_exc()
@@ -1174,7 +1229,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.0.3  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.0.32  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -1250,6 +1305,10 @@ class App:
         self.stats_label = ttk.Label(main_container, text="", style='Info.TLabel')
         self.stats_label.pack(pady=(0, 8))
 
+        # ----- 底部控制按钮（先打包到底部，确保按钮始终在最下方） -----
+        ctrl_frame = ttk.Frame(main_container, style='TFrame')
+        ctrl_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
         # ----- 日志区域 -----
         log_label_frame = ttk.LabelFrame(main_container, text=" 运行日志 ", style='Card.TLabelframe', padding=8)
         log_label_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
@@ -1264,10 +1323,6 @@ class App:
                                                   highlightthickness=1,
                                                   highlightcolor='#dcdde1')
         self.log_area.pack(expand=True, fill=tk.BOTH)
-
-        # ----- 底部控制按钮 -----
-        ctrl_frame = ttk.Frame(main_container, style='TFrame')
-        ctrl_frame.pack(fill=tk.X)
         self.start_btn = ttk.Button(ctrl_frame, text="▶ 开始运行 (F1)", style='Success.TButton',
                                     command=self.start, width=18)
         self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
@@ -1319,6 +1374,10 @@ class App:
 
     def _on_settings_close(self):
         if self._settings_window:
+            try:
+                self._settings_window.win.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
             self._settings_window.win.destroy()
             self._settings_window = None
 
@@ -1898,6 +1957,7 @@ class App:
 
     # ---------- 启停控制 ----------
     def start(self):
+        print(f"🔵 start() 被调用，self.running={self.running}，账号数={len(self.qq_account_images)}，boot_startup={self._is_boot_startup}")
         if self.running:
             return
         if not self.qq_account_images:
@@ -1906,6 +1966,8 @@ class App:
         self.running = True
         self._stop_event.clear()
         self._user_stopped_cooldown = False  # 新运行开始，清除停止标志
+        self._ignore_cooldown_this_run = False  # 手动启动时重置冷却跳过标志，确保冷却检查生效
+        self._is_boot_startup = False  # 手动启动时重置开机标志
         self.current_step = 0
         self.progress['value'] = 0
         self.stats_label.config(text="")
@@ -1949,6 +2011,7 @@ class App:
     # ---------- 主流程 ----------
     def run_script_main(self):
         try:
+            print(f"🟢 run_script_main() 已启动，ignore_cooldown={self._ignore_cooldown_this_run}")
             total = len(self.qq_account_images)
             qq_path = self.settings.get("qq_path", "")
             processed_accounts = []  # 记录已处理的QQ号名称
@@ -1985,9 +2048,10 @@ class App:
                     self.root.after(100, self.root.destroy)
                     return
 
-            # 运行前先退出 QQ 和 WeGame，确保干净状态
-            print("🧹 运行前清理：退出 QQ 和 WeGame...")
+            # 运行前先退出 QQ、WeGame 和三角洲行动，确保干净状态
+            print("🧹 运行前清理：退出 QQ、WeGame 和三角洲行动...")
             self.set_operation("清理进程")
+            utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
             utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
             utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
             time.sleep(2)
@@ -2004,8 +2068,10 @@ class App:
                 file_name = os.path.basename(img_path)
                 current_account_name = file_name
 
-                # 冷却检查（定时任务触发时可跳过冷却检查）
-                if self.settings.get("enable_cooldown", False) and not self._ignore_cooldown_this_run:
+                # 冷却检查（定时任务/冷却到期触发时可跳过冷却检查，但开机启动时强制检查）
+                if self._ignore_cooldown_this_run and not self._is_boot_startup:
+                    print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
+                if self.settings.get("enable_cooldown", False) and (not self._ignore_cooldown_this_run or self._is_boot_startup):
                     cooling, next_time = cooldown_manager.is_cooling_down(file_name)
                     if cooling:
                         print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
@@ -2190,6 +2256,11 @@ class App:
                     if not account_failed:
                         self.set_operation("关闭三角洲游戏")
                         print("\n--- 关闭三角洲游戏 ---")
+                        # 多次按 Alt+F4 确保游戏窗口关闭（处理确认弹窗等）
+                        for _ in range(3):
+                            pyautogui.hotkey('alt', 'f4')
+                            time.sleep(0.5)
+                        time.sleep(1)
                         delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
                         for title in delta_titles:
                             if self._stop_event.is_set(): break
@@ -2197,11 +2268,12 @@ class App:
                         time.sleep(2)
                         utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
 
-                    # 每轮结束后退出 QQ 和 WeGame，不保留后台
+                    # 每轮结束后退出三角洲、QQ 和 WeGame，不保留后台
                     self.set_operation("清理进程")
-                    print("\n--- 退出 QQ 和 WeGame ---")
+                    print("\n--- 退出三角洲行动、QQ 和 WeGame ---")
                     utils.close_window_by_title("WeGame", partial_match=True)
                     time.sleep(1)
+                    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
                     utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
                     utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
                     time.sleep(2)
@@ -2279,6 +2351,7 @@ class App:
         self.running = False
         self._stop_event.clear()  # 清除工作线程停止信号，不影响调度器
         self._ignore_cooldown_this_run = False  # 重置冷却忽略标志
+        self._is_boot_startup = False  # 重置开机启动标志
         # 停止心跳同步
         self._stop_heartbeat()
         self.start_btn.config(state='normal')
@@ -2288,6 +2361,11 @@ class App:
         # 用户手动停止时，清理可能残留的进程
         if self._user_stopped_cooldown:
             try:
+                # 多次按 Alt+F4 确保三角洲游戏窗口关闭
+                for _ in range(3):
+                    pyautogui.hotkey('alt', 'f4')
+                    time.sleep(0.5)
+                time.sleep(1)
                 utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
                 utils.kill_process(config.WEGAME_PROCESS, wait_exit=False)
                 utils.kill_process(config.QQ_PROCESS, wait_exit=False)
@@ -2612,7 +2690,8 @@ def main():
 
     root = tk.Tk()
     root.title("三角洲行动自动化工具")
-    root.resizable(False, False)
+    root.resizable(True, True)
+    root.minsize(640, 800)
 
     # 显示加载界面，避免用户看到空白窗口
     loading_frame = ttk.Frame(root, padding=40)
@@ -2637,7 +2716,7 @@ def main():
         """服务器验证通过后初始化应用"""
         progress.stop()
         loading_frame.destroy()
-        root.geometry("")
+        root.geometry("640x800")
         _check_resolution_on_startup(root)
         App(root)
         root.after(50, lambda: (root.lift(), root.focus_force()))

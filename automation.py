@@ -36,6 +36,8 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
         print(f"⚠️ 未找到领取奖励按钮，按 Esc 返回跳过 ({facility_name})")
         pyautogui.press("esc")
         time.sleep(0.5)
+        pyautogui.press("esc")
+        time.sleep(0.5)
     else:
         time.sleep(0.5)
 
@@ -184,7 +186,7 @@ def sell_operations(settings, stop_event, set_operation):
 
 def game_operations(settings, stop_event, set_operation, update_ui_callback=None):
     """
-    执行游戏内操作（导航、邮箱货币、设施处理、一键出售）
+    执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
     返回 True=成功，False=失败
     """
     print("\n--- 进入游戏操作 ---")
@@ -208,7 +210,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     pyautogui.press("Space")
     time.sleep(0.5)
     pyautogui.press("Space")
-    time.sleep(0.5)
+    time.sleep(0.8)
     pyautogui.press("Tab")
     time.sleep(1)
 
@@ -224,27 +226,6 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
         return False
     time.sleep(0.5)
-
-    # --- 邮箱货币领取 ---
-    if settings.get("enable_email_currency", False):
-        set_operation("领取邮箱货币")
-        print("📧 检查邮箱货币...")
-        if utils.find_and_click(config.EMAIL_MAIL, timeout=10):
-            time.sleep(1)
-            if utils.find_and_click(config.EMAIL_TRADE_HOUSE, timeout=10):
-                time.sleep(0.5)
-                if utils.find_and_click(config.EMAIL_CLAIM_ALL, timeout=10):
-                    time.sleep(0.5)
-                    utils.find_and_click(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
-                    time.sleep(0.5)
-                pyautogui.press("esc")
-                time.sleep(0.5)
-            # 无论 TRADE_HOUSE 成功与否，都关闭邮箱界面回到主界面
-            pyautogui.press("esc")
-            time.sleep(0.5)
-            print("✅ 邮箱货币领取流程完成")
-        else:
-            print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
 
     selected_ops = settings.get("selected_operations", [])
     all_facilities = [
@@ -280,11 +261,36 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         return False
 
     # 主流程完成后执行一键出售
+    sell_stats = None
     if settings.get("enable_sell_after_run", False):
         print("\n--- 主流程完成，执行一键出售 ---")
         pyautogui.press("esc")
         time.sleep(1)
-        _, stats = sell_operations(settings, stop_event, set_operation)
-        return True, stats
+        _, sell_stats = sell_operations(settings, stop_event, set_operation)
 
+    # --- 邮箱货币领取（出售完成后） ---
+    if settings.get("enable_email_currency", False):
+        print("\n--- 检查邮箱货币 ---")
+        set_operation("领取邮箱货币")
+        # 确保回到主界面
+        pyautogui.press("esc")
+        time.sleep(1)
+        if utils.find_and_click(config.EMAIL_MAIL, timeout=10):
+            time.sleep(1)
+            if utils.find_and_click(config.EMAIL_TRADE_HOUSE, timeout=10):
+                time.sleep(0.5)
+                if utils.find_and_click(config.EMAIL_CLAIM_ALL, timeout=10):
+                    time.sleep(0.5)
+                    utils.find_and_click(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
+                    time.sleep(0.5)
+                pyautogui.press("esc")
+                time.sleep(0.5)
+            pyautogui.press("esc")
+            time.sleep(0.5)
+            print("✅ 邮箱货币领取流程完成")
+        else:
+            print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
+
+    if sell_stats is not None:
+        return True, sell_stats
     return True

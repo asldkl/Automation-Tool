@@ -618,11 +618,11 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.0.2"""
+        """gui_app.py 中版本号应为 v1.0.32"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.0.2", content)
+        self.assertIn("v1.0.32", content)
 
     def test_readme_has_v190_section(self):
         """README.md 应包含 v1.0.2 更新日志"""
