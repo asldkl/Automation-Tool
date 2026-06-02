@@ -2,23 +2,27 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.0.3
-日期: 2026-05-28
+版本: v1.0.32
+日期: 2026-06-02
 作者: 开发团队
 
 ================================================================================
 目录
 ================================================================================
 
-1. 项目概述
-2. 文件结构
-3. 防破解保护机制
-4. 机器指纹机制详解
-5. 服务器验证流程
-6. 心跳同步机制
-7. 如何管理用户（白名单/有效期）
-8. 打包说明
-9. 常见问题
+1.  项目概述
+2.  文件结构
+3.  防破解保护机制
+4.  机器指纹机制详解
+5.  服务器验证流程
+6.  心跳同步机制
+7.  如何管理用户（白名单/有效期）
+8.  打包说明（PyInstaller）
+9.  打包说明（Nuitka）
+10. 制作安装程序（Inno Setup）
+11. 更新日志
+12. 服务器部署
+13. 常见问题
 
 ================================================================================
 1. 项目概述
@@ -42,20 +46,24 @@
 ├── main.py                  # 主入口文件
 ├── gui_app.py               # 图形界面主程序（核心模块）
 ├── automation.py            # 自动化流程模块（游戏操作、设施处理、一键出售）
-├── config.py                # 配置管理模块
+├── config.py                # 配置管理模块（含 resource_path 资源定位）
 ├── machine_fingerprint.py   # 机器指纹模块（防破解核心）
-├── utils.py                 # 工具函数模块
-├── settings_window.py       # 设置窗口
+├── utils.py                 # 工具函数模块（图像识别、进程管理等）
+├── settings_window.py       # 设置窗口（支持 Canvas+Scrollbar 滚动）
 ├── template_capture.py      # 模板截图工具
 ├── cooldown_manager.py      # 冷却管理模块
+├── test_all_features.py     # 全功能测试套件
 ├── README.md                # 用户说明文档
 ├── 开发者使用说明书.txt      # 本文件
 ├── 项目结构说明.txt          # 项目结构速查
 ├── 三角洲自动工具.spec       # PyInstaller 打包配置
+├── installer.iss            # Inno Setup 安装程序脚本
 ├── server.py服务器主程序.txt # 服务器后端代码（部署到云端）
 ├── 图形化可视管理后台代码.txt # 管理后台前端代码
 ├── picture/                 # 图片资源目录
-│   ├── icon.ico
+│   ├── icon/                # 程序图标
+│   │   ├── icon.ico
+│   │   └── background.jpg
 │   ├── Facility_Controls/   # 设施图标
 │   ├── Crafting_Controls/   # 制造按钮
 │   ├── Navigation/          # 导航图标
@@ -64,9 +72,17 @@
 │   ├── wegame_login/        # WeGame 登录模板
 │   ├── qq_login/            # QQ 登录模板
 │   └── produce/             # 生产设施模板
-├── build/                   # 构建临时目录
-└── dist/                    # 打包输出目录
-    └── 三角洲自动工具.exe    # 打包后的可执行文件
+├── build/                   # PyInstaller 构建临时目录
+├── dist/                    # PyInstaller 打包输出目录
+├── dist_nuitka/             # Nuitka onefile 打包输出目录
+├── dist_nuitka_standalone/  # Nuitka standalone 打包输出目录
+│   └── main.dist/           # standalone 分发文件夹
+│       ├── 三角洲自动工具.exe
+│       ├── picture/         # 数据文件
+│       └── *.dll / *.pyd    # 依赖文件
+└── installer_output/        # Inno Setup 安装程序输出目录
+    ├── 三角洲行动自动化工具_安装程序.exe
+    └── 使用说明.txt
 
 ================================================================================
 3. 防破解保护机制
@@ -253,7 +269,7 @@ POST /api/v1/heartbeat
 ----------------------------------------
 
 ================================================================================
-8. 打包说明
+8. 打包说明（PyInstaller）
 ================================================================================
 
 ----------------------------------------
@@ -273,9 +289,10 @@ POST /api/v1/heartbeat
 ----------------------------------------
 
 关键配置:
-    - hiddenimports: 包含 machine_fingerprint 模块
+    - hiddenimports: 包含所有依赖模块
     - datas: 包含 picture 目录中的图片资源
     - icon: 程序图标
+    - uac_admin: 请求管理员权限
 
 ----------------------------------------
 8.4 添加新模块到打包
@@ -286,8 +303,247 @@ POST /api/v1/heartbeat
     hiddenimports=['machine_fingerprint', '新模块名'],
 
 ----------------------------------------
-8.5 服务器部署
+8.5 输出
 ----------------------------------------
+
+    dist/三角洲自动工具.exe    （单文件，约 68 MB）
+
+================================================================================
+9. 打包说明（Nuitka）
+================================================================================
+
+Nuitka 将 Python 编译为 C 代码后打包，体积更小、性能更好。
+
+----------------------------------------
+9.1 安装 Nuitka
+----------------------------------------
+
+    pip install nuitka
+
+Nuitka 会自动下载 zig 编译器和 Dependency Walker。
+
+----------------------------------------
+9.2 打包模式
+----------------------------------------
+
+模式一：onefile（单文件，用于直接分发）
+    python -m nuitka --standalone --onefile \
+        --enable-plugin=tk-inter \
+        --include-data-dir=picture=picture \
+        --windows-icon-from-ico=picture/icon/icon.ico \
+        --windows-uac-admin \
+        --windows-console-mode=disable \
+        --output-filename=三角洲自动工具.exe \
+        --output-dir=dist_nuitka \
+        --assume-yes-for-downloads \
+        main.py
+
+    输出: dist_nuitka/三角洲自动工具.exe （约 52 MB）
+
+模式二：standalone（文件夹，用于安装程序分发）
+    python -m nuitka --standalone \
+        --enable-plugin=tk-inter \
+        --include-data-dir=picture=picture \
+        --windows-icon-from-ico=picture/icon/icon.ico \
+        --windows-uac-admin \
+        --windows-console-mode=disable \
+        --output-filename=三角洲自动工具.exe \
+        --output-dir=dist_nuitka_standalone \
+        --assume-yes-for-downloads \
+        main.py
+
+    输出: dist_nuitka_standalone/main.dist/ （文件夹，约 195 MB）
+
+----------------------------------------
+9.3 Nuitka 与 PyInstaller 对比
+----------------------------------------
+
+    特性            PyInstaller       Nuitka
+    --------------------------------------------------
+    打包体积        约 68 MB          onefile 约 52 MB
+    启动速度        较慢              较快
+    运行性能        原生 Python       编译为 C，更快
+    数据文件访问    sys._MEIPASS      __file__ 定位
+    Python 版本     全版本支持        3.14 实验性支持
+    编译时间        短                长（需 C 编译）
+
+----------------------------------------
+9.4 资源文件定位（resource_path）
+----------------------------------------
+
+config.py 中的 resource_path() 同时兼容两种打包方式：
+
+    def resource_path(relative_path):
+        if getattr(sys, 'frozen', False):
+            # PyInstaller: sys._MEIPASS 指向临时解压目录
+            base_path = getattr(sys, '_MEIPASS', ...)
+        elif "__compiled__" in dir():
+            # Nuitka: __file__ 指向编译后的模块位置
+            # onefile 模式下指向临时解压目录
+            # standalone 模式下指向 dist 文件夹
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        else:
+            # 开发环境
+            base_path = os.path.abspath(".")
+        return os.path.join(base_path, relative_path)
+
+注意：Nuitka onefile 模式下，数据文件解压到系统临时目录，
+__file__ 在编译模块中指向该临时目录，因此 resource_path 能正确定位。
+
+----------------------------------------
+9.5 Nuitka 注意事项
+----------------------------------------
+
+1. Python 3.14 仅被 Nuitka 4.x 实验性支持，建议使用 Python 3.13
+2. --mingw64 不支持 Python 3.13+，Nuitka 会自动使用 zig 编译器
+3. onefile 首次运行较慢（需解压），后续启动会利用缓存
+4. standalone 模式更稳定，推荐用于安装程序分发
+
+================================================================================
+10. 制作安装程序（Inno Setup）
+================================================================================
+
+使用 Inno Setup 6 将打包后的程序制作成 Windows 安装程序。
+
+----------------------------------------
+10.1 安装 Inno Setup 6
+----------------------------------------
+
+下载地址: https://jrsoftware.org/isinfo.php
+安装路径: C:\Program Files (x86)\Inno Setup 6
+
+----------------------------------------
+10.2 安装脚本（installer.iss）
+----------------------------------------
+
+项目根目录下的 installer.iss 是安装程序配置文件，关键配置：
+
+    [Setup]
+    AppId={固定GUID}              # 保持不变，用于覆盖安装识别
+    AppName=三角洲行动自动化工具
+    AppVersion=1.0.32             # 每次新版本更新
+    DefaultDirName={autopf}\三角洲行动自动化工具
+    SetupIconFile=picture\icon\icon.ico
+    PrivilegesRequired=admin      # 需要管理员权限
+
+    [Languages]
+    # 使用简体中文语言包
+    Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+    [Files]
+    # standalone 模式：将整个 main.dist 文件夹打包
+    Source: "dist_nuitka_standalone\main.dist\*"; DestDir: "{app}"; \
+        Flags: ignoreversion recursesubdirs createallsubdirs
+
+    [Tasks]
+    # 安装时可选：桌面快捷方式、开机自启动
+    Name: "desktopicon"; Description: "创建桌面快捷方式"
+    Name: "startupicon"; Description: "开机自动启动"
+
+    [Run]
+    # 安装完成后可选启动程序
+    Filename: "{app}\三角洲自动工具.exe"; Description: "启动程序"; \
+        Flags: nowait postinstall skipifsilent
+
+----------------------------------------
+10.3 编译安装程序
+----------------------------------------
+
+命令行编译:
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+或在 Inno Setup 编辑器中打开 installer.iss，点击 编译 → 执行。
+
+输出: installer_output/三角洲行动自动化工具_安装程序.exe （约 49 MB）
+
+----------------------------------------
+10.4 覆盖安装
+----------------------------------------
+
+只要 AppId 保持不变，后续版本运行安装程序时会自动检测已有安装：
+- 覆盖旧文件（ignoreversion 标志）
+- 保留用户数据（配置文件存在 %USERPROFILE% 下）
+- 更新开始菜单和桌面快捷方式
+
+每次新版本只需：
+1. 更新 installer.iss 中的 AppVersion
+2. 重新打包 Nuitka standalone
+3. 重新编译 Inno Setup 安装程序
+
+----------------------------------------
+10.5 语言配置
+----------------------------------------
+
+简体中文语言包位于:
+    C:\Program Files (x86)\Inno Setup 6\Languages\ChineseSimplified.isl
+
+在 installer.iss 的 [Languages] 段中引用：
+    Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+================================================================================
+11. 更新日志
+================================================================================
+
+----------------------------------------
+v1.0.32 (2026-06-02)
+----------------------------------------
+
+- 修复设置窗口按钮显示不全：可调整大小 + Canvas+Scrollbar 滚动
+- 修复主窗口按钮显示不全：可调整大小，底部按钮固定
+- 优化设置窗口滚轮滚动：全局处理器 + 活跃 Canvas 跟踪
+- 修复 QQ 降级方案重复点击：降级改为仅检测不点击
+- 修复鼠标触碰屏幕角落导致崩溃：捕获 FailSafeException
+- 新增 find_multiscale 函数：仅检测不点击的图像识别
+- 新增 Nuitka 打包支持（onefile + standalone）
+- 新增 Inno Setup 安装程序打包支持
+- resource_path 兼容 PyInstaller 和 Nuitka 两种打包方式
+
+----------------------------------------
+v1.0.31 (2026-05-30)
+----------------------------------------
+
+- 修复手动启动时冷却中的账号被意外执行
+- 修复开机启动后冷却中的账号被意外执行
+- 修复冷却到期后自动任务不执行
+- 优化三角洲行动退出流程（多次 Alt+F4）
+- 修复启动时/结束后未清理三角洲行动进程
+- 修复最小化窗口后恢复异常
+- 优化托盘显示窗口线程安全
+
+----------------------------------------
+v1.0.3 (2026-05-28)
+----------------------------------------
+
+- 机器指纹绑定（防复制/防滥用）
+- 远程有效期控制（服务器端校验）
+- 账号状态实时同步（心跳推送）
+- 运行完成后延迟关机
+
+----------------------------------------
+v1.0.2 (2026-05-27)
+----------------------------------------
+
+- 拆分自动化流程模块（automation.py）
+- 邮箱货币领取移至售卖物品 Tab
+- 优化售卖物品界面布局
+
+----------------------------------------
+v1.0.1 (2026-05-26)
+----------------------------------------
+
+- 修复模板上传向导鼠标滚轮报错
+- 修复冷却完成后不自动运行
+- 新增自定义冷却结束时间
+
+----------------------------------------
+v1.0.0 (2026-05-25)
+----------------------------------------
+
+- 初始发布版本
+
+================================================================================
+12. 服务器部署
+================================================================================
 
 1. 将 server.py 上传到云服务器
 2. 安装依赖: pip install fastapi uvicorn
@@ -295,7 +551,7 @@ POST /api/v1/heartbeat
 4. 管理后台: 将图形化可视管理后台代码部署为 HTML 页面
 
 ================================================================================
-9. 常见问题
+13. 常见问题
 ================================================================================
 
 Q: 如何测试机器指纹验证？
@@ -333,10 +589,23 @@ A:
 
 Q: 打包后程序无法启动？
 A:
-    1. 检查 machine_fingerprint 是否在 hiddenimports 中
+    1. 检查 machine_fingerprint 是否在 hiddenimports 中（PyInstaller）
     2. 检查图片资源是否正确打包
     3. 查看 dist 目录下的错误日志
     4. 确保目标机器能访问服务器
+
+Q: Nuitka 打包后图片资源找不到？
+A:
+    1. 确认使用了 --include-data-dir=picture=picture 参数
+    2. 确认 resource_path() 中 Nuitka 分支使用 __file__ 定位
+    3. standalone 模式下确认 picture/ 目录在 exe 同级目录
+    4. onefile 模式下数据解压到临时目录，重启后可能需重新解压
+
+Q: Inno Setup 安装后程序无法运行？
+A:
+    1. 确认安装目录下有 picture/ 目录及所有子目录
+    2. 确认以管理员权限运行（电源管理功能需要）
+    3. 检查目标机器是否安装了 VC++ 运行库
 
 ================================================================================
                             文档结束
@@ -344,4 +613,4 @@ A:
 
 如有问题，请联系开发团队。
 
-最后更新: 2026-05-28
+最后更新: 2026-06-02

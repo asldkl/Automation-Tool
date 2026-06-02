@@ -11,9 +11,14 @@ import winreg
 
 # ==================== 资源路径辅助 ====================
 def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.argv[0])))
+    elif "__compiled__" in dir():
+        # Nuitka 打包：使用当前模块(__file__)所在目录，兼容 standalone 和 onefile
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    else:
+        # 开发环境
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
