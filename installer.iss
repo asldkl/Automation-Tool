@@ -1,7 +1,7 @@
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName=三角洲行动自动化工具
-AppVersion=1.1.0
+AppVersion=1.0.4
 AppPublisher=三角洲自动化工具
 AppPublisherURL=
 DefaultDirName={autopf}\三角洲行动自动化工具
@@ -17,7 +17,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\三角洲自动工具.exe
-VersionInfoVersion=1.1.0.0
+VersionInfoVersion=1.0.4.0
 VersionInfoDescription=三角洲行动自动化工具安装程序
 
 [Languages]

@@ -1,13 +1,14 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.0.3
+版本: v1.0.4
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
 【项目概述】
-基于图像识别（OpenCV 模板匹配）的《三角洲行动》游戏日常自动化工具。
+基于图像识别（OpenCV 模板匹配）+ OCR 文字识别（RapidOCR）的《三角洲行动》游戏日常自动化工具。
 支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知。
 v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步、运行完成后延迟关机。
+v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资产识别、模块拆分重构。
 
 【核心文件】
 
@@ -16,22 +17,62 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 │   - 启动 gui_app.main()
 │   - 异常日志写入 ~/.delta_auto_error.log
 │
-├── gui_app.py                  # 主 GUI 应用（核心模块）
-│   - App 类：主窗口、账号管理、日志区域、控制按钮
-│   - _validate_with_server()：服务器验证（机器指纹+有效期）
+├── gui_app.py                  # 主 GUI 应用（入口层，约 867 行）
+│   - App 类：主窗口、UI 构建、样式设置、系统托盘
+│   - __init__：初始化各模块、预初始化 OCR 引擎、服务器验证
+│   - _build_ui()：构建主界面（Treeview 账号列表、日志区域、控制按钮）
+│   - _setup_styles() / _setup_tray()：样式与托盘
+│   - open_settings()：打开设置窗口
+│   - 所有业务逻辑委托给 6 个子模块（见下方）
+│
+├── automation_runner.py        # 自动化运行模块（v1.1.0 拆分，约 535 行）
+│   - start_run() / stop_run()：启动/停止自动化任务
 │   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→操作→关闭）
-│   - _game_operations()：委托 automation.game_operations() 执行游戏操作
-│   - _sell_operations()：委托 automation.sell_operations() 执行一键出售
-│   - _start_scheduler()：定时执行调度器
-│   - _cooldown_watcher_loop()：冷却到期监听（到期自动执行）
-│   - _start_heartbeat() / _stop_heartbeat()：心跳线程管理
-│   - _heartbeat_loop() / _send_heartbeat()：心跳数据发送
-│   - _update_account_status()：更新账号运行状态
-│   - _send_email_notification()：运行报告邮件
-│   - _show_reminder()：运行前提醒弹窗
-│   - 系统托盘（pystray）
-│   - 每天首次运行时重新验证服务器（防长期不退出绕过验证）
+│   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作
+│   - sell_operations_wrapper()：委托 automation.sell_operations() 执行一键出售
 │   - on_finish()：任务完成后延迟关机（可选 0-5 分钟）
+│   - update_ui() / set_operation()：UI 更新辅助
+│   - get_account_next_run() / build_accounts_html()：账号信息构建
+│
+├── scheduler.py                # 定时调度模块（v1.1.0 拆分，约 540 行）
+│   - start_scheduler() / stop_scheduler()：启动/停止调度器
+│   - schedule_loop()：调度主循环（根据 run_mode 分发）
+│   - schedule_loop_daily()：每日循环模式
+│   - schedule_loop_single()：单次模式
+│   - check_reminder_daily()：每日提醒检查
+│   - execute_scheduled_run()：执行定时任务
+│   - show_reminder() / reminder_run_now/cancel/dismiss()：提醒弹窗
+│   - set_next_wake_timer() / update_cooldown_wake_timer()：唤醒定时器
+│   - check_shutdown()：定时关机检查
+│   - apply_auto_settings()：应用自动设置
+│
+├── account_manager.py          # 账号管理模块（v1.1.0 拆分，约 738 行）
+│   - save_accounts() / load_accounts()：账号持久化
+│   - add_account() / delete_account() / clear_accounts()：账号增删
+│   - move_up() / move_down()：账号排序
+│   - refresh_account_tree()：刷新 Treeview 列表
+│   - show_account_menu() / manual_add_cooldown()：右键菜单
+│   - reset_selected_cooldown() / custom_cooldown_time() / reset_all_cooldowns()：冷却管理
+│   - show_cooldown_window() / show_help()：弹窗
+│   - test_recognition() / crop_account_image()：识别测试
+│
+├── email_notifier.py           # 邮件通知模块（v1.1.0 拆分，约 250 行）
+│   - send_run_report_email()：运行报告邮件
+│   - send_failure_email()：运行失败通知
+│   - send_account_failure_email()：单账号失败通知
+│   - send_cooldown_ready_email()：冷却到期提醒
+│
+├── cooldown_watcher.py         # 冷却监听模块（v1.1.0 拆分，约 160 行）
+│   - start_cooldown_watcher() / stop_cooldown_watcher()：启动/停止监听
+│   - restart_cooldown_watcher()：重启监听
+│   - cooldown_watcher_loop()：监听主循环（每 60 秒检查）
+│   - check_any_account_ready()：检查是否有账号冷却到期
+│
+├── server_client.py            # 服务器通信模块（v1.1.0 拆分，约 117 行）
+│   - validate_with_server()：服务器验证（机器指纹+有效期）
+│   - start_heartbeat() / stop_heartbeat()：心跳线程管理
+│   - heartbeat_loop() / send_heartbeat()：心跳数据发送
+│   - update_account_status()：更新账号运行状态
 │
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
@@ -41,7 +82,7 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 ├── config.py                   # 配置管理
 │   - DEFAULT_SETTINGS：所有默认配置项（含 server_url、client_key、post_run_shutdown_delay）
 │   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json
-│   - resource_path()：PyInstaller 资源路径处理
+│   - resource_path()：PyInstaller/Nuitka 资源路径处理
 │   - resolve_template_path()：用户自定义模板优先
 │   - get_sell_items()：获取售卖物品图片列表
 │   - load_sell_items_meta() / save_sell_items_meta()：售卖物品元数据
@@ -60,7 +101,13 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 │   - 图像识别：
 │     - find_and_click()：单尺度模板匹配+点击
 │     - find_and_click_multiscale()：多尺度复合匹配（灰度+边缘，0.7x-1.3x）
+│     - find_and_click_smart()：智能匹配（OCR 优先，超时自动回退图像匹配）
 │     - _match_template_multiscale()：核心多尺度匹配算法
+│   - OCR 文字识别：
+│     - init_ocr_engine()：预初始化 RapidOCR 引擎
+│     - _get_ocr_engine()：获取/创建 OCR 引擎（单例）
+│     - ocr_find_by_config()：根据 OCR 配置识别文字并点击
+│     - _ocr_failed / _ocr_timeout_count：OCR 级联禁用机制
 │   - 进程管理：
 │     - start_app() / kill_process() / close_window_by_title()
 │     - activate_window_by_title() / wait_for_window()
@@ -99,10 +146,14 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 │   - 上传/预览/恢复默认
 │   - 售卖物品管理（添加/删除，支持重复添加）
 │   - 出售测试按钮
+│   - 一键重置按钮（清除所有用户模板和 OCR 配置）
+│   - OCR 配置：每个模板可配置 OCR 识别区域和目标文本
+│   - 全局 OCR 设置：统一配置 OCR 区域、置信度、文本列表
 │   - 保存到 ~/.delta_auto_templates/
 │
-├── test_all_features.py        # 单元测试
+├── test_all_features.py        # 单元测试（54 项）
 │   - 测试配置、冷却、互斥、QQ降级、邮件、代码一致性
+│   - 验证各模块函数存在性和调用关系
 
 【服务器端文件】（部署到云端，不在客户端打包）
 
@@ -137,12 +188,30 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 
 【用户数据目录】(~/.delta_auto_*)
 
-├── ~/.delta_auto_settings.json     # 用户设置
+├── ~/.delta_auto_settings.json     # 用户设置（含 ocr_configs、global_ocr_* 配置）
 ├── ~/.delta_auto_accounts.json     # QQ 账号列表
 ├── ~/.delta_auto_cooldown.json     # 冷却数据
-├── ~/.delta_auto_templates/        # 用户自定义模板
+├── ~/.delta_auto_templates/        # 用户自定义模板 + OCR 模板图片
 ├── ~/.delta_auto_sell_items/       # 售卖物品图片 + items_meta.json
 └── ~/.delta_auto_error.log         # 异常日志
+
+【模块调用关系】
+
+gui_app.py (入口层)
+  ├── automation_runner.py  ← start_run / stop_run / on_finish
+  │     └── automation.py   ← game_operations / sell_operations
+  ├── scheduler.py          ← start_scheduler / stop_scheduler
+  │     └── cooldown_watcher.py
+  ├── account_manager.py    ← 账号 CRUD / 冷却管理 UI
+  ├── email_notifier.py     ← 邮件发送
+  ├── server_client.py      ← 验证 / 心跳
+  ├── cooldown_watcher.py   ← 冷却到期监听
+  ├── utils.py              ← 图像识别 / OCR / 进程管理 / 电源管理
+  ├── config.py             ← 配置读写
+  ├── settings_window.py    ← 设置对话框
+  ├── template_capture.py   ← 模板上传向导
+  ├── cooldown_manager.py   ← 冷却数据持久化
+  └── machine_fingerprint.py ← 机器指纹
 
 【关键配置项】
 
@@ -165,10 +234,16 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 | auto_start                  | 启用定时执行                       | False                        |
 | run_mode                    | 运行模式（单次/每日循环）           | 单次                         |
 | enable_email_currency       | 自动领取邮箱货币                   | False                        |
+| global_ocr_enabled          | 启用全局 OCR 文字识别              | False                        |
+| global_ocr_region           | 全局 OCR 识别区域 [x,y,w,h]       | None                         |
+| global_ocr_confidence       | OCR 匹配置信度                     | 0.8                          |
+| global_ocr_texts            | 全局 OCR 目标文本列表              | []                           |
+| global_text_enabled          | 启用全局文本配置                   | False                        |
+| ocr_configs                 | 每模板 OCR 配置（var_name→配置）   | {}                           |
 
 【运行流程】
 
-1. 启动 → 单实例检查 → 服务器验证（机器指纹+有效期） → 加载设置 → 显示主界面
+1. 启动 → 单实例检查 → 预初始化 OCR 引擎 → 服务器验证（机器指纹+有效期） → 加载设置 → 显示主界面
 2. 用户点击"开始运行"或定时触发或冷却到期触发
 3. 每天首次运行时再次验证服务器（防长期不退出绕过）
 4. 启动心跳线程（每30秒同步账号状态）
@@ -188,33 +263,32 @@ v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步�
 7. 所有账号完成 → 停止心跳线程 → 发送邮件报告 → 恢复睡眠设置
 8. 如果设置了延迟关机 → 等待指定分钟后关机
 
-【自动化操作流程（automation.sell_operations）】
+【OCR 识别机制】
 
-打开仓库 → 遍历售卖物品 → 对每个物品执行 quantity 次：
-  找到物品 → 点击出售 → 点击上架 → 鼠标移至角落 → 降价N次 → 确认上架
+1. 智能匹配（find_and_click_smart）：
+   - 优先尝试 OCR 文字识别（如果已配置且引擎可用）
+   - OCR 超时自动回退到图像匹配
+   - 连续超时 2 次自动禁用 OCR，后续全部使用图像识别
 
-【模板匹配算法】
+2. OCR 配置（per-template）：
+   - 每个模板可配置独立的 OCR 识别区域和目标文本
+   - 通过模板上传向导的「OCR识别」按钮配置
+   - 配置存储在 settings.json 的 ocr_configs 字段
 
-1. 单尺度匹配（find_and_click）：
-   - 截图 → 灰度化 → cv2.matchTemplate(TM_CCOEFF_NORMED)
-   - 置信度 >= 阈值 → 点击中心坐标
-   - 边缘坐标过滤（忽略屏幕边缘误匹配）
-
-2. 多尺度复合匹配（find_and_click_multiscale）：
-   - 7个缩放比例：1.0, 0.9, 1.1, 0.8, 1.2, 0.7, 1.3
-   - 每个比例：灰度匹配 + Canny边缘匹配
-   - 取两种匹配分数平均值，选最高分
-   - 返回最佳匹配位置
+3. 全局 OCR 设置：
+   - 统一配置 OCR 区域、置信度、目标文本列表
+   - 可一键应用到所有模板
+   - 禁用时自动清理相关 ocr_configs
 
 【技术栈】
 
-Python 3.8+ / Tkinter / OpenCV / PyAutoGUI / psutil / pywin32 / pystray+Pillow / PyInstaller
+Python 3.8+ / Tkinter / OpenCV / RapidOCR (onnxruntime) / PyAutoGUI / psutil / pywin32 / pystray+Pillow / PyInstaller
 
 服务器端: Python / FastAPI / uvicorn
 
 【打包命令】
 
-pip install pyinstaller
+pip install pyinstaller rapidocr-onnxruntime
 pyinstaller 三角洲自动工具.spec
 
 ================================================================================
