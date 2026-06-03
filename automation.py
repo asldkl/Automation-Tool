@@ -20,19 +20,19 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     if stop_event.is_set():
         return False
     print(f"🏭 开始处理 {facility_name} ...")
-    if not utils.find_and_click(facility_img, timeout=15):
+    if not utils.find_and_click_smart(facility_img, timeout=15):
         return False
     time.sleep(0.5)
 
-    if not utils.find_and_click(config.MAKE, timeout=15):
+    if not utils.find_and_click_smart(config.MAKE, timeout=15):
         return False
     time.sleep(0.5)
 
-    if not utils.find_and_click(config.Collect, timeout=15):
+    if not utils.find_and_click_smart(config.Collect, timeout=15):
         return False
     time.sleep(0.5)
 
-    if not utils.find_and_click(config.Claim_Reward, timeout=15):
+    if not utils.find_and_click_smart(config.Claim_Reward, timeout=15):
         print(f"⚠️ 未找到领取奖励按钮，按 Esc 返回跳过 ({facility_name})")
         pyautogui.press("esc")
         time.sleep(0.5)
@@ -41,18 +41,18 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     else:
         time.sleep(0.5)
 
-    if not utils.find_and_click(produce_item_img, timeout=15):
+    if not utils.find_and_click_smart(produce_item_img, timeout=15):
         return False
     time.sleep(0.5)
 
-    if utils.find_and_click(config.Auto_fill, timeout=8):
+    if utils.find_and_click_smart(config.Auto_fill, timeout=8):
         print(f"🔧 一键补齐材料 ({facility_name})")
     else:
         print(f"ℹ️ 材料已足够，无需补齐 ({facility_name})")
     time.sleep(0.5)
 
     buy_attempts = 0
-    while utils.find_and_click(config.COIN_GAME, timeout=5):
+    while utils.find_and_click_smart(config.COIN_GAME, timeout=5):
         if stop_event.is_set():
             return False
         print(f"💰 购买材料 ({buy_attempts + 1}/5)")
@@ -62,7 +62,7 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
             print("⚠️ 购买尝试已达上限，可能价格波动频繁")
             break
 
-    if not utils.find_and_click(config.Produce, timeout=15):
+    if not utils.find_and_click_smart(config.Produce, timeout=15):
         return False
     time.sleep(0.5)
 
@@ -102,7 +102,7 @@ def sell_operations(settings, stop_event, set_operation):
     # 清除模板缓存，确保使用最新模板
     utils.clear_template_cache()
 
-    if not utils.find_and_click(config.Warehouse, timeout=15):
+    if not utils.find_and_click_smart(config.Warehouse, timeout=15):
         print("❌ 未找到仓库入口")
         return False, sell_stats
     # 等待仓库界面完全加载
@@ -147,13 +147,13 @@ def sell_operations(settings, stop_event, set_operation):
                 break
             time.sleep(0.5)
 
-            if not utils.find_and_click(config.Sell, timeout=10):
+            if not utils.find_and_click_smart(config.Sell, timeout=10):
                 print(f"❌ 未找到出售按钮")
                 sell_stats["failed"] += 1
                 break
             time.sleep(0.5)
 
-            if not utils.find_and_click(config.List_Item, timeout=10):
+            if not utils.find_and_click_smart(config.List_Item, timeout=10):
                 print(f"❌ 未找到上架按钮")
                 sell_stats["failed"] += 1
                 break
@@ -161,12 +161,12 @@ def sell_operations(settings, stop_event, set_operation):
             time.sleep(0.5)
 
             for i in range(discount_times):
-                if utils.find_and_click(config.Discount, timeout=5):
+                if utils.find_and_click_smart(config.Discount, timeout=5):
                     print(f"📉 降价 {i + 1}/{discount_times}")
                     pyautogui.moveTo(0, 0)
                     time.sleep(0.3)
 
-            if not utils.find_and_click(config.Confirm_Listing, timeout=10):
+            if not utils.find_and_click_smart(config.Confirm_Listing, timeout=10):
                 print(f"❌ 未找到确认上架按钮")
                 sell_stats["failed"] += 1
                 break
@@ -195,7 +195,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     for retry in range(5):
         if stop_event.is_set():
             return False
-        if utils.find_and_click(config.Hazard_Operations, timeout=15):
+        if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
             break
         print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/5)...")
         time.sleep(5)
@@ -205,6 +205,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         return False
 
     time.sleep(5)
+
     set_operation("进入大厅 / 特勤处")
     print("进入大厅...")
     pyautogui.press("Space")
@@ -217,7 +218,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     for retry in range(3):
         if stop_event.is_set():
             return False
-        if utils.find_and_click(config.Special_Ops, timeout=15):
+        if utils.find_and_click_smart(config.Special_Ops, timeout=15):
             break
         print(f"⚠️ 未找到特勤处图标，5秒后重试 ({retry + 1}/3)...")
         time.sleep(5)
@@ -275,13 +276,13 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         # 确保回到主界面
         pyautogui.press("esc")
         time.sleep(1)
-        if utils.find_and_click(config.EMAIL_MAIL, timeout=10):
+        if utils.find_and_click_smart(config.EMAIL_MAIL, timeout=10):
             time.sleep(1)
-            if utils.find_and_click(config.EMAIL_TRADE_HOUSE, timeout=10):
+            if utils.find_and_click_smart(config.EMAIL_TRADE_HOUSE, timeout=10):
                 time.sleep(0.5)
-                if utils.find_and_click(config.EMAIL_CLAIM_ALL, timeout=10):
+                if utils.find_and_click_smart(config.EMAIL_CLAIM_ALL, timeout=10):
                     time.sleep(0.5)
-                    utils.find_and_click(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
+                    utils.find_and_click_smart(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
                     time.sleep(0.5)
                 pyautogui.press("esc")
                 time.sleep(0.5)
@@ -291,6 +292,10 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         else:
             print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
 
+    # 汇总返回数据
+    extra = {}
     if sell_stats is not None:
-        return True, sell_stats
+        extra["sell_stats"] = sell_stats
+    if extra:
+        return True, extra
     return True

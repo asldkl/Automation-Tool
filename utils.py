@@ -775,3 +775,209 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
         return False, f"SMTP 错误：{e}"
     except Exception as e:
         return False, f"发送失败：{e}"
+
+
+# ==================== OCR 识别功能 ====================
+_ocr_engine = None
+_ocr_failed = False         # True = OCR 引擎不可用，全部降级为图像识别
+_ocr_timeout_count = 0      # 连续 OCR 超时计数
+
+def init_ocr_engine():
+    """预初始化 RapidOCR 引擎。程序启动时调用，失败则标记 _ocr_failed"""
+    global _ocr_engine, _ocr_failed, _ocr_timeout_count
+    _ocr_timeout_count = 0
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        _ocr_engine = RapidOCR()
+        _ocr_failed = False
+        print("✅ RapidOCR 引擎初始化成功")
+        return True
+    except ImportError:
+        print("⚠️ rapidocr-onnxruntime 未安装，OCR 功能不可用，全部使用图像识别")
+        _ocr_failed = True
+        return False
+    except Exception as e:
+        print(f"⚠️ RapidOCR 初始化失败：{e}，全部使用图像识别")
+        _ocr_failed = True
+        return False
+
+def _get_ocr_engine():
+    """获取 OCR 引擎（单例）。初始化失败返回 None"""
+    global _ocr_engine
+    if _ocr_failed:
+        return None
+    if _ocr_engine is None:
+        init_ocr_engine()
+    return _ocr_engine if not _ocr_failed else None
+
+
+def ocr_recognize(region=None):
+    """
+    对屏幕指定区域进行 OCR 识别。
+    region: (x, y, w, h) 或 None（全屏）
+    返回: [(text, confidence, (x1,y1,x2,y2)), ...] 或 []
+    """
+    engine = _get_ocr_engine()
+    if engine is None:
+        return []
+
+    try:
+        if region:
+            x, y, w, h = region
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
+        else:
+            screenshot = pyautogui.screenshot()
+
+        img_np = np.array(screenshot)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+        result, _ = engine(img_bgr)
+        if result is None:
+            return []
+
+        # result 格式: [[box, text, confidence], ...]
+        parsed = []
+        for item in result:
+            box, text, conf = item
+            # box 是四个角点坐标 [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+            xs = [p[0] for p in box]
+            ys = [p[1] for p in box]
+            bbox = (min(xs), min(ys), max(xs), max(ys))
+            if region:
+                # 转换为屏幕绝对坐标
+                bbox = (bbox[0] + region[0], bbox[1] + region[1],
+                        bbox[2] + region[0], bbox[3] + region[1])
+            parsed.append((text, float(conf) if conf is not None else 0.0, bbox))
+        return parsed
+    except Exception as e:
+        print(f"⚠️ OCR 识别出错：{e}")
+        return []
+
+
+def ocr_find(text, region=None, timeout=20, confidence=0.8):
+    """
+    在屏幕指定区域查找包含指定文本的内容（仅检测，不点击）。
+    返回: True/False
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        results = ocr_recognize(region)
+        for recognized_text, conf, bbox in results:
+            if conf >= confidence and text in recognized_text:
+                return True
+        time.sleep(1)
+    return False
+
+
+def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
+    """
+    在屏幕指定区域查找包含指定文本的内容并点击其中心。
+    返回: True（找到并点击）/ False（超时未找到）
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        results = ocr_recognize(region)
+        for recognized_text, conf, bbox in results:
+            if conf >= confidence and text in recognized_text:
+                cx = int((bbox[0] + bbox[2]) / 2)
+                cy = int((bbox[1] + bbox[3]) / 2)
+                try:
+                    pyautogui.moveTo(cx, cy, duration=0.2)
+                    pyautogui.click()
+                except pyautogui.FailSafeException:
+                    print("⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
+                    time.sleep(0.5)
+                    continue
+                return True
+        time.sleep(1)
+    return False
+
+
+def ocr_find_by_config(var_name, timeout=20):
+    """
+    根据 OCR 配置查找并点击。如果 var_name 没有 OCR 配置，返回 None（表示应使用图像匹配）。
+    OCR 在配置了 ocr_configs 的模板上自动启用，无需手动开关。
+    返回: True（OCR 找到并点击）/ False（OCR 超时未找到）/ None（无 OCR 配置）
+    """
+    settings = config.load_settings()
+    ocr_configs = settings.get("ocr_configs", {})
+    if var_name not in ocr_configs:
+        return None
+
+    ocr_cfg = ocr_configs[var_name]
+    region = tuple(ocr_cfg["region"]) if ocr_cfg.get("region") else None
+    # 无区域时尝试全局 OCR 区域（全局 OCR 或全局文本配置启用时均可使用）
+    if not region:
+        global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
+        if global_region[2] > 0 and global_region[3] > 0:
+            region = tuple(global_region)
+    text = ocr_cfg.get("text", "")
+    conf = ocr_cfg.get("confidence") or settings.get("global_ocr_confidence", 0.8)
+
+    if not text:
+        return None
+
+    return ocr_find_and_click(text, region=region, timeout=timeout, confidence=conf)
+
+
+# config 图片路径 → var_name 映射（用于 OCR 智能调度）
+_IMAGE_TO_VAR = None
+
+def _get_image_to_var():
+    global _IMAGE_TO_VAR
+    if _IMAGE_TO_VAR is None:
+        _IMAGE_TO_VAR = {
+            config.IMAGE_LOGIN_BTN: "IMAGE_LOGIN_BTN",
+            config.DELTA_LAUNCH_BTN: "DELTA_LAUNCH_BTN",
+            config.Hazard_Operations: "Hazard_Operations",
+            config.Special_Ops: "Special_Ops",
+            config.Tech_Center: "Tech_Center",
+            config.Tool_Bench: "Tool_Bench",
+            config.Armor_Station: "Armor_Station",
+            config.Pharmacy_Station: "Pharmacy_Station",
+            config.MAKE: "MAKE",
+            config.Produce: "Produce",
+            config.Collect: "Collect",
+            config.Auto_fill: "Auto_fill",
+            config.Claim_Reward: "Claim_Reward",
+            config.COIN_GAME: "COIN_GAME",
+            config.Warehouse: "Warehouse",
+            config.Sell: "Sell",
+            config.List_Item: "List_Item",
+            config.Discount: "Discount",
+            config.Confirm_Listing: "Confirm_Listing",
+            config.EMAIL_MAIL: "EMAIL_MAIL",
+            config.EMAIL_TRADE_HOUSE: "EMAIL_TRADE_HOUSE",
+            config.EMAIL_CLAIM_ALL: "EMAIL_CLAIM_ALL",
+            config.EMAIL_RECEIVE_COMPLETED: "EMAIL_RECEIVE_COMPLETED",
+            config.Produce_TechCenter: "Produce_TechCenter",
+            config.Produce_ToolBench: "Produce_ToolBench",
+            config.Produce_ArmorStation: "Produce_ArmorStation",
+            config.Produce_PharmacyStation: "Produce_PharmacyStation",
+        }
+    return _IMAGE_TO_VAR
+
+
+def find_and_click_smart(img_path, timeout=20, region=None, confidence=None):
+    """
+    智能识别点击：优先使用 OCR（如果配置了），否则使用图像匹配。
+    自动根据 img_path 查找对应的 var_name OCR 配置。
+    连续 OCR 超时 2 次后自动禁用 OCR，全部降级为图像识别。
+    """
+    global _ocr_timeout_count, _ocr_failed
+    var_map = _get_image_to_var()
+    var_name = var_map.get(img_path)
+
+    if var_name and not _ocr_failed:
+        ocr_result = ocr_find_by_config(var_name, timeout=timeout)
+        if ocr_result is True:
+            _ocr_timeout_count = 0  # 成功则重置计数
+            return True
+        if ocr_result is False:
+            _ocr_timeout_count += 1
+            print(f"⚠️ OCR 超时，回退到图像匹配：{var_name}（连续超时 {_ocr_timeout_count}/2）")
+            if _ocr_timeout_count >= 2:
+                _ocr_failed = True
+                print("⚠️ OCR 连续超时 2 次，已自动禁用 OCR，后续全部使用图像识别")
+
+    return find_and_click(img_path, timeout=timeout, region=region, confidence=confidence)

@@ -135,6 +135,17 @@ DEFAULT_SETTINGS = {
     # 服务器配置
     "server_url": "http://112.74.106.69:8000",  # 服务器地址
     "client_key": "Client_Normal_Key_2026",      # 客户端密钥
+    # OCR 识别配置
+    "ocr_configs": {},                           # var_name -> {"region": [x,y,w,h], "text": "制造", "confidence": 0.8}
+    "global_ocr_enabled": False,                 # 是否启用全局 OCR（模板无需单独配置区域）
+    "global_ocr_region": [0, 0, 0, 0],           # 全局 OCR 识别区域 [x, y, w, h]
+    "global_ocr_confidence": 0.8,                # 全局 OCR 默认置信度
+    "global_ocr_texts": {},                      # 全局 OCR 文本配置 var_name -> "text"
+    "global_text_enabled": False,                # 是否启用全局文本配置
+    # 资产识别
+    "enable_asset_recognition": False,           # 是否启用资产识别
+    "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]
+    "asset_ocr_confidence": 0.7,                 # 资产识别置信度
 }
 
 def load_settings():

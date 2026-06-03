@@ -10,6 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import re
 import winreg
 import config
+import utils
 from PIL import Image, ImageTk
 
 
@@ -291,6 +292,24 @@ class SettingsWindow:
         ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(res_frame, text="上传模板图片", style='Accent.TButton',
                    command=self._open_capture_wizard, width=14).pack(side=tk.RIGHT)
+
+        # ----- 资产识别设置 -----
+        asset_frame = ttk.LabelFrame(parent, text="  资产识别  ", style='SettingsCard.TLabelframe', padding=12)
+        asset_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.enable_asset_var = tk.BooleanVar(value=self.app.settings.get("enable_asset_recognition", False))
+        ttk.Checkbutton(asset_frame, text="启用资产识别（游戏内自动识别资产数值）",
+                        variable=self.enable_asset_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
+
+        asset_region_frame = ttk.Frame(asset_frame, style='SettingsInner.TFrame')
+        asset_region_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(asset_region_frame, text="识别区域 (x, y, w, h)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        asset_region = self.app.settings.get("asset_region", [0, 0, 0, 0])
+        self.asset_region_var = tk.StringVar(value=str(asset_region))
+        ttk.Entry(asset_region_frame, textvariable=self.asset_region_var, width=20).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(asset_region_frame, text="设置区域", command=self._set_asset_region, width=10).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(asset_region_frame, text="测试识别", command=self._test_asset_recognition, width=10).pack(side=tk.LEFT)
 
         # ----- 日志保存目录 -----
         frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
@@ -995,6 +1014,113 @@ class SettingsWindow:
         if path:
             self.log_var.set(path)
 
+    def _set_asset_region(self):
+        """让用户在屏幕上拖动框选资产识别区域"""
+        self.win.withdraw()
+        import time
+        time.sleep(0.3)
+
+        import tkinter as tk_overlay
+
+        overlay = tk_overlay.Toplevel(self.win)
+        overlay.attributes('-fullscreen', True)
+        overlay.attributes('-alpha', 0.3)
+        overlay.attributes('-topmost', True)
+        overlay.configure(bg='black')
+        overlay.cursor = "crosshair"
+
+        canvas = tk_overlay.Canvas(overlay, highlightthickness=0, bg='black')
+        canvas.pack(fill=tk.BOTH, expand=True)
+
+        hint = tk_overlay.Label(overlay, text="请拖动鼠标框选资产识别区域，按 Esc 取消",
+                                font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
+        hint.place(relx=0.5, rely=0.05, anchor='center')
+
+        rect_id = None
+        start_x = start_y = 0
+        result = None
+
+        def on_press(event):
+            nonlocal start_x, start_y, rect_id
+            start_x, start_y = event.x, event.y
+            if rect_id:
+                canvas.delete(rect_id)
+            rect_id = canvas.create_rectangle(start_x, start_y, start_x, start_y,
+                                              outline='red', width=2)
+
+        def on_drag(event):
+            if rect_id:
+                canvas.coords(rect_id, start_x, start_y, event.x, event.y)
+
+        def on_release(event):
+            nonlocal result
+            x1, y1 = min(start_x, event.x), min(start_y, event.y)
+            x2, y2 = max(start_x, event.x), max(start_y, event.y)
+            if x2 - x1 > 10 and y2 - y1 > 10:
+                result = [x1, y1, x2 - x1, y2 - y1]
+            overlay.destroy()
+
+        def on_escape(event):
+            overlay.destroy()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+        overlay.bind("<Escape>", on_escape)
+
+        self.win.wait_window(overlay)
+        self.win.deiconify()
+
+        if result:
+            self.asset_region_var.set(str(result))
+
+    def _test_asset_recognition(self):
+        """测试资产识别：对设定区域执行 OCR 并显示结果"""
+        try:
+            import re
+            region_str = self.asset_region_var.get().strip()
+            if not region_str:
+                messagebox.showwarning("提示", "请先设置识别区域", parent=self.win)
+                return
+            region = eval(region_str)
+            if not isinstance(region, list) or len(region) != 4 or region[2] <= 0 or region[3] <= 0:
+                messagebox.showwarning("提示", "识别区域格式不正确，应为 [x, y, w, h]", parent=self.win)
+                return
+
+            # 最小化设置窗口
+            self.win.withdraw()
+            import time
+            time.sleep(0.5)
+
+            results = utils.ocr_recognize(region=tuple(region))
+
+            self.win.deiconify()
+
+            if not results:
+                messagebox.showinfo("测试结果", "未识别到任何文字。\n\n请确认：\n1. 区域设置正确\n2. 游戏画面在该区域有可识别的文字",
+                                    parent=self.win)
+                return
+
+            # 整理结果
+            lines = []
+            for text, conf, bbox in results:
+                # 检查是否匹配资产格式
+                match = re.search(r'[\d,.]+\s*[KMBkmb]?', text)
+                mark = " ← 资产" if match else ""
+                lines.append(f"  {text}  (置信度：{float(conf):.2f}){mark}")
+
+            result_text = "\n".join(lines)
+            messagebox.showinfo("测试结果",
+                                f"识别区域：{region}\n\n"
+                                f"识别到 {len(results)} 条文字：\n{result_text}",
+                                parent=self.win)
+
+        except SyntaxError:
+            messagebox.showerror("错误", "区域格式不正确，应为 [x, y, w, h]", parent=self.win)
+        except Exception as e:
+            self.win.deiconify()
+            messagebox.showerror("测试失败", f"识别出错：{e}", parent=self.win)
+
     def _show_fingerprint(self):
         """获取并显示本机机器指纹"""
         try:
@@ -1139,6 +1265,17 @@ class SettingsWindow:
 
         # 邮箱货币设置
         self.app.settings["enable_email_currency"] = self.email_currency_var.get()
+
+        # 资产识别设置
+        self.app.settings["enable_asset_recognition"] = self.enable_asset_var.get()
+        try:
+            region_str = self.asset_region_var.get().strip()
+            if region_str:
+                region = eval(region_str)
+                if isinstance(region, list) and len(region) == 4:
+                    self.app.settings["asset_region"] = region
+        except Exception:
+            pass
 
         # 冷却管理设置
         self.app.settings["enable_cooldown"] = self.cooldown_enable_var.get()

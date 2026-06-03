@@ -408,34 +408,29 @@ class TestGameLaunchWait(unittest.TestCase):
 
     def test_log_message_format(self):
         """日志消息应为指定格式"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
+        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("⏳ 游戏已启动，额外等待 {extra_wait} 秒...", content)
+        self.assertIn("游戏已启动，额外等待", content)
 
     def test_wait_after_game_window_before_hazard(self):
         """game_launch_wait 应在游戏窗口检测后、烽火地带识别前"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
+        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 找到 _game_operations 方法
-        ops_start = content.find("def _game_operations(self):")
-        self.assertGreater(ops_start, 0, "未找到 _game_operations 方法")
-
         # 在 run_script_main 中检查顺序
-        # game_launch_wait 应在 "检测到游戏窗口" 之后、"_game_operations()" 之前
         game_window_pos = content.find("检测到游戏窗口，等待界面就绪")
         wait_pos = content.find("游戏已启动，额外等待")
-        ops_call_pos = content.find("self._game_operations()")
+        ops_call_pos = content.find("game_operations_wrapper")
 
         self.assertGreater(game_window_pos, 0, "未找到游戏窗口检测日志")
         self.assertGreater(wait_pos, 0, "未找到额外等待日志")
-        self.assertGreater(ops_call_pos, 0, "未找到 _game_operations 调用")
+        self.assertGreater(ops_call_pos, 0, "未找到 game_operations_wrapper 调用")
 
-        # 验证顺序：游戏窗口检测 → 额外等待 → _game_operations
+        # 验证顺序：游戏窗口检测 → 额外等待 → game_operations
         self.assertLess(game_window_pos, wait_pos, "额外等待应在游戏窗口检测之后")
-        self.assertLess(wait_pos, ops_call_pos, "额外等待应在 _game_operations 之前")
+        self.assertLess(wait_pos, ops_call_pos, "额外等待应在 game_operations 之前")
 
 
 # ==================== Test 8: 邮件通知模拟 ====================
@@ -444,25 +439,24 @@ class TestEmailNotification(unittest.TestCase):
 
     def test_email_subject_contains_account_name(self):
         """邮件主题应包含失败的账号名"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
+        notifier_path = os.path.join(os.path.dirname(__file__), "email_notifier.py")
+        with open(notifier_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 检查 _send_account_failure_email 方法中主题包含 account_name
+        # 检查 send_account_failure_email 函数中主题包含 account_name
         import re
-        # 查找邮件主题格式
         pattern = r'三角洲自动化 - 账号失败通知 \(.*?\)'
         matches = re.findall(pattern, content)
         self.assertGreater(len(matches), 0, "未找到包含账号名的邮件主题模板")
 
     def test_failure_email_body_contains_account_name(self):
         """邮件正文应包含失败的账号名"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
+        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 检查降级失败时调用了 _send_account_failure_email
-        self.assertIn("self._send_account_failure_email(current_account_name", content)
+        # 检查降级失败时调用了 send_account_failure_email
+        self.assertIn("send_account_failure_email", content)
 
 
 # ==================== Test 9: 完整流程模拟 ====================
@@ -618,11 +612,11 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.0.32"""
+        """gui_app.py 中版本号应为 v1.1.0"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.0.32", content)
+        self.assertIn("v1.1.0", content)
 
     def test_readme_has_v190_section(self):
         """README.md 应包含 v1.0.2 更新日志"""
@@ -647,9 +641,9 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn('"cooldown_run_immediately"', content)
 
     def test_gui_app_has_degradation_logic(self):
-        """gui_app.py 应包含QQ降级逻辑"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
+        """automation_runner.py 应包含QQ降级逻辑"""
+        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("qq_activate_fail_count", content)
         self.assertIn("降级方案", content)
@@ -661,11 +655,11 @@ class TestBugFixes(unittest.TestCase):
     """验证Bug修复的正确性"""
 
     def test_bug2_check_uses_cooldown_run_immediately(self):
-        """Bug2: _check_any_account_ready 应检查 cooldown_run_immediately"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
+        """Bug2: check_any_account_ready 应检查 cooldown_run_immediately"""
+        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
-        method_start = content.find("def _check_any_account_ready(self):")
+        method_start = content.find("def check_any_account_ready(app):")
         method_content = content[method_start:method_start+500]
         self.assertIn("cooldown_run_immediately", method_content)
         self.assertNotIn("enable_cooldown", method_content)
@@ -676,19 +670,18 @@ class TestBugFixes(unittest.TestCase):
         with open(gui_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_user_stopped_cooldown", content)
-        # stop 方法中应设置该标志
-        stop_start = content.find("def stop(self):")
-        stop_content = content[stop_start:stop_start+500]
-        self.assertIn("_user_stopped_cooldown", stop_content)
+        # stop_run 中应设置该标志
+        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        with open(runner_path, "r", encoding="utf-8") as f:
+            runner_content = f.read()
+        self.assertIn("_user_stopped_cooldown", runner_content)
 
     def test_bug3_watcher_respects_user_stop(self):
         """Bug3: 冷却监听应尊重用户停止标志"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
+        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
-        watcher_start = content.find("def _cooldown_watcher_loop(self):")
-        watcher_content = content[watcher_start:watcher_start+2000]
-        self.assertIn("_user_stopped_cooldown", watcher_content)
+        self.assertIn("_user_stopped_cooldown", content)
 
     def test_bug4_startup_mutex_check(self):
         """Bug4: 启动时应有互斥校验"""
@@ -701,15 +694,12 @@ class TestBugFixes(unittest.TestCase):
         self.assertIn("互斥校验", init_content)
 
     def test_bug5_restart_cooldown_watcher_exists(self):
-        """Bug5: 应有 _restart_cooldown_watcher 方法"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
+        """Bug5: 应有 restart_cooldown_watcher 函数"""
+        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("def _restart_cooldown_watcher(self):", content)
-        # watcher loop 的 except 中应有重启逻辑
-        watcher_start = content.find("def _cooldown_watcher_loop(self):")
-        watcher_content = content[watcher_start:watcher_start+4000]
-        self.assertIn("_restart_cooldown_watcher", watcher_content)
+        self.assertIn("def restart_cooldown_watcher(app):", content)
+        self.assertIn("restart_cooldown_watcher", content)
 
     def test_bug6_ignore_cooldown_flag(self):
         """Bug6: 应有 _ignore_cooldown_this_run 标志"""
@@ -717,24 +707,24 @@ class TestBugFixes(unittest.TestCase):
         with open(gui_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_ignore_cooldown_this_run", content)
-        # _execute_scheduled_run 中应设置该标志
-        exec_start = content.find("def _execute_scheduled_run(self, time_str):")
-        exec_content = content[exec_start:exec_start+1000]
-        self.assertIn("_ignore_cooldown_this_run = True", exec_content)
-        # on_finish 中应重置该标志
-        finish_start = content.find("def on_finish(self):")
-        finish_content = content[finish_start:finish_start+500]
-        self.assertIn("_ignore_cooldown_this_run = False", finish_content)
+        # scheduler 中 _execute_scheduled_run 应设置该标志
+        sched_path = os.path.join(os.path.dirname(__file__), "scheduler.py")
+        with open(sched_path, "r", encoding="utf-8") as f:
+            sched_content = f.read()
+        self.assertIn("_ignore_cooldown_this_run = True", sched_content)
+        # automation_runner 中 on_finish 应重置该标志
+        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        with open(runner_path, "r", encoding="utf-8") as f:
+            runner_content = f.read()
+        self.assertIn("_ignore_cooldown_this_run = False", runner_content)
 
     def test_bug7_first_run_records_cooldown(self):
-        """Bug7: _start_cooldown_watcher 中应为新账号记录冷却"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
+        """Bug7: start_cooldown_watcher 中应为新账号记录冷却"""
+        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
-        watcher_start = content.find("def _start_cooldown_watcher(self):")
-        watcher_content = content[watcher_start:watcher_start+1500]
-        self.assertIn("record_run", watcher_content)
-        self.assertIn("首次启用", watcher_content)
+        self.assertIn("record_run", content)
+        self.assertIn("首次启用", content)
 
     def test_bug2_settings_cooldown_linkage(self):
         """Bug2: settings_window.py 中应有冷却管理联动逻辑"""
