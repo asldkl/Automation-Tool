@@ -22,6 +22,47 @@ import cooldown_watcher
 import server_client
 import scheduler
 
+# 缓存 OCR 引擎实例（首次约2-3秒，后续毫秒级）
+_ocr_engine = None
+
+
+def _recognize_asset(app, asset_region):
+    """使用 RapidOCR 识别屏幕指定区域的资产文本"""
+    global _ocr_engine
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        print("⚠️ RapidOCR 未安装，跳过资产识别")
+        return None
+
+    x, y, w, h = asset_region
+    if w <= 0 or h <= 0:
+        return None
+
+    try:
+        import numpy as np
+        import re
+        screenshot = pyautogui.screenshot(region=(x, y, w, h))
+        img_array = np.array(screenshot)
+
+        if _ocr_engine is None:
+            _ocr_engine = RapidOCR()
+        result, _ = _ocr_engine(img_array)
+
+        if not result:
+            return None
+
+        all_text = "".join(item[1] for item in result)
+        match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
+        if match:
+            number = match.group(1)
+            suffix = match.group(2).upper()
+            return f"{number}{suffix}"
+        return all_text.strip() or None
+    except Exception as e:
+        print(f"⚠️ 资产识别失败: {e}")
+        return None
+
 
 def start_run(app):
     """启动自动化任务"""
@@ -285,18 +326,15 @@ def run_script_main(app):
                         print(f"🔍 正在识别资产区域：{asset_region}")
                         import re
                         time.sleep(4)
-                        results = utils.ocr_recognize(region=tuple(asset_region))
-                        for text, conf, bbox in results:
-                            match = re.search(r'[\d,.]+\s*[KMBkmb]?', text)
-                            if match:
-                                asset_value = match.group(0).strip()
-                                print(f"💰 识别到资产：{asset_value} (置信度：{float(conf):.2f})")
-                                if app._current_account_name:
-                                    app._account_assets[app._current_account_name] = asset_value
-                                    app.root.after(0, app._refresh_account_tree)
-                                break
+                        asset_value = _recognize_asset(app, asset_region)
+                        if asset_value:
+                            print(f"💰 识别到资产：{asset_value}")
+                            if app._current_account_name:
+                                app._account_assets[app._current_account_name] = asset_value
+                                app.root.after(0, app._refresh_account_tree)
                         else:
                             print("ℹ️ 未识别到资产数值")
+            time.sleep(2)# 资产识别缓冲
 
             if not account_failed:
                 time.sleep(2)

@@ -20,14 +20,14 @@ class SettingsWindow:
         self.app = app
         self.win = tk.Toplevel(parent)
         self.win.title("设置")
-        self.win.geometry("660x780")
+        self.win.geometry("550x700")
         self.win.resizable(True, True)
-        self.win.minsize(660, 500)
+        self.win.minsize(550, 500)
         # 窗口居中
         self.win.update_idletasks()
-        x = (self.win.winfo_screenwidth() - 660) // 2
-        y = (self.win.winfo_screenheight() - 780) // 2
-        self.win.geometry(f"660x780+{x}+{y}")
+        x = (self.win.winfo_screenwidth() - 550) // 2
+        y = (self.win.winfo_screenheight() - 700) // 2
+        self.win.geometry(f"550x700+{x}+{y}")
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
@@ -188,35 +188,35 @@ class SettingsWindow:
         global_tab = self._create_scrollable_tab(global_tab_outer)
         self._build_global_tab(global_tab)
 
-        # ----- Tab 2: 自动任务设置 -----
+        # ----- Tab 2: 售卖物品 -----
+        sell_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
+        notebook.add(sell_tab_outer, text="  售卖物品  ")
+        sell_tab = self._create_scrollable_tab(sell_tab_outer)
+        self._build_sell_tab(sell_tab)
+
+        # ----- Tab 3: 自动任务设置 -----
         auto_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(auto_tab_outer, text="  自动任务设置  ")
+        notebook.add(auto_tab_outer, text="  自动任务  ")
         auto_tab = self._create_scrollable_tab(auto_tab_outer)
         self._build_auto_tab(auto_tab)
 
-        # ----- Tab 3: 电源管理 -----
+        # ----- Tab 4: 电源管理 -----
         power_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(power_tab_outer, text="  电源管理  ")
         power_tab = self._create_scrollable_tab(power_tab_outer)
         self._build_power_tab(power_tab)
 
-        # ----- Tab 4: 邮件通知 -----
+        # ----- Tab 5: 邮件通知 -----
         email_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(email_tab_outer, text="  邮件通知  ")
         email_tab = self._create_scrollable_tab(email_tab_outer)
         self._build_email_tab(email_tab)
 
-        # ----- Tab 5: 其他设置 -----
+        # ----- Tab 6: 其他设置 -----
         other_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(other_tab_outer, text="  其他设置  ")
         other_tab = self._create_scrollable_tab(other_tab_outer)
         self._build_other_tab(other_tab)
-
-        # ----- Tab 6: 售卖物品 -----
-        sell_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(sell_tab_outer, text="  售卖物品  ")
-        sell_tab = self._create_scrollable_tab(sell_tab_outer)
-        self._build_sell_tab(sell_tab)
 
     def _build_global_tab(self, parent):
         """全局设置选项卡内容"""
@@ -228,8 +228,7 @@ class SettingsWindow:
         f1.pack(fill=tk.X)
         ttk.Label(f1, text="WeGame.exe：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
-        wegame_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f1, text="浏览", command=self._browse_wegame, width=24).pack(side=tk.LEFT)
+        wegame_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ----- 三角洲路径 -----
         frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=8)
@@ -239,8 +238,7 @@ class SettingsWindow:
         f2.pack(fill=tk.X)
         ttk.Label(f2, text="启动程序：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         delta_entry = ttk.Entry(f2, textvariable=self.delta_var, width=45)
-        delta_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f2, text="浏览", command=self._browse_delta, width=24).pack(side=tk.LEFT)
+        delta_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ----- QQ 路径 -----
         frame_qq = ttk.LabelFrame(parent, text="  QQ 路径  ", style='SettingsCard.TLabelframe', padding=8)
@@ -250,8 +248,17 @@ class SettingsWindow:
         f_qq.pack(fill=tk.X)
         ttk.Label(f_qq, text="QQ.exe：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         qq_entry = ttk.Entry(f_qq, textvariable=self.qq_path_var, width=45)
-        qq_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f_qq, text="浏览", command=self._browse_qq, width=24).pack(side=tk.LEFT)
+        qq_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # ----- 日志保存目录 -----
+        frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
+        frame4.pack(fill=tk.X, pady=(0, 8))
+
+        f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')
+        f4.pack(fill=tk.X)
+        ttk.Label(f4, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
+        log_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ----- 图像识别置信度 -----
         frame3 = ttk.LabelFrame(parent, text="  图像识别设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -268,7 +275,6 @@ class SettingsWindow:
         # 置信度数值显示（带百分号）
         self.conf_label = ttk.Label(f3, textvariable=self.confidence_var, style='SettingsSmall.TLabel', width=4)
         self.conf_label.pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Label(f3, text="(0.50 - 0.95)", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 8))
 
         # 显示实时值
         self.conf_value_label = ttk.Label(f3, style='Settings.TLabel', width=16)
@@ -308,19 +314,11 @@ class SettingsWindow:
         asset_region = self.app.settings.get("asset_region", [0, 0, 0, 0])
         self.asset_region_var = tk.StringVar(value=str(asset_region))
         ttk.Entry(asset_region_frame, textvariable=self.asset_region_var, width=20).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(asset_region_frame, text="设置区域", command=self._set_asset_region, width=10).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(asset_region_frame, text="测试识别", command=self._test_asset_recognition, width=10).pack(side=tk.LEFT)
 
-        # ----- 日志保存目录 -----
-        frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
-        frame4.pack(fill=tk.X, pady=(0, 8))
-
-        f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')
-        f4.pack(fill=tk.X)
-        ttk.Label(f4, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
-        log_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        ttk.Button(f4, text="浏览", command=self._browse_log, width=24).pack(side=tk.LEFT)
+        asset_btn_frame = ttk.Frame(asset_frame, style='SettingsInner.TFrame')
+        asset_btn_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(asset_btn_frame, text="设置区域", command=self._set_asset_region, width=10).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(asset_btn_frame, text="测试识别", command=self._test_asset_recognition, width=10).pack(side=tk.LEFT)
 
     def _build_auto_tab(self, parent):
         """自动任务设置选项卡内容"""
@@ -480,7 +478,7 @@ class SettingsWindow:
         ttk.Label(f2b, text="所有账号运行完成后延迟关机：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Spinbox(f2b, from_=0, to=5, increment=1,
                     textvariable=self.post_run_shutdown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f2b, text="分钟（0=不关机，1-5分钟延迟）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+        ttk.Label(f2b, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
         note2b = ttk.Frame(frame2b, style='SettingsInner.TFrame')
         note2b.pack(fill=tk.X, pady=(4, 0))
         ttk.Label(note2b, text="所有账号处理完毕后，按设定延迟时间自动关机（0表示不关机）",
@@ -499,11 +497,11 @@ class SettingsWindow:
         startup_entry.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(f3, text="(HH:MM)", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
-        note_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
+        note_frame = ttk.Frame(frame3, style='SettingsInner.TFrame')
         note_frame.pack(fill=tk.X, pady=(4, 0))
         ttk.Label(note_frame,
                  text="💡 定时开机功能可在电脑处于睡眠/休眠状态时将其唤醒。\n    若电脑为完全关机状态，需主板支持 RTC 唤醒并在 BIOS 中启用【定时开机】或「RTC Alarm」功能。",
-                 style='SettingsSmall.TLabel', wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
+                 style='SettingsSmall.TLabel', wraplength=480, justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
 
     def _build_email_tab(self, parent):
         """邮件通知选项卡内容"""
@@ -559,7 +557,7 @@ class SettingsWindow:
             "6. 冷却到期提醒需先启用「启用邮件通知」，再单独勾选冷却提醒"
         )
         ttk.Label(tips_frame, text=tips_text, style='SettingsSmall.TLabel',
-                 wraplength=580, justify=tk.LEFT).pack(padx=5, pady=5)
+                 wraplength=500, justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
 
         server_info = ttk.Frame(tips_frame, style='SettingsInner.TFrame')
         server_info.pack(fill=tk.X, padx=5, pady=(0, 5))
@@ -598,15 +596,18 @@ class SettingsWindow:
 
         fp_row = ttk.Frame(frame_fp, style='SettingsInner.TFrame')
         fp_row.pack(fill=tk.X, pady=(0, 4))
-        self._fingerprint_var = tk.StringVar(value="点击按钮获取...")
+        self._fingerprint_var = tk.StringVar(value="加载中...")
         ttk.Entry(fp_row, textvariable=self._fingerprint_var, width=36,
-                  state='readonly', font=('Consolas', 9)).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(fp_row, text="查看指纹", width=10,
-                   command=self._show_fingerprint).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(fp_row, text="复制", width=6,
-                   command=self._copy_fingerprint).pack(side=tk.LEFT)
+                  state='readonly', font=('Consolas', 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(frame_fp, text="此指纹用于服务器绑定验证，需告知管理员添加到白名单后方可使用",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
+        # 自动加载指纹
+        try:
+            import machine_fingerprint
+            info = machine_fingerprint.get_machine_info()
+            self._fingerprint_var.set(info["machine_id"])
+        except Exception:
+            self._fingerprint_var.set("获取失败")
 
         # ----- 开机自启动 -----
         frame1 = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=12)
@@ -651,9 +652,7 @@ class SettingsWindow:
         cd_row2.pack(fill=tk.X)
         ttk.Label(cd_row2, text="账号间隔时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
         ttk.Spinbox(cd_row2, from_=0, to=5, increment=1,
-                    textvariable=self.cooldown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(cd_row2, text="分钟（0-5，相邻账号执行间隔，0=连续执行）",
-                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+                    textvariable=self.cooldown_delay_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
         # ----- 账号列表鼠标下移距离设置 -----
         frame2 = ttk.LabelFrame(parent, text="  账号列表鼠标下移距离  ", style='SettingsCard.TLabelframe', padding=12)
@@ -663,8 +662,7 @@ class SettingsWindow:
         f2a.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(f2a, text="QQ 账号列表鼠标下移距离：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Spinbox(f2a, from_=30, to=300, increment=10,
-                    textvariable=self.qq_mouse_move_distance_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f2a, text="像素（账号超过3个被遮挡时使用）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+                    textvariable=self.qq_mouse_move_distance_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
         # ----- 滚动幅度设置 -----
         frame3 = ttk.LabelFrame(parent, text="  滚动幅度设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -674,19 +672,29 @@ class SettingsWindow:
         f3.pack(fill=tk.X)
         ttk.Label(f3, text="滚动幅度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Spinbox(f3, from_=50, to=150, increment=10,
-                    textvariable=self.scroll_amount_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f3, text="（50-150，值越大滚动越多，默认 100）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+                    textvariable=self.scroll_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
         # ----- 游戏启动等待时间 -----
         frame4 = ttk.LabelFrame(parent, text="  游戏启动等待时间  ", style='SettingsCard.TLabelframe', padding=12)
-        frame4.pack(fill=tk.X, pady=(0, 0))
+        frame4.pack(fill=tk.X, pady=(0, 8))
 
         f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')
         f4.pack(fill=tk.X)
         ttk.Label(f4, text="额外等待时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Spinbox(f4, from_=0, to=120, increment=5,
-                    textvariable=self.game_launch_wait_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f4, text="秒（0-120，机器配置较低时可增加等待，默认 0）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+                    textvariable=self.game_launch_wait_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+
+        # ----- 设置说明 -----
+        tips_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
+        tips_frame.pack(fill=tk.X, pady=(0, 0))
+        tips_lines = (
+            "• 账号间隔时间：0-5分钟，相邻账号执行间隔，0=连续执行\n"
+            "• 鼠标下移距离：30-300像素，账号超过3个被遮挡时使用\n"
+            "• 滚动幅度：50-150，值越大滚动越多，默认100\n"
+            "• 额外等待时间：0-120秒，机器配置较低时可增加等待，默认0"
+        )
+        ttk.Label(tips_frame, text=tips_lines, style='SettingsSmall.TLabel',
+                  justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
 
     def _build_sell_tab(self, parent):
         """售卖物品选项卡内容"""
@@ -701,10 +709,10 @@ class SettingsWindow:
         self.sell_tree.heading("discount_times", text="降价次数")
         self.sell_tree.heading("quantity", text="出售数量")
         self.sell_tree.heading("filename", text="图片文件")
-        self.sell_tree.column("name", width=150)
+        self.sell_tree.column("name", width=100)
         self.sell_tree.column("discount_times", width=80, anchor="center")
         self.sell_tree.column("quantity", width=80, anchor="center")
-        self.sell_tree.column("filename", width=120)
+        self.sell_tree.column("filename", width=90)
 
         tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -994,26 +1002,6 @@ class SettingsWindow:
         percent = int(val * 100)
         self.sell_conf_label.config(text=f"{percent}%")
 
-    def _browse_wegame(self):
-        path = filedialog.askopenfilename(title="选择 WeGame.exe", filetypes=[("可执行文件", "*.exe")])
-        if path:
-            self.wegame_var.set(path)
-
-    def _browse_delta(self):
-        path = filedialog.askopenfilename(title="选择三角洲行动启动程序", filetypes=[("可执行文件", "*.exe")])
-        if path:
-            self.delta_var.set(path)
-
-    def _browse_qq(self):
-        path = filedialog.askopenfilename(title="选择 QQ.exe", filetypes=[("可执行文件", "*.exe")])
-        if path:
-            self.qq_path_var.set(path)
-
-    def _browse_log(self):
-        path = filedialog.askdirectory(title="选择日志保存目录")
-        if path:
-            self.log_var.set(path)
-
     def _set_asset_region(self):
         """让用户在屏幕上拖动框选资产识别区域"""
         self.win.withdraw()
@@ -1027,7 +1015,7 @@ class SettingsWindow:
         overlay.attributes('-alpha', 0.3)
         overlay.attributes('-topmost', True)
         overlay.configure(bg='black')
-        overlay.cursor = "crosshair"
+        overlay.config(cursor="crosshair")
 
         canvas = tk_overlay.Canvas(overlay, highlightthickness=0, bg='black')
         canvas.pack(fill=tk.BOTH, expand=True)
@@ -1087,56 +1075,61 @@ class SettingsWindow:
                 messagebox.showwarning("提示", "识别区域格式不正确，应为 [x, y, w, h]", parent=self.win)
                 return
 
+            try:
+                from rapidocr_onnxruntime import RapidOCR
+            except ImportError:
+                messagebox.showerror("错误",
+                    "RapidOCR 未安装，请先安装：pip install rapidocr-onnxruntime",
+                    parent=self.win)
+                return
+
             # 最小化设置窗口
             self.win.withdraw()
             import time
             time.sleep(0.5)
 
-            results = utils.ocr_recognize(region=tuple(region))
+            import pyautogui
+            import numpy as np
+            x, y, w, h = region
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
+            img_array = np.array(screenshot)
+
+            ocr = RapidOCR()
+            result, _ = ocr(img_array)
 
             self.win.deiconify()
 
-            if not results:
-                messagebox.showinfo("测试结果", "未识别到任何文字。\n\n请确认：\n1. 区域设置正确\n2. 游戏画面在该区域有可识别的文字",
-                                    parent=self.win)
+            if not result:
+                messagebox.showinfo("测试结果",
+                    f"识别区域：({x}, {y}) - {w}x{h}\n\n"
+                    "识别结果：未检测到文字",
+                    parent=self.win)
                 return
 
-            # 整理结果
-            lines = []
-            for text, conf, bbox in results:
-                # 检查是否匹配资产格式
-                match = re.search(r'[\d,.]+\s*[KMBkmb]?', text)
-                mark = " ← 资产" if match else ""
-                lines.append(f"  {text}  (置信度：{float(conf):.2f}){mark}")
+            # 拼接所有识别到的文本
+            all_text = "".join(item[1] for item in result)
 
-            result_text = "\n".join(lines)
+            # 匹配资产格式：数字+K/M/B
+            match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
+            if match:
+                asset_str = f"{match.group(1)}{match.group(2).upper()}"
+            else:
+                asset_str = "未匹配到资产格式"
+
+            detail_lines = [f"  {item[1]}  (置信度：{float(item[2]):.2f})" for item in result]
+            detail_text = "\n".join(detail_lines)
+
             messagebox.showinfo("测试结果",
-                                f"识别区域：{region}\n\n"
-                                f"识别到 {len(results)} 条文字：\n{result_text}",
-                                parent=self.win)
+                f"识别区域：({x}, {y}) - {w}x{h}\n\n"
+                f"识别到的文字：\n{detail_text}\n\n"
+                f"解析结果：{asset_str}",
+                parent=self.win)
 
         except SyntaxError:
             messagebox.showerror("错误", "区域格式不正确，应为 [x, y, w, h]", parent=self.win)
         except Exception as e:
             self.win.deiconify()
             messagebox.showerror("测试失败", f"识别出错：{e}", parent=self.win)
-
-    def _show_fingerprint(self):
-        """获取并显示本机机器指纹"""
-        try:
-            import machine_fingerprint
-            info = machine_fingerprint.get_machine_info()
-            self._fingerprint_var.set(info["machine_id"])
-        except Exception as e:
-            messagebox.showerror("错误", f"获取机器指纹失败：{e}")
-
-    def _copy_fingerprint(self):
-        """复制机器指纹到剪贴板"""
-        fp = self._fingerprint_var.get()
-        if fp and fp != "点击按钮获取...":
-            self.win.clipboard_clear()
-            self.win.clipboard_append(fp)
-            messagebox.showinfo("已复制", f"机器指纹已复制到剪贴板：\n{fp}")
 
     def _open_capture_wizard(self):
         """打开模板截图向导"""
