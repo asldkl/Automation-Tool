@@ -80,7 +80,8 @@ class TemplateCaptureWizard:
         self.win = tk.Toplevel(parent)
         self.win.title("模板上传向导")
         self.win.geometry("550x700")
-        self.win.resizable(False, False)
+        self.win.resizable(True, True)
+        self.win.minsize(300, 400)
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
@@ -204,15 +205,12 @@ class TemplateCaptureWizard:
                 info_frame = ttk.Frame(row)
                 info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
                 ttk.Label(info_frame, text=name, font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w')
-                is_ocr_disabled = GLOBAL_TEXT_DEFAULTS.get(var_name, (None, ""))[1] is None
-                hint_fg = '#2980B9' if is_ocr_disabled else '#888'
-                hint_text = f"{hint}（不可文字识别）" if is_ocr_disabled else hint
-                ttk.Label(info_frame, text=hint_text, font=('Microsoft YaHei UI', 8), foreground=hint_fg).pack(anchor='w')
+                ttk.Label(info_frame, text=hint, font=('Microsoft YaHei UI', 8), foreground='#888').pack(anchor='w')
 
             # 模板设置按钮
             setting_btn = ttk.Button(row, text="模板设置", width=10,
                                      command=lambda v=var_name, r=rel_path, n=name: self._open_template_setting(v, r, n))
-            setting_btn.pack(side=tk.RIGHT, padx=5)
+            setting_btn.pack(side=tk.RIGHT, padx=(30, 5))
 
             self.rows[var_name] = (status_lbl, setting_btn)
 
@@ -235,9 +233,8 @@ class TemplateCaptureWizard:
         btn_frame = ttk.Frame(self.win)
         btn_frame.pack(fill=tk.X, padx=30, pady=(5, 15))
         ttk.Button(btn_frame, text="一键重置", command=self._reset_all_templates, width=12).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_frame, text="使用说明", command=self._show_usage_guide, width=10).pack(side=tk.RIGHT, padx=(0, 8))
         ttk.Button(btn_frame, text="完成", command=self._finish, width=12).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
 
     def _refresh_status_from_ocr_configs(self):
         """根据 ocr_configs 刷新所有模板的状态图标"""
@@ -463,31 +460,6 @@ class TemplateCaptureWizard:
         # 等待对话框关闭后恢复 grab
         self.win.wait_window(dialog)
         self.win.grab_set()
-
-    def _show_usage_guide(self):
-        """显示使用说明"""
-        guide_text = (
-            "【模板上传向导使用说明】\n\n"
-            "1. 图片识别（默认）\n"
-            "   上传对应的模板截图，程序通过图像匹配定位按钮。\n\n"
-            "2. OCR 文字识别\n"
-            "   在「模板设置」中配置 OCR 识别，程序通过文字匹配定位。\n"
-            "   - 识别速度较慢（每步约 1-2 秒），请耐心等待\n"
-            "   - 识别精度低于图片识别，关键步骤建议使用图片识别\n"
-            "   - 全局 OCR 设置可统一配置识别区域，减少重复操作\n\n"
-            "3. 以下模板为图片构成，无法使用文字识别：\n"
-            "   - 游戏币购买按钮（COIN_GAME）\n"
-            "   - 降价按钮（Discount）\n"
-            "   - 邮箱入口（EMAIL_MAIL）\n"
-            "   - QQ账号选择按钮（QQ_ACCOUNT_SELECT）\n\n"
-            "4. 全局 OCR 设置\n"
-            "   - 启用后，模板设置中只需填写目标文本即可\n"
-            "   - 可设置全局识别区域，所有模板共用\n"
-            "   - 可设置全局置信度和全局文本配置\n\n"
-            "5. 恢复默认\n"
-            "   点击「恢复默认」将清除该模板的自定义图片和 OCR 配置。"
-        )
-        messagebox.showinfo("使用说明", guide_text, parent=self.win)
 
     def _open_global_ocr_settings(self):
         """打开全局 OCR 设置对话框"""
@@ -816,6 +788,14 @@ class TemplateCaptureWizard:
         ttk.Button(btn_frame, text="一键重置文本", command=reset_texts, width=14).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="保存", command=save_texts, width=10).pack(side=tk.RIGHT)
         ttk.Button(btn_frame, text="取消", command=win.destroy, width=10).pack(side=tk.RIGHT, padx=8)
+
+        # 使用说明
+        tips_text = (
+            "说明：勾选需要识别的模板并填写对应文字，保存后将自动配置 OCR。\n"
+            "未勾选的模板将使用图片识别，不可识别的模板（如游戏币、降价按钮）无法勾选。"
+        )
+        ttk.Label(win, text=tips_text, font=('Microsoft YaHei UI', 8),
+                  foreground='#888', justify=tk.LEFT, wraplength=500).pack(anchor='w', padx=20, pady=(0, 8))
 
     def _set_dialog_icon(self, dialog):
         """为对话框设置图标"""

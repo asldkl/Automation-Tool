@@ -1,6 +1,6 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.0.4
+版本: v1.1.1
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
@@ -9,6 +9,8 @@
 支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知。
 v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步、运行完成后延迟关机。
 v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资产识别、模块拆分重构。
+v1.1.0 新增：资产识别修复（直接 numpy 数组，无 BGR 转换）、设置界面 6 选项卡、主界面简化、窗口可调整大小。
+v1.1.1 新增：资产监测（SQLite 持久化 + 时间段统计）、账号备注（账号密码输入框）、使用说明移至设置页面。
 
 【核心文件】
 
@@ -17,18 +19,21 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 │   - 启动 gui_app.main()
 │   - 异常日志写入 ~/.delta_auto_error.log
 │
-├── gui_app.py                  # 主 GUI 应用（入口层，约 867 行）
+├── gui_app.py                  # 主 GUI 应用（入口层，约 864 行）
 │   - App 类：主窗口、UI 构建、样式设置、系统托盘
-│   - __init__：初始化各模块、预初始化 OCR 引擎、服务器验证
+│   - __init__：初始化各模块、预初始化 OCR 引擎、服务器验证、_account_notes 备注
 │   - _build_ui()：构建主界面（Treeview 账号列表、日志区域、控制按钮）
+│     - 按钮栏：添加账号、清空列表、冷却重置、资产监测
 │   - _setup_styles() / _setup_tray()：样式与托盘
 │   - open_settings()：打开设置窗口
-│   - 所有业务逻辑委托给 6 个子模块（见下方）
+│   - 所有业务逻辑委托给 7 个子模块（见下方）
 │
-├── automation_runner.py        # 自动化运行模块（v1.1.0 拆分，约 535 行）
+├── automation_runner.py        # 自动化运行模块（v1.1.0 拆分，约 596 行）
 │   - start_run() / stop_run()：启动/停止自动化任务
-│   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→操作→关闭）
-│   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作
+│   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→资产识别→操作→关闭）
+│   - _recognize_asset()：资产识别（RapidOCR 缓存引擎，直接 numpy 数组，无 BGR 转换）
+│   - 资产识别后自动调用 asset_db.record_asset() 写入 SQLite
+│   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作（含 asset_db 钩子）
 │   - sell_operations_wrapper()：委托 automation.sell_operations() 执行一键出售
 │   - on_finish()：任务完成后延迟关机（可选 0-5 分钟）
 │   - update_ui() / set_operation()：UI 更新辅助
@@ -47,13 +52,16 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 │   - apply_auto_settings()：应用自动设置
 │
 ├── account_manager.py          # 账号管理模块（v1.1.0 拆分，约 738 行）
-│   - save_accounts() / load_accounts()：账号持久化
+│   - save_accounts() / load_accounts()：账号持久化（含 notes 备注数据）
 │   - add_account() / delete_account() / clear_accounts()：账号增删
 │   - move_up() / move_down()：账号排序
 │   - refresh_account_tree()：刷新 Treeview 列表
 │   - show_account_menu() / manual_add_cooldown()：右键菜单
 │   - reset_selected_cooldown() / custom_cooldown_time() / reset_all_cooldowns()：冷却管理
 │   - show_cooldown_window() / show_help()：弹窗
+│   - show_asset_history()：资产记录弹窗（居中、图标、无年份）
+│   - show_asset_monitor()：资产监测弹窗（SQLite 统计）
+│   - show_account_note()：账号备注弹窗（账号密码输入框）
 │   - test_recognition() / crop_account_image()：识别测试
 │
 ├── email_notifier.py           # 邮件通知模块（v1.1.0 拆分，约 250 行）
@@ -73,6 +81,13 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 │   - start_heartbeat() / stop_heartbeat()：心跳线程管理
 │   - heartbeat_loop() / send_heartbeat()：心跳数据发送
 │   - update_account_status()：更新账号运行状态
+│
+├── asset_db.py                 # 资产数据 SQLite 持久化模块（v1.1.1 新增）
+│   - 数据存储：~/.delta_auto_assets.db
+│   - record_asset()：记录资产快照（账号、时间戳、原始值、数值）
+│   - query_total_change(days)：查询最近 N 天所有账号资产变化总和
+│   - format_asset_num()：数值格式化（1200000 → '1.20M'）
+│   - 自动创建表和索引（account + timestamp）
 │
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
@@ -124,13 +139,16 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 │   - 邮件发送：
 │     - send_email_notification()：QQ 邮箱 SMTP 发送
 │
-├── settings_window.py          # 设置对话框
-│   - SettingsWindow 类：5个选项卡
-│     - Tab 1: 全局设置（路径、置信度、分辨率、日志目录）
-│     - Tab 2: 自动任务（定时、操作选择、一键出售、提醒）
-│     - Tab 3: 电源管理（唤醒、关机、定时开机、运行完成后延迟关机）
-│     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
-│     - Tab 5: 其他设置（开机自启、冷却管理、滚动设置、机器指纹查看/复制）
+├── settings_window.py          # 设置对话框（约 1295 行）
+│   - SettingsWindow 类：6个选项卡
+│     - Tab 1: 全局设置（路径、置信度、资产识别、日志目录、机器指纹、使用说明）
+│     - Tab 2: 售卖物品（物品列表、出售参数、一键出售开关）
+│     - Tab 3: 自动任务（定时、操作选择、提醒）
+│     - Tab 4: 电源管理（唤醒、关机、定时开机、运行完成后延迟关机）
+│     - Tab 5: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
+│     - Tab 6: 其他设置（开机自启、冷却管理、滚动设置）
+│   - 资产识别：区域框选（全屏 overlay）、测试识别（直接 RapidOCR，无 BGR 转换）
+│   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
 │
 ├── cooldown_manager.py         # 冷却管理
 │   - 数据存储：~/.delta_auto_cooldown.json
@@ -140,15 +158,15 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 │   - get_all_cooldowns()：获取所有账号冷却信息
 │   - 原子写入（.tmp + os.replace）
 │
-├── template_capture.py         # 模板上传向导
-│   - TemplateCaptureWizard 类：模态对话框
+├── template_capture.py         # 模板上传向导（约 986 行）
+│   - TemplateCaptureWizard 类：可调整大小的模态对话框（550x700，minsize 300x400）
 │   - 列出所有模板图片（中文名+截图提示）
 │   - 上传/预览/恢复默认
 │   - 售卖物品管理（添加/删除，支持重复添加）
 │   - 出售测试按钮
 │   - 一键重置按钮（清除所有用户模板和 OCR 配置）
 │   - OCR 配置：每个模板可配置 OCR 识别区域和目标文本
-│   - 全局 OCR 设置：统一配置 OCR 区域、置信度、文本列表
+│   - 全局 OCR 设置：统一配置 OCR 区域、置信度、文本列表（底部含使用说明）
 │   - 保存到 ~/.delta_auto_templates/
 │
 ├── test_all_features.py        # 单元测试（54 项）
@@ -189,8 +207,9 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 【用户数据目录】(~/.delta_auto_*)
 
 ├── ~/.delta_auto_settings.json     # 用户设置（含 ocr_configs、global_ocr_* 配置）
-├── ~/.delta_auto_accounts.json     # QQ 账号列表
+├── ~/.delta_auto_accounts.json     # QQ 账号列表（含 assets、asset_history、notes）
 ├── ~/.delta_auto_cooldown.json     # 冷却数据
+├── ~/.delta_auto_assets.db         # 资产记录 SQLite 数据库（v1.1.1 新增）
 ├── ~/.delta_auto_templates/        # 用户自定义模板 + OCR 模板图片
 ├── ~/.delta_auto_sell_items/       # 售卖物品图片 + items_meta.json
 └── ~/.delta_auto_error.log         # 异常日志
@@ -199,16 +218,18 @@ v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资�
 
 gui_app.py (入口层)
   ├── automation_runner.py  ← start_run / stop_run / on_finish
-  │     └── automation.py   ← game_operations / sell_operations
+  │     ├── automation.py   ← game_operations / sell_operations
+  │     └── asset_db.py     ← record_asset（资产识别后写入 SQLite）
   ├── scheduler.py          ← start_scheduler / stop_scheduler
   │     └── cooldown_watcher.py
-  ├── account_manager.py    ← 账号 CRUD / 冷却管理 UI
+  ├── account_manager.py    ← 账号 CRUD / 冷却管理 UI / 资产监测 / 备注
+  │     └── asset_db.py     ← query_total_change（资产统计查询）
   ├── email_notifier.py     ← 邮件发送
   ├── server_client.py      ← 验证 / 心跳
   ├── cooldown_watcher.py   ← 冷却到期监听
   ├── utils.py              ← 图像识别 / OCR / 进程管理 / 电源管理
   ├── config.py             ← 配置读写
-  ├── settings_window.py    ← 设置对话框
+  ├── settings_window.py    ← 设置对话框（含使用说明）
   ├── template_capture.py   ← 模板上传向导
   ├── cooldown_manager.py   ← 冷却数据持久化
   └── machine_fingerprint.py ← 机器指纹
@@ -240,6 +261,8 @@ gui_app.py (入口层)
 | global_ocr_texts            | 全局 OCR 目标文本列表              | []                           |
 | global_text_enabled          | 启用全局文本配置                   | False                        |
 | ocr_configs                 | 每模板 OCR 配置（var_name→配置）   | {}                           |
+| enable_asset_recognition    | 启用资产识别                       | False                        |
+| asset_region                | 资产识别屏幕区域 [x,y,w,h]        | [0, 0, 0, 0]                 |
 
 【运行流程】
 
@@ -253,13 +276,14 @@ gui_app.py (入口层)
    b. 启动 QQ → 快捷登录
    c. 启动 WeGame → 快捷登录
    d. 找到三角洲图标 → 启动游戏
-   e. 进入烽火地带 → 特勤处
-   f. 可选：领取邮箱货币
-   g. 执行选中的设施操作（制造/收取/产出）
-   h. 可选：一键出售
-   i. 关闭游戏/WeGame/QQ
-   j. 记录冷却时间
-   k. 等待账号间隔
+   e. 可选：资产识别（等待 1 秒后截图指定区域，RapidOCR 识别）
+   f. 进入烽火地带 → 特勤处
+   g. 可选：领取邮箱货币
+   h. 执行选中的设施操作（制造/收取/产出）
+   i. 可选：一键出售
+   j. 关闭游戏/WeGame/QQ
+   k. 记录冷却时间
+   l. 等待账号间隔
 7. 所有账号完成 → 停止心跳线程 → 发送邮件报告 → 恢复睡眠设置
 8. 如果设置了延迟关机 → 等待指定分钟后关机
 
@@ -279,6 +303,13 @@ gui_app.py (入口层)
    - 统一配置 OCR 区域、置信度、目标文本列表
    - 可一键应用到所有模板
    - 禁用时自动清理相关 ocr_configs
+
+4. 资产识别（automation_runner._recognize_asset）：
+   - 游戏启动后自动识别屏幕指定区域的资产数值
+   - 使用独立的 RapidOCR 引擎缓存（_ocr_engine），首次创建后复用
+   - 直接传入 numpy 数组（不做 BGR 转换），与 utils.ocr_recognize 不同
+   - 正则匹配格式：(\d+\.?\d*)\s*([KMBkmb])，如 "1.2M", "500K"
+   - 设置界面支持区域框选（全屏 overlay）和测试识别
 
 【技术栈】
 

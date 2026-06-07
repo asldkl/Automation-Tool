@@ -320,6 +320,14 @@ class SettingsWindow:
         ttk.Button(asset_btn_frame, text="设置区域", command=self._set_asset_region, width=10).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(asset_btn_frame, text="测试识别", command=self._test_asset_recognition, width=10).pack(side=tk.LEFT)
 
+        # ----- 使用说明 -----
+        guide_frame = ttk.LabelFrame(parent, text="  使用说明  ", style='SettingsCard.TLabelframe', padding=12)
+        guide_frame.pack(fill=tk.X, pady=(0, 8))
+
+        import account_manager
+        ttk.Button(guide_frame, text="查看使用说明", style='Accent.TButton',
+                   command=lambda: account_manager.show_help(self.app), width=14).pack(anchor='w', padx=5, pady=5)
+
     def _build_auto_tab(self, parent):
         """自动任务设置选项卡内容"""
         # 第1行：启用 + 模式 + 静默

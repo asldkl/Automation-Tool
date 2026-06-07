@@ -10,6 +10,7 @@ from tkinter import ttk, messagebox, filedialog
 import config
 import utils
 import cooldown_manager
+import asset_db
 import pyautogui
 import cv2
 import numpy as np
@@ -21,7 +22,9 @@ ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts
 def save_accounts(app):
     try:
         data = {"wegame": [], "qq": app.qq_account_images,
-                "assets": app._account_assets}
+                "assets": app._account_assets,
+                "asset_history": app._asset_history,
+                "notes": app._account_notes}
         with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -40,6 +43,8 @@ def load_accounts(app):
         else:
             app.qq_account_images = [p for p in data.get("qq", []) if os.path.exists(p)]
             app._account_assets = data.get("assets", {})
+            app._asset_history = data.get("asset_history", {})
+            app._account_notes = data.get("notes", {})
         # 刷新账号列表
         refresh_account_tree(app)
         print(f"✅ 已加载 {len(app.qq_account_images)} 个 QQ 账号")
@@ -75,6 +80,7 @@ def delete_account(app):
 def clear_accounts(app):
     app.qq_account_images.clear()
     app._account_assets.clear()
+    app._asset_history.clear()
     refresh_account_tree(app)
     update_account_count(app)
     save_accounts(app)
@@ -736,3 +742,379 @@ def show_help(app):
         "• 定时执行前5分钟自动唤醒，请确保电脑处于休眠/睡眠状态"
     )
     messagebox.showinfo("使用说明", help_text)
+
+
+def _parse_asset_value(val_str):
+    """将资产字符串转为数值用于排序和变化计算，如 '1.2M' → 1200000"""
+    if not val_str or val_str == "0":
+        return 0
+    val_str = val_str.strip().upper()
+    multipliers = {"K": 1000, "M": 1000000, "B": 1000000000}
+    for suffix, mult in multipliers.items():
+        if val_str.endswith(suffix):
+            try:
+                return float(val_str[:-1]) * mult
+            except ValueError:
+                return 0
+    try:
+        return float(val_str)
+    except ValueError:
+        return 0
+
+
+def _strip_year(time_str):
+    """去掉时间字符串中的年份前缀，如 '2026-06-07 14:30' -> '06-07 14:30'"""
+    if not time_str:
+        return time_str
+    parts = time_str.split("-", 1)
+    if len(parts) == 2 and len(parts[0]) == 4 and parts[0].isdigit():
+        return parts[1]
+    return time_str
+
+
+def show_asset_history(app):
+    """弹窗显示选中账号的资产历史记录"""
+    selected = app.account_tree.selection()
+    if not selected:
+        messagebox.showwarning("提示", "请先选择一个账号", parent=app.root)
+        return
+    item = selected[0]
+    account_name = app.account_tree.item(item, "values")[0]
+
+    history = app._asset_history.get(account_name, [])
+    if not history:
+        messagebox.showinfo("资产记录", f"账号 {account_name} 暂无资产记录", parent=app.root)
+        return
+
+    # 创建弹窗
+    win = tk.Toplevel(app.root)
+    win.title(f"资产记录 - {account_name}")
+    win.geometry("420x400")
+    win.minsize(350, 300)
+    win.resizable(True, True)
+    win.transient(app.root)
+    win.grab_set()
+
+    # 设置图标
+    try:
+        icon_path = config.resource_path("picture/icon/icon.ico")
+        if os.path.exists(icon_path):
+            from PIL import Image, ImageTk
+            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+            win.iconphoto(False, win._icon_photo)
+    except Exception:
+        pass
+
+    # 窗口居中
+    win.update_idletasks()
+    w, h = 420, 400
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
+    # 标题
+    ttk.Label(win, text=f"账号：{account_name}", font=('Microsoft YaHei UI', 11, 'bold')).pack(padx=15, pady=(12, 5), anchor='w')
+
+    # 表格容器
+    tree_frame = ttk.Frame(win)
+    tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+
+    columns = ("时间", "资产", "变化")
+    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
+    tree.heading("时间", text="时间")
+    tree.heading("资产", text="资产")
+    tree.heading("变化", text="变化")
+    tree.column("时间", width=150, minwidth=120)
+    tree.column("资产", width=80, minwidth=60, anchor=tk.CENTER)
+    tree.column("变化", width=100, minwidth=80, anchor=tk.CENTER)
+
+    scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar.set)
+    tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+    # 填充数据（从新到旧）
+    for i in range(len(history) - 1, -1, -1):
+        entry = history[i]
+        time_str = _strip_year(entry.get("time", ""))
+        value = entry.get("value", "0")
+        if i > 0:
+            prev_val = _parse_asset_value(history[i - 1].get("value", "0"))
+            cur_val = _parse_asset_value(value)
+            diff = cur_val - prev_val
+            if diff > 0:
+                diff_str = f"+{_format_asset_num(diff)}"
+            elif diff < 0:
+                diff_str = f"{_format_asset_num(diff)}"
+            else:
+                diff_str = "—"
+        else:
+            diff_str = "—"
+        tree.insert("", tk.END, values=(time_str, value, diff_str))
+
+    # 底部统计
+    if len(history) >= 2:
+        first_val = _parse_asset_value(history[0].get("value", "0"))
+        last_val = _parse_asset_value(history[-1].get("value", "0"))
+        total_diff = last_val - first_val
+        if total_diff > 0:
+            trend = f"累计增长 +{_format_asset_num(total_diff)}"
+            color = "#4caf50"
+        elif total_diff < 0:
+            trend = f"累计变化 {_format_asset_num(total_diff)}"
+            color = "#f44336"
+        else:
+            trend = "累计无变化"
+            color = "#888"
+        ttk.Label(win, text=f"共 {len(history)} 条记录  |  {trend}",
+                  font=('Microsoft YaHei UI', 9), foreground=color).pack(padx=15, pady=(0, 10), anchor='w')
+    else:
+        ttk.Label(win, text=f"共 {len(history)} 条记录",
+                  font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, pady=(0, 10), anchor='w')
+
+
+def _format_asset_num(val):
+    """将数值格式化为资产字符串，如 1200000 → '1.2M'"""
+    abs_val = abs(val)
+    if abs_val >= 1_000_000_000:
+        return f"{val / 1_000_000_000:.2f}B"
+    elif abs_val >= 1_000_000:
+        return f"{val / 1_000_000:.2f}M"
+    elif abs_val >= 1_000:
+        return f"{val / 1_000:.1f}K"
+    else:
+        return f"{val:.0f}"
+
+
+def show_asset_monitor(app):
+    """弹出资产监测窗口：上半部分显示所有账号当前资产，下半部分按时间段统计变化"""
+    win = tk.Toplevel(app.root)
+    win.title("资产监测")
+    win.geometry("400x400")
+    win.resizable(True, True)
+    win.minsize(200, 200)
+    win.transient(app.root)
+    win.grab_set()
+
+    # 设置图标
+    try:
+        icon_path = config.resource_path("picture/icon/icon.ico")
+        if os.path.exists(icon_path):
+            from PIL import Image, ImageTk
+            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+            win.iconphoto(False, win._icon_photo)
+    except Exception:
+        pass
+
+    # 窗口居中
+    win.update_idletasks()
+    w, h = 400, 400
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
+    # ===== 上半部分：当前状态 =====
+    status_frame = ttk.LabelFrame(win, text=" 当前资产状态 ", padding=10)
+    status_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
+
+    tree_frame = ttk.Frame(status_frame)
+    tree_frame.pack(fill=tk.BOTH, expand=True)
+
+    columns = ("account", "asset")
+    asset_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6)
+    asset_tree.heading("account", text="账号名称")
+    asset_tree.heading("asset", text="现有资产")
+    asset_tree.column("account", width=80, minwidth=50)
+    asset_tree.column("asset", width=50, minwidth=30, anchor=tk.CENTER)
+
+    scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=asset_tree.yview)
+    asset_tree.configure(yscrollcommand=scrollbar.set)
+    asset_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+    def _refresh_status():
+        for item in asset_tree.get_children():
+            asset_tree.delete(item)
+        for name in app._account_assets:
+            asset_tree.insert("", tk.END, values=(name, app._account_assets[name]))
+        # 也添加没有资产记录的账号
+        for img_path in app.qq_account_images:
+            name = os.path.basename(img_path)
+            if name not in app._account_assets:
+                asset_tree.insert("", tk.END, values=(name, "0"))
+
+    _refresh_status()
+
+    # ===== 下半部分：统计面板 =====
+    stats_frame = ttk.LabelFrame(win, text=" 资产变化统计 ", padding=10)
+    stats_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
+
+    # 按钮行
+    btn_row = ttk.Frame(stats_frame)
+    btn_row.pack(fill=tk.X, pady=(0, 8))
+
+    result_label = ttk.Label(stats_frame, text="请选择时间范围查看资产变化",
+                             font=('Microsoft YaHei UI', 10), foreground='#888')
+    result_label.pack(fill=tk.X)
+
+    detail_label = ttk.Label(stats_frame, text="", font=('Microsoft YaHei UI', 9),
+                             foreground='#666', wraplength=650, justify=tk.LEFT)
+    detail_label.pack(fill=tk.X, pady=(4, 0))
+
+    def _show_stats(days):
+        total_diff, details = asset_db.query_total_change(days)
+        if not details:
+            result_label.config(text=f"近 {days} 天暂无资产记录", foreground='#888')
+            detail_label.config(text="")
+            return
+
+        # 总变化
+        diff_str = asset_db.format_asset_num(total_diff)
+        if total_diff > 0:
+            result_label.config(text=f"近 {days} 天总资产变化：+{diff_str}", foreground='#4caf50')
+        elif total_diff < 0:
+            result_label.config(text=f"近 {days} 天总资产变化：{diff_str}", foreground='#f44336')
+        else:
+            result_label.config(text=f"近 {days} 天总资产变化：无变化", foreground='#888')
+
+        # 明细
+        lines = []
+        for account, first_val, last_val, diff in details:
+            first_str = asset_db.format_asset_num(first_val)
+            last_str = asset_db.format_asset_num(last_val)
+            diff_s = asset_db.format_asset_num(diff)
+            if diff > 0:
+                lines.append(f"  {account}：{first_str} → {last_str}（+{diff_s}）")
+            elif diff < 0:
+                lines.append(f"  {account}：{first_str} → {last_str}（{diff_s}）")
+            else:
+                lines.append(f"  {account}：{first_str} → {last_str}（无变化）")
+        detail_label.config(text="\n".join(lines))
+
+    ttk.Button(btn_row, text="近 1 天", style='Accent.TButton',
+               command=lambda: _show_stats(1), width=10).pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Button(btn_row, text="近 7 天", style='Accent.TButton',
+               command=lambda: _show_stats(7), width=10).pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Button(btn_row, text="近 30 天", style='Accent.TButton',
+               command=lambda: _show_stats(30), width=10).pack(side=tk.LEFT)
+
+
+def show_account_note(app):
+    """弹出备注编辑窗口，为选中账号添加/编辑备注信息（账号密码等）"""
+    sel = app.account_tree.selection()
+    if not sel:
+        messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
+        return
+    idx = app.account_tree.index(sel[0])
+    if idx >= len(app.qq_account_images):
+        return
+    img_path = app.qq_account_images[idx]
+    account_name = os.path.basename(img_path)
+
+    win = tk.Toplevel(app.root)
+    win.title(f"备注 - {account_name}")
+    win.geometry("400x400")
+    win.resizable(True, True)
+    win.minsize(350, 300)
+    win.transient(app.root)
+    win.grab_set()
+
+    # 设置图标
+    try:
+        icon_path = config.resource_path("picture/icon/icon.ico")
+        if os.path.exists(icon_path):
+            from PIL import Image, ImageTk
+            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+            win.iconphoto(False, win._icon_photo)
+    except Exception:
+        pass
+
+    # 窗口居中
+    win.update_idletasks()
+    w, h = 400, 400
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
+    ttk.Label(win, text=f"账号：{account_name}", font=('Microsoft YaHei UI', 10, 'bold')).pack(padx=15, pady=(12, 5), anchor='w')
+
+    # 解析已有备注（兼容旧格式纯文本）
+    existing = app._account_notes.get(account_name, "")
+    if isinstance(existing, dict):
+        saved_user = existing.get("account", "")
+        saved_pass = existing.get("password", "")
+        saved_note = existing.get("note", "")
+    else:
+        saved_user = ""
+        saved_pass = ""
+        saved_note = existing
+
+    # 账号密码输入框
+    input_frame = ttk.Frame(win)
+    input_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
+
+    row_user = ttk.Frame(input_frame)
+    row_user.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_user, text="游戏账号：", width=10, anchor='e').pack(side=tk.LEFT)
+    user_var = tk.StringVar(value=saved_user)
+    ttk.Entry(row_user, textvariable=user_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    row_pass = ttk.Frame(input_frame)
+    row_pass.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_pass, text="游戏密码：", width=10, anchor='e').pack(side=tk.LEFT)
+    pass_var = tk.StringVar(value=saved_pass)
+    pass_entry = ttk.Entry(row_pass, textvariable=pass_var, width=30, show="*")
+    pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    def _toggle_show():
+        if pass_entry.cget('show') == '*':
+            pass_entry.config(show='')
+            toggle_btn.config(text='隐藏')
+        else:
+            pass_entry.config(show='*')
+            toggle_btn.config(text='显示')
+
+    toggle_btn = ttk.Button(row_pass, text="显示", width=4, command=_toggle_show)
+    toggle_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+    ttk.Label(win, text="备注信息：", font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, anchor='w')
+
+    # 按钮固定在底部（先 pack，确保不被挤压隐藏）
+    btn_frame = ttk.Frame(win)
+    btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=(0, 10))
+
+    text_frame = ttk.Frame(win)
+    text_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(5, 10))
+
+    text_widget = tk.Text(text_frame, wrap=tk.WORD, font=('Microsoft YaHei UI', 9),
+                          bg='#fafbfc', fg='#2c3e50', relief='flat', borderwidth=1,
+                          highlightthickness=1, highlightcolor='#dcdde1',
+                          padx=8, pady=6)
+    scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+    text_widget.configure(yscrollcommand=scrollbar.set)
+    text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+    text_widget.insert("1.0", saved_note)
+
+    def _save_note():
+        user_text = user_var.get().strip()
+        pass_text = pass_var.get().strip()
+        note_text = text_widget.get("1.0", tk.END).strip()
+        # 只要有任何内容就保存
+        if user_text or pass_text or note_text:
+            app._account_notes[account_name] = {
+                "account": user_text,
+                "password": pass_text,
+                "note": note_text,
+            }
+        else:
+            app._account_notes.pop(account_name, None)
+        save_accounts(app)
+        messagebox.showinfo("已保存", f"「{account_name}」的备注已保存。", parent=win)
+        win.destroy()
+
+    ttk.Button(btn_frame, text="保存", style='Success.TButton',
+               command=_save_note, width=10).pack(side=tk.LEFT)
+    ttk.Button(btn_frame, text="取消", style='TButton',
+               command=win.destroy, width=10).pack(side=tk.LEFT, padx=(8, 0))

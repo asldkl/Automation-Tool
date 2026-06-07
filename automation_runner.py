@@ -21,6 +21,7 @@ import email_notifier
 import cooldown_watcher
 import server_client
 import scheduler
+import asset_db
 
 # 缓存 OCR 引擎实例（首次约2-3秒，后续毫秒级）
 _ocr_engine = None
@@ -331,6 +332,15 @@ def run_script_main(app):
                             print(f"💰 识别到资产：{asset_value}")
                             if app._current_account_name:
                                 app._account_assets[app._current_account_name] = asset_value
+                                # 记录资产历史
+                                if app._current_account_name not in app._asset_history:
+                                    app._asset_history[app._current_account_name] = []
+                                app._asset_history[app._current_account_name].append({
+                                    "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                    "value": asset_value
+                                })
+                                # 写入 SQLite 持久化记录
+                                asset_db.record_asset(app._current_account_name, asset_value)
                                 app.root.after(0, app._refresh_account_tree)
                         else:
                             print("ℹ️ 未识别到资产数值")
@@ -480,6 +490,8 @@ def game_operations_wrapper(app):
                 app.run_stats["sell_stats"] = extra["sell_stats"]
             if "asset" in extra and app._current_account_name:
                 app._account_assets[app._current_account_name] = extra["asset"]
+                # 写入 SQLite 持久化记录
+                asset_db.record_asset(app._current_account_name, extra["asset"])
                 app.root.after(0, app._refresh_account_tree)
         return success
     return result

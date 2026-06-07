@@ -2,8 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.0.4
-日期: 2026-06-03
+版本: v1.1.1
+日期: 2026-06-07
 作者: 开发团队
 
 ================================================================================
@@ -60,6 +60,7 @@
 ├── settings_window.py       # 设置窗口（支持 Canvas+Scrollbar 滚动）
 ├── template_capture.py      # 模板截图工具（含 OCR 配置）
 ├── cooldown_manager.py      # 冷却管理模块
+├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
 ├── test_all_features.py     # 全功能测试套件（54 项）
 ├── README.md                # 用户说明文档
 ├── 开发者使用说明书.txt      # 本文件
@@ -122,12 +123,12 @@ v1.1.0 将 gui_app.py（原约 2926 行）拆分为 7 个文件，采用模块�
 3.2 模块职责
 ----------------------------------------
 
-gui_app.py（入口层，约 867 行）
+gui_app.py（入口层，约 864 行）
     - App 类定义、__init__、_build_ui、_setup_styles、_setup_tray
     - 所有业务逻辑委托给子模块
     - 保留 UI 构建和窗口管理代码
 
-automation_runner.py（约 535 行）
+automation_runner.py（约 596 行）
     - start_run / stop_run：启动/停止自动化任务
     - run_script_main：主自动化循环
     - game_operations_wrapper / sell_operations_wrapper
@@ -397,7 +398,7 @@ hiddenimports 包含的模块:
     config, utils, settings_window, template_capture, crypto_utils,
     cooldown_manager, automation, machine_fingerprint,
     email_notifier, account_manager, scheduler, cooldown_watcher,
-    server_client, automation_runner,
+    server_client, automation_runner, asset_db,
     psutil, win32gui, win32con, win32api, win32event, win32security,
     pystray, PIL, PIL.Image, cv2, numpy, pyautogui,
     smtplib, email, email.mime, email.mime.text, email.mime.multipart
@@ -593,33 +594,65 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
-v1.0.4 (2026-06-04)
+v1.1.1 (2026-06-07)
+----------------------------------------
+
+- 新增资产监测功能：SQLite 持久化资产记录（~/.delta_auto_assets.db），支持按 1天/7天/30天 统计资产变化
+  - 新增 asset_db.py 模块：record_asset() 记录资产快照，query_total_change() 查询时间段内变化
+  - 资产识别后自动写入 SQLite（automation_runner.py 两处钩子）
+  - 主界面新增「资产监测」按钮，弹窗显示所有账号当前资产 + 时间段统计
+- 新增账号备注功能：右键菜单「加入备注」，支持记录游戏账号、密码和其他信息
+  - 密码输入框默认隐藏，可点击「显示」切换
+  - 备注数据结构化存储（account/password/note），兼容旧纯文本格式
+- 主界面按钮调整：
+  - 删除「使用说明」按钮，移至设置→全局设置底部
+  - 「一键重置冷却」改名为「冷却重置」
+  - 新增「资产监测」按钮（Accent 样式）
+- 资产记录窗口优化：
+  - 窗口居中显示
+  - 添加 picture/icon/icon.ico 图标
+  - 修复右侧文字被遮挡问题（Treeview 布局调整）
+  - 时间显示去掉年份前缀（2026-06-07 → 06-07）
+- 资产监测窗口：400x400，最小 200x200
+- 备注界面：保存/取消按钮固定在窗口底部，窗口缩小时不被隐藏
+- .spec 文件 hiddenimports 新增 asset_db 模块
+
+----------------------------------------
+v1.1.0 (2026-06-06)
 ----------------------------------------
 
 - 新增 OCR 文字识别：模板上传向导中每个模板旁新增「OCR识别」按钮，可框选屏幕区域并设置目标文本
-- 新增资产识别：三角洲图标点击后、启动按钮点击前自动识别资产数值（支持 K/M/B 后缀），显示在账号列表中
+- 新增资产识别：游戏启动后自动识别资产数值（支持 K/M/B 后缀），显示在账号列表中
+  - automation_runner.py 新增 _recognize_asset() 函数，使用缓存 RapidOCR 引擎
+  - 直接传入 numpy 数组（不做 BGR 转换），匹配参考实现
+  - 设置界面支持区域框选和测试识别
 - 主界面账号列表重新设计：从 Listbox 升级为 Treeview，新增四列（账号名称、现有资产、冷却剩余、下次运行）
-- 新增冷却管理快捷按钮：重置选中冷却、自定义冷却时间、刷新、一键重置
+- 主界面简化：删除刷新按钮，右键菜单集成测试截图识别/上移/下移/重置冷却/自定义冷却/删除
+- 设置窗口重新布局：
+  - 6 个选项卡：全局设置 → 售卖物品 → 自动任务 → 电源管理 → 邮件通知 → 其他设置
+  - 窗口 550x700，可调整大小，minsize(500, 600)
+  - 去除所有浏览按钮，路径/日志目录直接输入
+  - 机器指纹自动加载显示，无需手动刷新
+  - Spinbox 统一宽度，标签左对齐
+- 模板上传向导改进：
+  - 窗口可调整大小，minsize(300, 400)
+  - "全部跳过"按钮改为"一键重置"
+  - 全局文本配置底部添加使用说明
+  - padx 35→30
 - 冷却剩余时间自动刷新：账号列表每 60 秒自动刷新一次
 - 模块拆分：gui_app.py（约 2926 行）拆分为 7 个文件
-  - gui_app.py（约 867 行）：入口层，委托模式
-  - automation_runner.py：自动化运行
-  - scheduler.py：定时调度
-  - account_manager.py：账号管理
-  - email_notifier.py：邮件通知
-  - cooldown_watcher.py：冷却监听
-  - server_client.py：服务器通信
+  - gui_app.py（约 864 行）：入口层，委托模式
+  - automation_runner.py（约 596 行）：自动化运行 + 资产识别
+  - scheduler.py（约 540 行）：定时调度
+  - account_manager.py（约 738 行）：账号管理
+  - email_notifier.py（约 250 行）：邮件通知
+  - cooldown_watcher.py（约 160 行）：冷却监听
+  - server_client.py（约 117 行）：服务器通信
+- 修复资产识别不工作：utils.ocr_recognize() 的 BGR 转换导致识别失败，改为直接传 numpy 数组
 - 修复全局 OCR 禁用时未清理残余 ocr_configs
 - 修复状态图标未反映 OCR 配置状态
-- 修复全局 OCR 配置后主程序仍使用图片识别：补充 _IMAGE_TO_VAR 映射，修复全局区域回退条件
-- 修复全局文本配置保存后被父对话框覆盖：save_global 重新加载设置
-- 删除不可文字识别模板的 OCR 按钮（COIN_GAME、Discount、EMAIL_MAIL、QQ_ACCOUNT_SELECT）
 - 预初始化 RapidOCR 引擎（避免首次 OCR 超时）
 - OCR 连续超时 2 次自动禁用，回退到图像匹配
-- 模板上传向导添加「启动游戏按钮」默认文本：启动
-- 一键重置同步清除全局 OCR 开关（global_ocr_enabled、global_text_enabled）
-- "全部跳过"按钮改为"一键重置"（清除所有用户模板和 OCR 配置）
-- 模板上传向导 padx 35→30
 - 新增 Nuitka 打包支持和 Inno Setup 安装程序
 - 依赖新增：rapidocr-onnxruntime（OCR 文字识别引擎）
 - 测试套件更新为 54 项，适配模块拆分
@@ -754,10 +787,19 @@ A:
     3. 检查 OCR 配置是否正确（识别区域、目标文本）
     4. 如果 OCR 引擎初始化失败，程序会自动回退到图像匹配
 
+Q: 资产识别不工作怎么办？
+A:
+    1. 在设置→全局设置中勾选"启用资产识别"
+    2. 点击"设置区域"框选游戏中的资产数值区域（如 "1.2M"）
+    3. 点击"测试识别"验证是否能正确识别
+    4. 确保游戏画面稳定后再识别（程序会等待 1 秒）
+    5. 资产识别使用独立的 RapidOCR 引擎实例（缓存在 automation_runner._ocr_engine）
+    6. 注意：资产识别不做 BGR 转换，直接传 numpy 数组给 RapidOCR
+
 ================================================================================
                             文档结束
 ================================================================================
 
 如有问题，请联系开发团队。
 
-最后更新: 2026-06-03
+最后更新: 2026-06-06

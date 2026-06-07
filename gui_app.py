@@ -88,10 +88,12 @@ class App:
         self.root = root
         self.root.title("三角洲行动自动化工具")
         self.root.resizable(True, True)
-        self.root.minsize(640, 800)
+        self.root.minsize(500, 600)
         self.running = False
         self.qq_account_images = []
         self._account_assets = {}
+        self._asset_history = {}
+        self._account_notes = {}
         self._current_account_name = None
         self._stop_event = threading.Event()
         self._scheduler_stop_event = threading.Event()
@@ -540,14 +542,24 @@ class App:
     def _test_recognition(self):
         account_manager.test_recognition(self)
 
+    def _show_asset_history(self):
+        account_manager.show_asset_history(self)
+
     def _crop_account_image(self):
         account_manager.crop_account_image(self)
 
     def _show_cooldown_window(self):
         account_manager.show_cooldown_window(self)
 
-    def show_help(self):
+    def _show_usage_guide(self):
         account_manager.show_help(self)
+
+    def _show_asset_monitor(self):
+        account_manager.show_asset_monitor(self)
+
+    def _show_account_note(self):
+        account_manager.show_account_note(self)
+
 
     # --- 调度器 ---
     def _start_scheduler(self):
@@ -667,7 +679,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.1.0  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.1.1  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -681,12 +693,12 @@ class App:
         btn_frame.pack(fill=tk.X, pady=(0, 6))
         self.add_btn = ttk.Button(btn_frame, text="＋ 添加账号", style='Accent.TButton', command=self.add_account, width=14)
         self.add_btn.pack(side=tk.LEFT, padx=(0, 6))
-        self.del_btn = ttk.Button(btn_frame, text="－ 删除选中", style='TButton', command=self.delete_account, width=10)
-        self.del_btn.pack(side=tk.LEFT, padx=4)
         self.clear_btn = ttk.Button(btn_frame, text="× 清空列表", style='TButton', command=self.clear_accounts, width=10)
         self.clear_btn.pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="↑ 上移", style='TButton', command=self._move_up, width=7).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="↓ 下移", style='TButton', command=self._move_down, width=7).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="冷却重置", style='TButton',
+                   command=self._reset_all_cooldowns, width=10).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="资产监测", style='Accent.TButton',
+                   command=self._show_asset_monitor, width=10).pack(side=tk.LEFT, padx=4)
 
         list_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
         list_frame.pack(fill=tk.X)
@@ -696,10 +708,10 @@ class App:
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("cooldown", text="冷却剩余")
         self.account_tree.heading("next_run", text="下次运行")
-        self.account_tree.column("name", width=180, minwidth=120)
-        self.account_tree.column("asset", width=80, minwidth=60, anchor=tk.CENTER)
-        self.account_tree.column("cooldown", width=100, minwidth=80, anchor=tk.CENTER)
-        self.account_tree.column("next_run", width=80, minwidth=60, anchor=tk.CENTER)
+        self.account_tree.column("name", width=50, minwidth=40)
+        self.account_tree.column("asset", width=30, minwidth=20, anchor=tk.CENTER)
+        self.account_tree.column("cooldown", width=40, minwidth=30, anchor=tk.CENTER)
+        self.account_tree.column("next_run", width=30, minwidth=20, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.account_tree.yview)
         self.account_tree.configure(yscrollcommand=scrollbar.set)
         self.account_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -707,18 +719,19 @@ class App:
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame2.pack(fill=tk.X, pady=(6, 0))
-        ttk.Button(btn_frame2, text="重置选中冷却", style='TButton',
-                   command=self._reset_selected_cooldown, width=12).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame2, text="自定义冷却时间", style='TButton',
-                   command=self._custom_cooldown_time, width=13).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame2, text="⟳ 刷新", style='TButton',
-                   command=self._refresh_account_tree, width=8).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame2, text="一键重置", style='TButton',
-                   command=self._reset_all_cooldowns, width=8).pack(side=tk.LEFT, padx=4)
+        ttk.Label(btn_frame2, text="右键账号可进行上移、下移、删除、重置冷却等操作",
+                  style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888').pack(side=tk.LEFT)
 
         self.account_menu = tk.Menu(self.root, tearoff=0)
         self.account_menu.add_command(label="测试截图识别", command=self._test_recognition)
-        self.account_menu.add_command(label="裁剪截图（聚焦QQ号区域）", command=self._crop_account_image)
+        self.account_menu.add_command(label="查看资产记录", command=self._show_asset_history)
+        self.account_menu.add_command(label="加入备注", command=self._show_account_note)
+        self.account_menu.add_separator()
+        self.account_menu.add_command(label="上移", command=self._move_up)
+        self.account_menu.add_command(label="下移", command=self._move_down)
+        self.account_menu.add_separator()
+        self.account_menu.add_command(label="重置选中冷却", command=self._reset_selected_cooldown)
+        self.account_menu.add_command(label="自定义冷却时间", command=self._custom_cooldown_time)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_tree.bind("<Button-3>", self._show_account_menu)
@@ -771,12 +784,9 @@ class App:
         self.stop_btn = ttk.Button(ctrl_frame, text="■ 停止 (F2)", style='Danger.TButton',
                                    command=self.stop, state='disabled', width=16)
         self.stop_btn.pack(side=tk.LEFT, padx=8)
-        self.help_btn = ttk.Button(ctrl_frame, text="? 使用说明", style='TButton',
-                                   command=self.show_help, width=12)
-        self.help_btn.pack(side=tk.LEFT, padx=(20, 8))
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
-        self.settings_btn.pack(side=tk.LEFT, padx=8)
+        self.settings_btn.pack(side=tk.RIGHT, padx=8)
 
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self._log_file_path)
@@ -791,7 +801,7 @@ def main():
     root = tk.Tk()
     root.title("三角洲行动自动化工具")
     root.resizable(True, True)
-    root.minsize(640, 800)
+    root.minsize(500, 600)
 
     # 显示加载界面
     loading_frame = ttk.Frame(root, padding=40)
@@ -814,9 +824,9 @@ def main():
     def _init_app():
         progress.stop()
         loading_frame.destroy()
-        root.geometry("640x800")
+        root.geometry("550x800")
         root.update_idletasks()
-        mw, mh = 640, 800
+        mw, mh = 550, 800
         mx = (root.winfo_screenwidth() - mw) // 2
         my = (root.winfo_screenheight() - mh) // 2
         root.geometry(f"{mw}x{mh}+{mx}+{my}")

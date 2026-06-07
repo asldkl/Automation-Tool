@@ -1,6 +1,6 @@
 # 三角洲行动自动化工具
 
-基于图像识别的《三角洲行动》游戏日常自动化工具，支持 QQ 登录 + WeGame 快捷登录、多账号管理、定时执行、电源管理等功能。
+基于图像识别的《三角洲行动》游戏日常自动化工具，支持 QQ 登录 + WeGame 快捷登录、多账号管理、定时执行、电源管理、资产监测等功能。
 
 ## 功能特性
 
@@ -16,6 +16,8 @@
 - **自动领取邮箱货币** — 进入游戏后自动领取邮箱中的货币奖励
 - **OCR 文字识别** — 支持对屏幕指定区域进行文字识别，可作为图像匹配的替代方案
 - **资产识别** — 进入游戏后自动识别并显示账号资产数值
+- **资产监测** — SQLite 持久化资产记录，支持按时间段（1天/7天/30天）统计资产变化，正数绿色负数红色
+- **账号备注** — 右键账号可添加备注信息，支持记录游戏账号、密码等，密码默认隐藏可切换显示
 - **开机自启动** — 登录 Windows 时自动运行，可选立即执行任务
 - **单实例保护** — 重复启动自动激活已有窗口
 - **机器指纹绑定** — 通过硬盘+主板序列号生成唯一指纹，防止程序被复制到其他电脑使用
@@ -76,7 +78,7 @@ pyinstaller 三角洲自动工具.spec
 
 ## 配置说明
 
-用户配置：`~/.delta_auto_settings.json`，账号列表：`~/.delta_auto_accounts.json`，自定义模板：`~/.delta_auto_templates/`，冷却数据：`~/.delta_auto_cooldown.json`
+用户配置：`~/.delta_auto_settings.json`，账号列表：`~/.delta_auto_accounts.json`，自定义模板：`~/.delta_auto_templates/`，冷却数据：`~/.delta_auto_cooldown.json`，资产记录：`~/.delta_auto_assets.db`
 
 | 配置项 | 说明 |
 |--------|------|
@@ -110,6 +112,8 @@ pyinstaller 三角洲自动工具.spec
 | `enable_asset_recognition` | 启用资产识别 |
 | `asset_region` | 资产识别屏幕区域 [x, y, w, h] |
 | `asset_ocr_confidence` | 资产识别置信度 |
+
+> **v1.1.1 新增文件**：`asset_db.py`（资产数据 SQLite 持久化模块），数据存储在 `~/.delta_auto_assets.db`
 
 ## 技术栈
 
