@@ -560,6 +560,9 @@ class App:
     def _show_account_note(self):
         account_manager.show_account_note(self)
 
+    def _toggle_cooldown_pause(self):
+        account_manager.toggle_cooldown_pause(self)
+
 
     # --- 调度器 ---
     def _start_scheduler(self):
@@ -716,6 +719,10 @@ class App:
         self.account_tree.configure(yscrollcommand=scrollbar.set)
         self.account_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+        # 账号状态颜色标签
+        self.account_tree.tag_configure("cooling", foreground="#3498db")   # 蓝色 - 冷却中
+        self.account_tree.tag_configure("runnable", foreground="#27ae60")  # 绿色 - 可运行
+        self.account_tree.tag_configure("paused", foreground="#e74c3c")    # 红色 - 已暂停
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame2.pack(fill=tk.X, pady=(6, 0))
@@ -725,13 +732,14 @@ class App:
         self.account_menu = tk.Menu(self.root, tearoff=0)
         self.account_menu.add_command(label="测试截图识别", command=self._test_recognition)
         self.account_menu.add_command(label="查看资产记录", command=self._show_asset_history)
-        self.account_menu.add_command(label="加入备注", command=self._show_account_note)
+        self.account_menu.add_command(label="备注", command=self._show_account_note)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="上移", command=self._move_up)
         self.account_menu.add_command(label="下移", command=self._move_down)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="重置选中冷却", command=self._reset_selected_cooldown)
         self.account_menu.add_command(label="自定义冷却时间", command=self._custom_cooldown_time)
+        self.account_menu.add_command(label="停止冷却", command=self._toggle_cooldown_pause)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_tree.bind("<Button-3>", self._show_account_menu)

@@ -134,10 +134,18 @@ def refresh_account_tree(app):
         # 计算冷却剩余
         cooldown_str = ""
         next_run_str = ""
+        tag = "runnable"  # 默认可运行
         if name in all_cooldowns:
             cd_info = all_cooldowns[name]
+            paused = cd_info.get("paused", False)
             next_time = cd_info.get("next_run_time", "")
-            if next_time:
+            if paused:
+                remaining = cd_info.get("remaining_seconds", 0)
+                hours = int(remaining // 3600)
+                minutes = int((remaining % 3600) // 60)
+                cooldown_str = f"已暂停 {hours}h {minutes}m"
+                tag = "paused"
+            elif next_time:
                 from datetime import datetime
                 try:
                     next_dt = datetime.fromisoformat(next_time)
@@ -148,11 +156,12 @@ def refresh_account_tree(app):
                         minutes = int((diff.total_seconds() % 3600) // 60)
                         cooldown_str = f"{hours}h {minutes}m"
                         next_run_str = next_dt.strftime("%H:%M")
+                        tag = "cooling"
                     else:
                         cooldown_str = "已到期"
                 except Exception:
                     pass
-        app.account_tree.insert("", tk.END, values=(name, asset, cooldown_str, next_run_str))
+        app.account_tree.insert("", tk.END, values=(name, asset, cooldown_str, next_run_str), tags=(tag,))
     # 恢复选中
     children = app.account_tree.get_children()
     if 0 <= selected_idx < len(children):
@@ -166,6 +175,17 @@ def show_account_menu(app, event):
         item = app.account_tree.identify_row(event.y)
         if item:
             app.account_tree.selection_set(item)
+            # 动态更新"停止冷却"/"恢复冷却"菜单标签
+            import cooldown_manager
+            idx = app.account_tree.index(item)
+            if idx < len(app.qq_account_images):
+                name = os.path.basename(app.qq_account_images[idx])
+                paused = cooldown_manager.is_paused(name)
+                cooling, _ = cooldown_manager.is_cooling_down(name)
+                if paused:
+                    app.account_menu.entryconfigure(app.account_menu.index("停止冷却"), label="恢复冷却")
+                else:
+                    app.account_menu.entryconfigure(app.account_menu.index("停止冷却"), label="停止冷却")
             app.account_menu.tk_popup(event.x_root, event.y_root)
     finally:
         app.account_menu.grab_release()
@@ -295,6 +315,32 @@ def reset_all_cooldowns(app):
         cooldown_manager.reset_all_cooldowns()
         refresh_account_tree(app)
         messagebox.showinfo("已重置", "所有账号的冷却已重置。", parent=app.root)
+
+
+def toggle_cooldown_pause(app):
+    """暂停或恢复选中账号的冷却倒计时"""
+    import cooldown_manager
+    sel = app.account_tree.selection()
+    if not sel:
+        messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
+        return
+    idx = app.account_tree.index(sel[0])
+    if idx >= len(app.qq_account_images):
+        return
+    account_name = os.path.basename(app.qq_account_images[idx])
+    cooling, _ = cooldown_manager.is_cooling_down(account_name)
+    if not cooling:
+        messagebox.showinfo("提示", f"「{account_name}」当前没有在冷却中。", parent=app.root)
+        return
+    paused = cooldown_manager.is_paused(account_name)
+    if paused:
+        cooldown_manager.resume_cooldown(account_name)
+        refresh_account_tree(app)
+        messagebox.showinfo("已恢复", f"「{account_name}」的冷却倒计时已恢复。", parent=app.root)
+    else:
+        cooldown_manager.pause_cooldown(account_name)
+        refresh_account_tree(app)
+        messagebox.showinfo("已暂停", f"「{account_name}」的冷却倒计时已暂停。", parent=app.root)
 
 
 def start_periodic_tree_refresh(app):
@@ -1069,13 +1115,16 @@ def show_account_note(app):
     def _toggle_show():
         if pass_entry.cget('show') == '*':
             pass_entry.config(show='')
-            toggle_btn.config(text='隐藏')
+            toggle_btn.config(text='隐藏密码')
         else:
             pass_entry.config(show='*')
-            toggle_btn.config(text='显示')
+            toggle_btn.config(text='显示密码')
 
-    toggle_btn = ttk.Button(row_pass, text="显示", width=4, command=_toggle_show)
-    toggle_btn.pack(side=tk.LEFT, padx=(4, 0))
+    row_toggle = ttk.Frame(input_frame)
+    row_toggle.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_toggle, text="", width=10).pack(side=tk.LEFT)
+    toggle_btn = ttk.Button(row_toggle, text="显示密码", width=10, command=_toggle_show)
+    toggle_btn.pack(side=tk.LEFT)
 
     ttk.Label(win, text="备注信息：", font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, anchor='w')
 

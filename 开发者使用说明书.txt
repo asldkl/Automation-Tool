@@ -2,8 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.1.1
-日期: 2026-06-07
+版本: v1.1.2
+日期: 2026-06-08
 作者: 开发团队
 
 ================================================================================
@@ -59,7 +59,8 @@
 ├── utils.py                 # 工具函数模块（图像识别、OCR、进程管理等）
 ├── settings_window.py       # 设置窗口（支持 Canvas+Scrollbar 滚动）
 ├── template_capture.py      # 模板截图工具（含 OCR 配置）
-├── cooldown_manager.py      # 冷却管理模块
+├── cooldown_manager.py      # 冷却管理模块（含暂停/恢复功能）
+├── relative_mouse_move.py   # 贝塞尔曲线鼠标移动模块（v1.1.2 新增）
 ├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
 ├── test_all_features.py     # 全功能测试套件（54 项）
 ├── README.md                # 用户说明文档
@@ -396,7 +397,7 @@ POST /api/v1/heartbeat
 
 hiddenimports 包含的模块:
     config, utils, settings_window, template_capture, crypto_utils,
-    cooldown_manager, automation, machine_fingerprint,
+    cooldown_manager, automation, machine_fingerprint, relative_mouse_move,
     email_notifier, account_manager, scheduler, cooldown_watcher,
     server_client, automation_runner, asset_db,
     psutil, win32gui, win32con, win32api, win32event, win32security,
@@ -592,6 +593,29 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 12. 更新日志
 ================================================================================
+
+----------------------------------------
+v1.1.2 (2026-06-08)
+----------------------------------------
+
+- 新增冷却暂停/恢复功能：右键菜单「停止冷却」/「恢复冷却」，暂停时保存剩余秒数，恢复后继续倒计时
+  - cooldown_manager.py 新增 pause_cooldown() / resume_cooldown() / is_paused()
+  - 冷却数据新增 paused 和 paused_remaining 字段
+  - is_cooling_down() 和 get_all_cooldowns() 支持暂停状态
+- 账号状态颜色可视化：Treeview 使用 tag 系统实现行级着色
+  - 蓝色（#3498db）= 冷却中，绿色（#27ae60）= 可运行，红色（#e74c3c）= 已暂停
+  - refresh_account_tree() 根据冷却状态自动分配标签
+- 右键菜单优化：「加入备注」改名为「备注」
+- 备注窗口优化：密码「显示」按钮移至密码输入框下方，更名为「显示密码」
+- 运行完成后清空残余状态：on_finish() 重置进度条为 0、清空状态标签、刷新账号列表
+- 鼠标移动算法优化：贝塞尔曲线路径 + Smoothstep 缓动
+  - 新增 relative_mouse_move.py 模块：二次贝塞尔曲线（控制点垂直偏移）+ Smoothstep S曲线
+  - utils.py 新增 smooth_move_to() 包装函数，替代所有 pyautogui.moveTo 调用
+  - automation.py 鼠标移至 (20,20) 替代 (0,0)，防止触发 pyautogui 角落安全机制
+  - 修复 relative_mouse_move.py 的 broken import（utils.precise_sleep），改为内联实现
+- .spec 文件 hiddenimports 新增 relative_mouse_move 模块
+- 邮件通知优化：运行报告邮件新增每个账号资产数；手动终止运行时不发送邮件通知
+- build_accounts_html() 新增资产信息展示（从 app._account_assets 读取）
 
 ----------------------------------------
 v1.1.1 (2026-06-07)
@@ -802,4 +826,4 @@ A:
 
 如有问题，请联系开发团队。
 
-最后更新: 2026-06-06
+最后更新: 2026-06-08

@@ -15,6 +15,25 @@ import config
 from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS,
                     IMAGE_LOGIN_BTN,
                     QQ_ACCOUNT_SELECT, QQ_LOGIN_BTN)
+import relative_mouse_move
+
+
+def smooth_move_to(x, y, duration=0.2, use_bezier=True):
+    """使用贝塞尔曲线/Smoothstep算法平滑移动鼠标到目标位置"""
+    try:
+        cur_x, cur_y = pyautogui.position()
+        offset_x = x - cur_x
+        offset_y = y - cur_y
+        if offset_x == 0 and offset_y == 0:
+            return
+        def move_step(dx, dy):
+            pyautogui.moveRel(dx, dy, _pause=False)
+            return True
+        relative_mouse_move.perform_timed_relative_move(
+            offset_x, offset_y, duration, move_step, use_bezier=use_bezier
+        )
+    except Exception:
+        pyautogui.moveTo(x, y, duration=duration)
 
 def start_app(exe_path, app_name):
     """启动外部程序，5秒后返回是否成功"""
@@ -146,7 +165,7 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None):
                 continue
 
             try:
-                pyautogui.moveTo(x, y, duration=0.2)
+                smooth_move_to(x, y, duration=0.2)
                 pyautogui.click()
             except pyautogui.FailSafeException:
                 print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
@@ -199,7 +218,7 @@ def find_and_click_pos(img_path, timeout=20, region=None, confidence=None):
                 time.sleep(0.3)
                 continue
 
-            pyautogui.moveTo(x, y, duration=0.2)
+            smooth_move_to(x, y, duration=0.2)
             pyautogui.click()
             time.sleep(WAIT_TIME)
             return True, (x, y)
@@ -315,7 +334,7 @@ def find_and_click_multiscale(img_path, timeout=20, region=None, confidence=None
             if scale != 1.0:
                 print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
             try:
-                pyautogui.moveTo(x, y, duration=0.2)
+                smooth_move_to(x, y, duration=0.2)
                 pyautogui.click()
             except pyautogui.FailSafeException:
                 print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
@@ -404,7 +423,7 @@ def find_and_click_pos_multiscale(img_path, timeout=20, region=None, confidence=
 
             if scale != 1.0:
                 print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
-            pyautogui.moveTo(x, y, duration=0.2)
+            smooth_move_to(x, y, duration=0.2)
             pyautogui.click()
             time.sleep(WAIT_TIME)
             return True, (x, y)
@@ -596,7 +615,7 @@ def wake_display():
     # 方法1: 模拟鼠标移动和点击（常用于唤醒休眠中的显示器）
     try:
         screen_w, screen_h = pyautogui.size()
-        pyautogui.moveTo(screen_w // 2, screen_h // 2, duration=0.5)
+        smooth_move_to(screen_w // 2, screen_h // 2, duration=0.5)
         pyautogui.click()
         pyautogui.moveRel(1, 0, duration=0.1)
     except Exception:
@@ -658,7 +677,7 @@ def qq_quick_login(qq_number_img):
             scroll_distance = config.APP_SETTINGS.get("qq_mouse_move_distance", 100)
             scroll_amount = config.APP_SETTINGS.get("scroll_amount", 100)
             for scroll_attempt in range(3):
-                pyautogui.moveTo(scroll_x, scroll_y + scroll_distance, duration=0.1)
+                smooth_move_to(scroll_x, scroll_y + scroll_distance, duration=0.1)
                 time.sleep(0.2)
                 pyautogui.scroll(-scroll_amount)
                 time.sleep(0.8)
@@ -882,7 +901,7 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
                 cx = int((bbox[0] + bbox[2]) / 2)
                 cy = int((bbox[1] + bbox[3]) / 2)
                 try:
-                    pyautogui.moveTo(cx, cy, duration=0.2)
+                    smooth_move_to(cx, cy, duration=0.2)
                     pyautogui.click()
                 except pyautogui.FailSafeException:
                     print("⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")

@@ -1,7 +1,7 @@
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName=三角洲行动自动化工具
-AppVersion=1.1.1
+AppVersion=1.1.2
 AppPublisher=三角洲自动化工具
 AppPublisherURL=
 DefaultDirName={autopf}\三角洲行动自动化工具

@@ -157,13 +157,13 @@ def sell_operations(settings, stop_event, set_operation):
                 print(f"❌ 未找到上架按钮")
                 sell_stats["failed"] += 1
                 break
-            pyautogui.moveTo(0, 0)
+            utils.smooth_move_to(20, 20)
             time.sleep(0.5)
 
             for i in range(discount_times):
                 if utils.find_and_click_smart(config.Discount, timeout=5):
                     print(f"📉 降价 {i + 1}/{discount_times}")
-                    pyautogui.moveTo(0, 0)
+                    utils.smooth_move_to(20, 20)
                     time.sleep(0.3)
 
             if not utils.find_and_click_smart(config.Confirm_Listing, timeout=10):

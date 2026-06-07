@@ -18,7 +18,7 @@ a = Analysis(
            ('picture\\wegame_login', 'picture\\wegame_login'),
            ('picture\\icon', 'picture\\icon')] + _rapidocr_datas + _onnxrt_datas,
     hiddenimports=[
-        'config', 'utils', 'settings_window', 'template_capture', 'crypto_utils', 'cooldown_manager', 'automation', 'machine_fingerprint',
+        'config', 'utils', 'settings_window', 'template_capture', 'crypto_utils', 'cooldown_manager', 'automation', 'machine_fingerprint', 'relative_mouse_move',
         'email_notifier', 'account_manager', 'scheduler', 'cooldown_watcher', 'server_client', 'automation_runner', 'asset_db',
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',

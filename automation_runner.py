@@ -18,6 +18,7 @@ import automation
 import cooldown_manager
 import machine_fingerprint
 import email_notifier
+import account_manager
 import cooldown_watcher
 import server_client
 import scheduler
@@ -512,7 +513,11 @@ def on_finish(app):
     server_client.stop_heartbeat(app)
     app.start_btn.config(state='normal')
     app.stop_btn.config(state='disabled')
-    app.progress['value'] = app.progress['maximum']
+    # 清空进度条和状态信息
+    app.progress['value'] = 0
+    app.account_label.config(text="未开始")
+    app.current_account_file_label.config(text="无")
+    app.op_label.config(text="就绪")
 
     # 用户手动停止时，清理可能残留的进程
     if app._user_stopped_cooldown:
@@ -568,9 +573,12 @@ def on_finish(app):
         print(f"   {stats_text}")
         print(f"{'='*40}")
 
-    # 发送邮件通知
-    processed_accounts = stats.get("processed_accounts", [])
-    email_notifier.send_run_report_email(app, stats, elapsed, processed_accounts)
+    # 发送邮件通知（手动终止时不发送）
+    if not app._user_stopped_cooldown:
+        processed_accounts = stats.get("processed_accounts", [])
+        email_notifier.send_run_report_email(app, stats, elapsed, processed_accounts)
+    else:
+        print("⏹ 用户手动终止，跳过邮件通知")
 
     # 运行完成后延迟关机
     shutdown_delay = app.settings.get("post_run_shutdown_delay", 0)
@@ -579,6 +587,9 @@ def on_finish(app):
         utils.schedule_shutdown(delay_seconds)
         print(f"🔌 所有账号运行完毕，系统将在 {shutdown_delay} 分钟后关机")
         print(f"   如需取消关机，请在命令行执行: shutdown /a")
+
+    # 刷新账号列表（更新冷却状态和颜色）
+    account_manager.refresh_account_tree(app)
 
 
 def get_account_next_run(app, account_name):
@@ -590,18 +601,19 @@ def get_account_next_run(app, account_name):
 
 
 def build_accounts_html(app, processed_accounts):
-    """构建已处理账号列表的 HTML（含下次运行时间）"""
+    """构建已处理账号列表的 HTML（含资产和下次运行时间）"""
     if not processed_accounts:
         return ""
     items = []
     for acc in processed_accounts:
         # acc 格式: "xxx.png (成功)" 或 "xxx.png (失败)" 或 "xxx.png (冷却中)"
+        account_name = acc.split(" (")[0] if " (" in acc else acc
+        asset = app._account_assets.get(account_name, "")
+        asset_text = f"　｜　资产：{html.escape(asset)}" if asset else ""
         next_run = "未启用"
         if app.settings.get("enable_cooldown", False):
-            # 提取账号文件名（去掉状态后缀）
-            account_name = acc.split(" (")[0] if " (" in acc else acc
             next_run = get_account_next_run(app, account_name)
-        items.append(f"<li>{html.escape(acc)}　｜　下次运行：{html.escape(next_run)}</li>")
+        items.append(f"<li>{html.escape(acc)}{asset_text}　｜　下次运行：{html.escape(next_run)}</li>")
     accounts_html = "".join(items)
     return f"""
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
