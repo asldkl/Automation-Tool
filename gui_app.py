@@ -375,6 +375,10 @@ class App:
                     self._settings_window.win.focus_force()
                 except Exception:
                     pass
+            # 恢复日志窗口
+            if self._log_win and self._log_win.winfo_exists():
+                self._log_win.deiconify()
+                self._log_win.lift()
         except Exception as e:
             print(f"⚠️ 恢复窗口失败: {e}")
             try:
@@ -423,6 +427,9 @@ class App:
             try:
                 self.root.attributes('-topmost', False)
                 self.root.withdraw()
+                # 隐藏日志窗口
+                if self._log_win and self._log_win.winfo_exists():
+                    self._log_win.withdraw()
                 print("ℹ️ 程序已最小化到系统托盘，双击托盘图标可重新显示，右键可退出")
             except Exception as e:
                 print(f"⚠️ 最小化到托盘失败: {e}")
@@ -431,6 +438,7 @@ class App:
             self._quit_all()
 
     def _quit_all(self):
+        self._close_log_window()
         self.stop()
         server_client.stop_heartbeat(self)
         self._scheduler_stop_event.set()
@@ -563,6 +571,12 @@ class App:
     def _toggle_cooldown_pause(self):
         account_manager.toggle_account_pause(self)
 
+    def _on_tree_click(self, event):
+        """点击 Treeview 时，如果点击的是分隔行则阻止选中"""
+        item = self.account_tree.identify_row(event.y)
+        if item and "separator" in self.account_tree.item(item, "tags"):
+            return "break"
+
 
     # --- 调度器 ---
     def _start_scheduler(self):
@@ -690,7 +704,7 @@ class App:
 
         # ----- QQ 账号管理 -----
         account_frame = ttk.LabelFrame(main_container, text=" QQ 账号管理（截图顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
-        account_frame.pack(fill=tk.X, pady=(0, 8))
+        account_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
         btn_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame.pack(fill=tk.X, pady=(0, 6))
@@ -704,9 +718,9 @@ class App:
                    command=self._show_asset_monitor, width=10).pack(side=tk.LEFT, padx=4)
 
         list_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
-        list_frame.pack(fill=tk.X)
+        list_frame.pack(fill=tk.BOTH, expand=True)
         columns = ("name", "asset", "cooldown", "next_run")
-        self.account_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=4)
+        self.account_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
         self.account_tree.heading("name", text="账号名称")
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("cooldown", text="冷却剩余")
@@ -717,7 +731,7 @@ class App:
         self.account_tree.column("next_run", width=30, minwidth=20, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.account_tree.yview)
         self.account_tree.configure(yscrollcommand=scrollbar.set)
-        self.account_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.account_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
         # 账号状态颜色标签
         self.account_tree.tag_configure("cooling", foreground="#3498db")   # 蓝色 - 冷却中
@@ -745,6 +759,7 @@ class App:
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_tree.bind("<Button-3>", self._show_account_menu)
         self.account_tree.bind("<Double-1>", self._manual_add_cooldown)
+        self.account_tree.bind("<Button-1>", self._on_tree_click)
 
         # ----- 状态信息栏 -----
         info_card = ttk.Frame(main_container, style='Card.TLabelframe', padding=10)
@@ -773,29 +788,134 @@ class App:
         ctrl_frame = ttk.Frame(main_container, style='TFrame')
         ctrl_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
-        # ----- 日志区域 -----
-        log_label_frame = ttk.LabelFrame(main_container, text=" 运行日志 ", style='Card.TLabelframe', padding=8)
-        log_label_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-
-        self.log_area = scrolledtext.ScrolledText(log_label_frame,
-                                                  state='disabled', wrap=tk.WORD,
-                                                  font=('Consolas', 9),
-                                                  bg='#1e272e', fg='#00d8d6',
-                                                  insertbackground='#00d8d6',
-                                                  relief='flat', borderwidth=0,
-                                                  padx=8, pady=8,
-                                                  highlightthickness=1,
-                                                  highlightcolor='#dcdde1')
-        self.log_area.pack(expand=True, fill=tk.BOTH)
         self.start_btn = ttk.Button(ctrl_frame, text="▶ 开始运行 (F1)", style='Success.TButton',
-                                    command=self.start, width=18)
+                                    command=self.start, width=14)
         self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
         self.stop_btn = ttk.Button(ctrl_frame, text="■ 停止 (F2)", style='Danger.TButton',
-                                   command=self.stop, state='disabled', width=16)
+                                   command=self.stop, state='disabled', width=12)
         self.stop_btn.pack(side=tk.LEFT, padx=8)
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
         self.settings_btn.pack(side=tk.RIGHT, padx=8)
+        self.log_toggle_btn = ttk.Button(ctrl_frame, text="📋 日志", style='Accent.TButton',
+                                         command=self._toggle_log_panel, width=10)
+        self.log_toggle_btn.pack(side=tk.RIGHT, padx=8)
+
+        # ===== 日志窗口（初始隐藏） =====
+        self._log_win = None
+        self._log_area_widget = None
+        # 主窗口隐藏的日志缓冲区（日志窗口关闭时接收输出）
+        self.log_area = scrolledtext.ScrolledText(self.root, state='disabled')
+
+    def _toggle_log_panel(self):
+        """展开/收起日志独立窗口"""
+        if self._log_win and self._log_win.winfo_exists():
+            self._close_log_window()
+        else:
+            self._open_log_window()
+
+    def _open_log_window(self):
+        """打开日志窗口，固定在主窗口右侧"""
+        if self._log_win and self._log_win.winfo_exists():
+            return
+
+        LOG_WIDTH = 400
+        win = tk.Toplevel(self.root)
+        win.title("运行日志")
+        win.configure(bg='#1e272e')
+        win.resizable(True, True)
+        win.minsize(300, 200)
+        self._log_win = win
+
+        # 图标
+        try:
+            icon_path = config.resource_path("picture/icon/icon.ico")
+            if os.path.exists(icon_path):
+                from PIL import Image, ImageTk
+                win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+                win.iconphoto(False, win._icon_photo)
+        except Exception:
+            pass
+
+        # 定位到主窗口右侧
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_h = self.root.winfo_height()
+        win.geometry(f"{LOG_WIDTH}x{main_h}+{main_x + self.root.winfo_width()}+{main_y}")
+
+        # 日志文本区
+        log_area = scrolledtext.ScrolledText(win,
+                                             state='disabled', wrap=tk.WORD,
+                                             font=('Consolas', 9),
+                                             bg='#1e272e', fg='#00d8d6',
+                                             insertbackground='#00d8d6',
+                                             relief='flat', borderwidth=0,
+                                             padx=8, pady=8,
+                                             highlightthickness=1,
+                                             highlightcolor='#dcdde1')
+        log_area.pack(expand=True, fill=tk.BOTH, padx=6, pady=6)
+        self._log_area_widget = log_area
+
+        # 将已有日志内容复制过来
+        try:
+            self.log_area.configure(state='normal')
+            content = self.log_area.get('1.0', tk.END)
+            self.log_area.configure(state='disabled')
+            log_area.configure(state='normal')
+            log_area.insert('1.0', content)
+            log_area.see(tk.END)
+            log_area.configure(state='disabled')
+        except Exception:
+            pass
+
+        # 重定向输出到新窗口
+        sys.stdout = RedirectText(log_area, self._log_file_path)
+        sys.stderr = RedirectText(log_area, self._log_file_path)
+
+        # 主窗口移动时，日志窗口跟随
+        def _follow_main(event=None):
+            try:
+                if self._log_win and self._log_win.winfo_exists():
+                    mx = self.root.winfo_x()
+                    my = self.root.winfo_y()
+                    mh = self.root.winfo_height()
+                    mw = self.root.winfo_width()
+                    self._log_win.geometry(f"+{mx + mw}+{my}")
+                    # 高度跟随
+                    cur_w = self._log_win.winfo_width()
+                    self._log_win.geometry(f"{cur_w}x{mh}")
+            except Exception:
+                pass
+
+        self.root.bind("<Configure>", _follow_main)
+        win._follow_binding = _follow_main
+
+        # 关闭时清理
+        def _on_log_close():
+            self._close_log_window()
+
+        win.protocol("WM_DELETE_WINDOW", _on_log_close)
+
+    def _close_log_window(self):
+        """关闭日志窗口，恢复输出到主窗口隐藏的 log_area"""
+        if self._log_win and self._log_win.winfo_exists():
+            try:
+                # 解除跟随绑定
+                follow = getattr(self._log_win, '_follow_binding', None)
+                if follow:
+                    self.root.unbind("<Configure>", follow)
+            except Exception:
+                pass
+            try:
+                self._log_win.destroy()
+            except Exception:
+                pass
+        self._log_win = None
+        self._log_area_widget = None
+        # 恢复输出到主窗口的隐藏 log_area
+        sys.stdout = RedirectText(self.log_area, self._log_file_path)
+        sys.stderr = RedirectText(self.log_area, self._log_file_path)
 
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self._log_file_path)

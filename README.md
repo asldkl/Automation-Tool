@@ -99,7 +99,9 @@ pyinstaller 三角洲自动工具.spec
 | `email_enabled` / `smtp_code` | 邮件通知配置 |
 | `qq_mouse_move_distance` | QQ 账号列表鼠标下移距离 |
 | `scroll_amount` | 滚动幅度（50-150） |
-| `qq_scroll_down_times` | 向下滚动到底部次数（默认1） |
+| `qq_scroll_down_amount` | 向下滚动幅度（默认300，范围0-800） |
+| `qq_scroll_up_amount` | 向上滚动幅度（默认200，范围0-800） |
+| `qq_scroll_down_times` | 向下滚动到底部次数（默认3） |
 | `qq_scroll_up_times` | 向上查找账号次数（默认3） |
 | `game_launch_wait` | 游戏启动等待时间（秒） |
 | `enable_sell_after_run` | 主流程后执行一键出售 |
@@ -124,7 +126,7 @@ pyinstaller 三角洲自动工具.spec
 >
 > **v1.1.2 新增文件**：`relative_mouse_move.py`（贝塞尔曲线鼠标移动模块），集成到 `utils.smooth_move_to()`
 >
-> **v1.1.3 更新**：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机
+> **v1.1.3 更新**：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中
 
 ## 技术栈
 

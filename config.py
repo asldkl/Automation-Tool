@@ -108,9 +108,9 @@ DEFAULT_SETTINGS = {
     # 账号列表滚动查找设置
     "qq_mouse_move_distance": 100,    # QQ 账号列表鼠标下移距离（像素）
     "scroll_amount": 100,             # 滚动幅度（旧字段，兼容）
-    "qq_scroll_down_amount": 100,     # 向下滚动幅度
-    "qq_scroll_up_amount": 100,       # 向上滚动幅度
-    "qq_scroll_down_times": 1,        # 向下滚动到底部的次数（适配不同账号列表长度）
+    "qq_scroll_down_amount": 300,     # 向下滚动幅度
+    "qq_scroll_up_amount": 200,       # 向上滚动幅度
+    "qq_scroll_down_times": 3,        # 向下滚动到底部的次数（适配不同账号列表长度）
     "qq_scroll_up_times": 3,          # 向上查找账号的次数（防止错漏账号）
     "game_launch_wait": 0,            # 启动游戏后额外等待时间（秒，0-120）
     "run_on_startup": False,          # 开机立即运行一次程序

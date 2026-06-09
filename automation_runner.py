@@ -263,7 +263,8 @@ def run_script_main(app):
                             break
                         else:
                             print(f"❌ 降级方案失败：QQ_ACCOUNT_SELECT 图像识别3次均未找到，账号 {current_account_name} 登录失败，跳过")
-                            email_notifier.send_account_failure_email(app, current_account_name, "未启用", processed_accounts)
+                            if not app._user_stopped_cooldown:
+                                email_notifier.send_account_failure_email(app, current_account_name, "未启用", processed_accounts)
                             account_failed = True
                             break
                     time.sleep(0.5)
@@ -456,8 +457,9 @@ def run_script_main(app):
                 app.run_stats["fail"] += 1
                 processed_accounts.append(f"{current_account_name} (失败)")
                 server_client.update_account_status(app, current_account_name, "failed")
-                # 立即发送失败邮件通知
-                email_notifier.send_account_failure_email(app, current_account_name, next_run_str, processed_accounts)
+                # 立即发送失败邮件通知（手动停止时不发送）
+                if not app._user_stopped_cooldown:
+                    email_notifier.send_account_failure_email(app, current_account_name, next_run_str, processed_accounts)
             else:
                 # 只有成功运行的账号才记录冷却时间
                 if app.settings.get("enable_cooldown", False):
@@ -487,7 +489,8 @@ def run_script_main(app):
         print(f"❌ 运行出错: {e}")
         traceback.print_exc()
         app.run_stats["error"] = str(e)
-        email_notifier.send_failure_email(app, e, processed_accounts)
+        if not app._user_stopped_cooldown:
+            email_notifier.send_failure_email(app, e, processed_accounts)
     finally:
         app.run_stats["processed_accounts"] = processed_accounts
         app.root.after(0, lambda: on_finish(app))

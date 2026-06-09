@@ -78,9 +78,9 @@ class SettingsWindow:
         # 账号列表滚动查找变量
         self.qq_mouse_move_distance_var = tk.IntVar(value=app.settings.get("qq_mouse_move_distance", 100))
         self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
-        self.qq_scroll_down_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_down_amount", app.settings.get("scroll_amount", 100)))
-        self.qq_scroll_up_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_up_amount", app.settings.get("scroll_amount", 100)))
-        self.qq_scroll_down_times_var = tk.IntVar(value=app.settings.get("qq_scroll_down_times", 1))
+        self.qq_scroll_down_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_down_amount", 300))
+        self.qq_scroll_up_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_up_amount", 200))
+        self.qq_scroll_down_times_var = tk.IntVar(value=app.settings.get("qq_scroll_down_times", 3))
         self.qq_scroll_up_times_var = tk.IntVar(value=app.settings.get("qq_scroll_up_times", 3))
         self.game_launch_wait_var = tk.IntVar(value=app.settings.get("game_launch_wait", 0))
 
@@ -683,13 +683,13 @@ class SettingsWindow:
         f3 = ttk.Frame(frame3, style='SettingsInner.TFrame')
         f3.pack(fill=tk.X)
         ttk.Label(f3, text="向下滚动幅度（滚到底部）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3, from_=50, to=300, increment=10,
+        ttk.Spinbox(f3, from_=0, to=800, increment=10,
                     textvariable=self.qq_scroll_down_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
         f3up = ttk.Frame(frame3, style='SettingsInner.TFrame')
         f3up.pack(fill=tk.X, pady=(6, 0))
         ttk.Label(f3up, text="向上滚动幅度（查找账号）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3up, from_=50, to=300, increment=10,
+        ttk.Spinbox(f3up, from_=0, to=800, increment=10,
                     textvariable=self.qq_scroll_up_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
         f3b = ttk.Frame(frame3, style='SettingsInner.TFrame')
