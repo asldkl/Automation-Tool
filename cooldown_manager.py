@@ -119,6 +119,7 @@ def get_all_cooldowns():
             "next_run_time": next_run_str,
             "remaining_seconds": remaining,
             "paused": paused,
+            "account_paused": entry.get("account_paused", False),
         }
     return result
 
@@ -206,6 +207,24 @@ def is_paused(account_name):
     if account_name not in data:
         return False
     return bool(data[account_name].get("paused"))
+
+
+def set_account_paused(account_name, paused):
+    """设置账号暂停状态（独立于冷却，暂停后运行时跳过该账号）"""
+    data = _load_data()
+    if account_name not in data:
+        data[account_name] = {}
+    data[account_name]["account_paused"] = paused
+    _save_data(data)
+    return True
+
+
+def is_account_paused(account_name):
+    """检查账号是否被暂停（暂停后运行时跳过该账号）"""
+    data = _load_data()
+    if account_name not in data:
+        return False
+    return bool(data[account_name].get("account_paused"))
 
 
 def remove_expired_cooldowns():

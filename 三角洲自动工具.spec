@@ -7,7 +7,7 @@ _onnxrt_datas, _onnxrt_binaries, _onnxrt_hiddenimports = collect_all('onnxruntim
 
 a = Analysis(
     ['main.py'],
-    pathex=[r'C:\Users\Administrator\Downloads\Automation-Tool-main\Automation-Tool-main'],
+    pathex=[r'C:\Users\Administrator\Desktop\mian\Automation-Tool-main\Automation-Tool-main'],
     binaries=_rapidocr_binaries + _onnxrt_binaries,
     datas=[('picture', 'picture'), ('picture\\produce', 'picture\\produce'),
            ('picture\\qq_login', 'picture\\qq_login'), ('picture\\One_Click_Sell', 'picture\\One_Click_Sell'),

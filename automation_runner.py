@@ -55,12 +55,20 @@ def _recognize_asset(app, asset_region):
             return None
 
         all_text = "".join(item[1] for item in result)
+        # 提取数字+小数点+单位(KMB)，过滤"现有资产"等无效文字
         match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
         if match:
             number = match.group(1)
             suffix = match.group(2).upper()
             return f"{number}{suffix}"
-        return all_text.strip() or None
+        # 降级：清理非数字/KMB字符后重试
+        cleaned = re.sub(r'[^0-9.KMBkmb]', '', all_text)
+        match2 = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', cleaned)
+        if match2:
+            number = match2.group(1)
+            suffix = match2.group(2).upper()
+            return f"{number}{suffix}"
+        return None
     except Exception as e:
         print(f"⚠️ 资产识别失败: {e}")
         return None
@@ -186,6 +194,13 @@ def run_script_main(app):
             current_account_name = file_name
             app._current_account_name = file_name
 
+            # 账号暂停检查（暂停后运行时跳过该账号）
+            if cooldown_manager.is_account_paused(file_name):
+                print(f"⏸️ 账号 {file_name} 已暂停，跳过。")
+                processed_accounts.append(f"{file_name} (已暂停)")
+                server_client.update_account_status(app, file_name, "cooling")
+                continue
+
             # 冷却检查（定时任务/冷却到期触发时可跳过冷却检查，但开机启动时强制检查）
             if app._ignore_cooldown_this_run and not app._is_boot_startup:
                 print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
@@ -213,7 +228,7 @@ def run_script_main(app):
             if not account_interrupted:
                 set_operation(app, f"启动 QQ ({i+1}/{total})")
                 print("启动 QQ...")
-                if not qq_path or not utils.start_app(qq_path, "QQ"):
+                if not qq_path or not utils.start_app(qq_path, "QQ", wait_time=3):
                     print("❌ QQ 启动失败，跳过此账号")
                     account_failed = True
 
@@ -580,13 +595,14 @@ def on_finish(app):
     else:
         print("⏹ 用户手动终止，跳过邮件通知")
 
-    # 运行完成后延迟关机
-    shutdown_delay = app.settings.get("post_run_shutdown_delay", 0)
-    if shutdown_delay > 0:
-        delay_seconds = shutdown_delay * 60
-        utils.schedule_shutdown(delay_seconds)
-        print(f"🔌 所有账号运行完毕，系统将在 {shutdown_delay} 分钟后关机")
-        print(f"   如需取消关机，请在命令行执行: shutdown /a")
+    # 运行完成后延迟关机（手动终止时不执行）
+    if not app._user_stopped_cooldown:
+        shutdown_delay = app.settings.get("post_run_shutdown_delay", 0)
+        if shutdown_delay > 0:
+            delay_seconds = shutdown_delay * 60
+            utils.schedule_shutdown(delay_seconds)
+            print(f"🔌 所有账号运行完毕，系统将在 {shutdown_delay} 分钟后关机")
+            print(f"   如需取消关机，请在命令行执行: shutdown /a")
 
     # 刷新账号列表（更新冷却状态和颜色）
     account_manager.refresh_account_tree(app)

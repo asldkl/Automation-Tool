@@ -53,24 +53,35 @@ def load_accounts(app):
 
 
 def add_account(app):
-    file_path = filedialog.askopenfilename(
-        title="选择 QQ 号截图",
+    file_paths = filedialog.askopenfilenames(
+        title="选择 QQ 号截图（可多选）",
         filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
     )
-    if file_path:
-        if file_path in app.qq_account_images:
-            messagebox.showwarning("提示", "该账号图片已存在，不能重复添加！")
-            return
-        app.qq_account_images.append(file_path)
-        refresh_account_tree(app)
-        update_account_count(app)
-        save_accounts(app)
+    if file_paths:
+        added = 0
+        skipped = 0
+        for file_path in file_paths:
+            if file_path in app.qq_account_images:
+                skipped += 1
+                continue
+            app.qq_account_images.append(file_path)
+            added += 1
+        if added > 0:
+            refresh_account_tree(app)
+            update_account_count(app)
+            save_accounts(app)
+        if skipped > 0:
+            messagebox.showinfo("添加完成", f"已添加 {added} 个账号，跳过 {skipped} 个重复项。")
+        elif added > 0:
+            messagebox.showinfo("添加完成", f"已添加 {added} 个账号。")
 
 
 def delete_account(app):
     sel = app.account_tree.selection()
     if sel:
-        idx = app.account_tree.index(sel[0])
+        if "separator" in app.account_tree.item(sel[0], "tags"):
+            return
+        idx = _tree_idx_to_account_idx(app, sel[0])
         del app.qq_account_images[idx]
         refresh_account_tree(app)
         update_account_count(app)
@@ -95,35 +106,47 @@ def update_account_count(app):
 def move_up(app):
     sel = app.account_tree.selection()
     if sel:
-        idx = app.account_tree.index(sel[0])
+        if "separator" in app.account_tree.item(sel[0], "tags"):
+            return
+        idx = _tree_idx_to_account_idx(app, sel[0])
         if idx > 0:
             app.qq_account_images[idx], app.qq_account_images[idx-1] = app.qq_account_images[idx-1], app.qq_account_images[idx]
             refresh_account_tree(app)
-            children = app.account_tree.get_children()
-            if idx-1 < len(children):
-                app.account_tree.selection_set(children[idx-1])
 
 
 def move_down(app):
     sel = app.account_tree.selection()
     if sel:
-        idx = app.account_tree.index(sel[0])
+        if "separator" in app.account_tree.item(sel[0], "tags"):
+            return
+        idx = _tree_idx_to_account_idx(app, sel[0])
         if idx < len(app.qq_account_images) - 1:
             app.qq_account_images[idx], app.qq_account_images[idx+1] = app.qq_account_images[idx+1], app.qq_account_images[idx]
             refresh_account_tree(app)
-            children = app.account_tree.get_children()
-            if idx+1 < len(children):
-                app.account_tree.selection_set(children[idx+1])
+
+
+def _tree_idx_to_account_idx(app, tree_item):
+    """将 Treeview 项目 ID 转换为账号列表索引（跳过分隔行）"""
+    tree_idx = app.account_tree.index(tree_item)
+    # 计算该位置之前有多少个分隔行
+    children = app.account_tree.get_children()
+    separator_count = 0
+    for i in range(tree_idx):
+        if "separator" in app.account_tree.item(children[i], "tags"):
+            separator_count += 1
+    return tree_idx - separator_count
 
 
 def refresh_account_tree(app):
     """刷新账号列表（Treeview），更新冷却和资产信息"""
     import cooldown_manager
-    # 保存当前选中项
-    selected_idx = -1
+    # 保存当前选中账号名称
+    selected_name = None
     sel = app.account_tree.selection()
     if sel:
-        selected_idx = app.account_tree.index(sel[0])
+        vals = app.account_tree.item(sel[0], "values")
+        if vals and "separator" not in app.account_tree.item(sel[0], "tags"):
+            selected_name = vals[0]
     # 清空并重新填充
     for item in app.account_tree.get_children():
         app.account_tree.delete(item)
@@ -135,7 +158,11 @@ def refresh_account_tree(app):
         cooldown_str = ""
         next_run_str = ""
         tag = "runnable"  # 默认可运行
-        if name in all_cooldowns:
+        # 检查账号暂停状态（独立于冷却暂停）
+        if cooldown_manager.is_account_paused(name):
+            cooldown_str = "已暂停"
+            tag = "paused"
+        elif name in all_cooldowns:
             cd_info = all_cooldowns[name]
             paused = cd_info.get("paused", False)
             next_time = cd_info.get("next_run_time", "")
@@ -143,7 +170,7 @@ def refresh_account_tree(app):
                 remaining = cd_info.get("remaining_seconds", 0)
                 hours = int(remaining // 3600)
                 minutes = int((remaining % 3600) // 60)
-                cooldown_str = f"已暂停 {hours}h {minutes}m"
+                cooldown_str = f"冷却暂停 {hours}h {minutes}m"
                 tag = "paused"
             elif next_time:
                 from datetime import datetime
@@ -162,10 +189,16 @@ def refresh_account_tree(app):
                 except Exception:
                     pass
         app.account_tree.insert("", tk.END, values=(name, asset, cooldown_str, next_run_str), tags=(tag,))
-    # 恢复选中
-    children = app.account_tree.get_children()
-    if 0 <= selected_idx < len(children):
-        app.account_tree.selection_set(children[selected_idx])
+        # 插入分隔行（最后一行不插入）
+        if i < len(app.qq_account_images) - 1:
+            app.account_tree.insert("", tk.END, values=("", "", "", ""), tags=("separator",))
+    # 恢复选中（按账号名称匹配）
+    if selected_name:
+        for child in app.account_tree.get_children():
+            vals = app.account_tree.item(child, "values")
+            if vals and vals[0] == selected_name and "separator" not in app.account_tree.item(child, "tags"):
+                app.account_tree.selection_set(child)
+                break
     save_accounts(app)
 
 
@@ -174,18 +207,19 @@ def show_account_menu(app, event):
     try:
         item = app.account_tree.identify_row(event.y)
         if item:
+            if "separator" in app.account_tree.item(item, "tags"):
+                return
             app.account_tree.selection_set(item)
-            # 动态更新"停止冷却"/"恢复冷却"菜单标签
+            # 动态更新"暂停账号"/"恢复账号"菜单标签
             import cooldown_manager
-            idx = app.account_tree.index(item)
+            idx = _tree_idx_to_account_idx(app, item)
             if idx < len(app.qq_account_images):
                 name = os.path.basename(app.qq_account_images[idx])
-                paused = cooldown_manager.is_paused(name)
-                cooling, _ = cooldown_manager.is_cooling_down(name)
-                if paused:
-                    app.account_menu.entryconfigure(app.account_menu.index("停止冷却"), label="恢复冷却")
+                is_paused = cooldown_manager.is_account_paused(name)
+                if is_paused:
+                    app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="恢复账号")
                 else:
-                    app.account_menu.entryconfigure(app.account_menu.index("停止冷却"), label="停止冷却")
+                    app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="暂停账号")
             app.account_menu.tk_popup(event.x_root, event.y_root)
     finally:
         app.account_menu.grab_release()
@@ -196,7 +230,9 @@ def manual_add_cooldown(app, event):
     sel = app.account_tree.selection()
     if not sel:
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
     img_path = app.qq_account_images[idx]
@@ -241,7 +277,9 @@ def reset_selected_cooldown(app):
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
     account_name = os.path.basename(app.qq_account_images[idx])
@@ -262,7 +300,9 @@ def custom_cooldown_time(app):
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
     account_name = os.path.basename(app.qq_account_images[idx])
@@ -317,30 +357,28 @@ def reset_all_cooldowns(app):
         messagebox.showinfo("已重置", "所有账号的冷却已重置。", parent=app.root)
 
 
-def toggle_cooldown_pause(app):
-    """暂停或恢复选中账号的冷却倒计时"""
+def toggle_account_pause(app):
+    """暂停或恢复选中账号（暂停后运行时跳过该账号）"""
     import cooldown_manager
     sel = app.account_tree.selection()
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
     account_name = os.path.basename(app.qq_account_images[idx])
-    cooling, _ = cooldown_manager.is_cooling_down(account_name)
-    if not cooling:
-        messagebox.showinfo("提示", f"「{account_name}」当前没有在冷却中。", parent=app.root)
-        return
-    paused = cooldown_manager.is_paused(account_name)
-    if paused:
-        cooldown_manager.resume_cooldown(account_name)
+    is_paused = cooldown_manager.is_account_paused(account_name)
+    if is_paused:
+        cooldown_manager.set_account_paused(account_name, False)
         refresh_account_tree(app)
-        messagebox.showinfo("已恢复", f"「{account_name}」的冷却倒计时已恢复。", parent=app.root)
+        messagebox.showinfo("已恢复", f"「{account_name}」已恢复，运行时将正常执行。", parent=app.root)
     else:
-        cooldown_manager.pause_cooldown(account_name)
+        cooldown_manager.set_account_paused(account_name, True)
         refresh_account_tree(app)
-        messagebox.showinfo("已暂停", f"「{account_name}」的冷却倒计时已暂停。", parent=app.root)
+        messagebox.showinfo("已暂停", f"「{account_name}」已暂停，运行时将跳过该账号。", parent=app.root)
 
 
 def start_periodic_tree_refresh(app):
@@ -354,7 +392,9 @@ def test_recognition(app):
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号")
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     img_path = app.qq_account_images[idx]
     if not os.path.exists(img_path):
         messagebox.showerror("错误", "截图文件不存在")
@@ -419,7 +459,9 @@ def crop_account_image(app):
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     img_path = app.qq_account_images[idx]
     if not os.path.exists(img_path):
         messagebox.showerror("错误", "截图文件不存在", parent=app.root)
@@ -825,6 +867,8 @@ def show_asset_history(app):
         messagebox.showwarning("提示", "请先选择一个账号", parent=app.root)
         return
     item = selected[0]
+    if "separator" in app.account_tree.item(item, "tags"):
+        return
     account_name = app.account_tree.item(item, "values")[0]
 
     history = app._asset_history.get(account_name, [])
@@ -1051,7 +1095,9 @@ def show_account_note(app):
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
         return
-    idx = app.account_tree.index(sel[0])
+    if "separator" in app.account_tree.item(sel[0], "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
     img_path = app.qq_account_images[idx]

@@ -561,7 +561,7 @@ class App:
         account_manager.show_account_note(self)
 
     def _toggle_cooldown_pause(self):
-        account_manager.toggle_cooldown_pause(self)
+        account_manager.toggle_account_pause(self)
 
 
     # --- 调度器 ---
@@ -682,7 +682,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.1.1  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.1.3  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -723,6 +723,7 @@ class App:
         self.account_tree.tag_configure("cooling", foreground="#3498db")   # 蓝色 - 冷却中
         self.account_tree.tag_configure("runnable", foreground="#27ae60")  # 绿色 - 可运行
         self.account_tree.tag_configure("paused", foreground="#e74c3c")    # 红色 - 已暂停
+        self.account_tree.tag_configure("separator", background="#dcdde1")  # 分隔线
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame2.pack(fill=tk.X, pady=(6, 0))
@@ -739,7 +740,7 @@ class App:
         self.account_menu.add_separator()
         self.account_menu.add_command(label="重置选中冷却", command=self._reset_selected_cooldown)
         self.account_menu.add_command(label="自定义冷却时间", command=self._custom_cooldown_time)
-        self.account_menu.add_command(label="停止冷却", command=self._toggle_cooldown_pause)
+        self.account_menu.add_command(label="暂停账号", command=self._toggle_cooldown_pause)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_tree.bind("<Button-3>", self._show_account_menu)

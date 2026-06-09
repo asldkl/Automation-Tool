@@ -35,8 +35,8 @@ def smooth_move_to(x, y, duration=0.2, use_bezier=True):
     except Exception:
         pyautogui.moveTo(x, y, duration=duration)
 
-def start_app(exe_path, app_name):
-    """启动外部程序，5秒后返回是否成功"""
+def start_app(exe_path, app_name, wait_time=5):
+    """启动外部程序，等待指定秒数后返回是否成功"""
     if not exe_path or not os.path.exists(exe_path):
         print(f"❌ 找不到 {app_name} 程序文件：{exe_path}")
         return False
@@ -44,7 +44,7 @@ def start_app(exe_path, app_name):
         work_dir = os.path.dirname(exe_path)
         subprocess.Popen(exe_path, cwd=work_dir)
         print(f"✅ 已启动：{app_name}")
-        time.sleep(5)
+        time.sleep(wait_time)
         return True
     except Exception as e:
         print(f"❌ 启动 {app_name} 失败：{e}")
@@ -657,8 +657,7 @@ def wake_display():
 def qq_quick_login(qq_number_img):
     """
     使用图像识别完成 QQ 自动登录：
-    点击账号选择 → 点击目标 QQ 号 → 点击登录按钮
-    支持滚动查找被遮挡的账号（超过3个账号时）
+    点击账号选择 → 滚动到底部 → 向上查找目标 QQ 号 → 点击登录按钮
     使用多尺度匹配，解决模板与屏幕分辨率不一致的问题
     """
     print("🔍 点击 QQ 账号选择按钮...")
@@ -668,35 +667,65 @@ def qq_quick_login(qq_number_img):
         return False
     time.sleep(1)
 
-    print("🔍 选择 QQ 号（多尺度匹配）...")
-    if not find_and_click_multiscale(qq_number_img, timeout=5):
-        # 未找到目标账号，尝试滚动下拉列表查找
-        if btn_pos:
-            print("🔍 目标 QQ 号可能被遮挡，尝试滚动查找...")
-            scroll_x, scroll_y = btn_pos
-            scroll_distance = config.APP_SETTINGS.get("qq_mouse_move_distance", 100)
-            scroll_amount = config.APP_SETTINGS.get("scroll_amount", 100)
-            for scroll_attempt in range(3):
-                smooth_move_to(scroll_x, scroll_y + scroll_distance, duration=0.1)
-                time.sleep(0.2)
-                pyautogui.scroll(-scroll_amount)
-                time.sleep(0.8)
-                if find_and_click_multiscale(qq_number_img, timeout=5):
-                    break
-            else:
-                print("❌ 滚动查找后仍未找到目标 QQ 号")
-                return False
-        else:
-            print("❌ 未找到目标 QQ 号")
-            return False
-    time.sleep(0.5)
+    # 读取滚动设置
+    scroll_distance = config.APP_SETTINGS.get("qq_mouse_move_distance", 100)
+    scroll_down_amount = config.APP_SETTINGS.get("qq_scroll_down_amount", config.APP_SETTINGS.get("scroll_amount", 100))
+    scroll_up_amount = config.APP_SETTINGS.get("qq_scroll_up_amount", config.APP_SETTINGS.get("scroll_amount", 100))
+    scroll_down_times = config.APP_SETTINGS.get("qq_scroll_down_times", 1)
+    scroll_up_times = config.APP_SETTINGS.get("qq_scroll_up_times", 3)
 
-    print("🔍 点击 QQ 登录按钮...")
-    if not find_and_click(QQ_LOGIN_BTN, timeout=10):
-        print("❌ 未找到 QQ 登录按钮")
+    # 先尝试直接匹配（不滚动）
+    print("🔍 选择 QQ 号（多尺度匹配）...")
+    if find_and_click_multiscale(qq_number_img, timeout=3):
+        time.sleep(0.5)
+        print("🔍 点击 QQ 登录按钮...")
+        if not find_and_click(QQ_LOGIN_BTN, timeout=10):
+            print("❌ 未找到 QQ 登录按钮")
+            return False
+        print("✅ QQ 自动登录完成")
+        return True
+
+    # 未直接找到，先连续快速滚动到列表底部
+    if btn_pos:
+        scroll_x, scroll_y = btn_pos
+        print(f"🔍 目标 QQ 号未直接找到，快速滚动到列表底部（{scroll_down_times} 次）...")
+        smooth_move_to(scroll_x, scroll_y + scroll_distance, duration=0.1)
+        time.sleep(0.2)
+        for _ in range(scroll_down_times):
+            pyautogui.scroll(-scroll_down_amount)  # 向下滚动，无间隔连续到底
+
+        # 到底后尝试匹配
+        time.sleep(0.5)
+        print("🔍 到达底部，尝试匹配...")
+        if find_and_click_multiscale(qq_number_img, timeout=3):
+            time.sleep(0.5)
+            print("🔍 点击 QQ 登录按钮...")
+            if not find_and_click(QQ_LOGIN_BTN, timeout=10):
+                print("❌ 未找到 QQ 登录按钮")
+                return False
+            print("✅ QQ 自动登录完成")
+            return True
+
+        # 底部未找到，从底部向上逐次查找
+        print(f"🔍 底部未找到，从底部向上查找目标 QQ 号（最多 {scroll_up_times} 次）...")
+        for up_attempt in range(scroll_up_times):
+            smooth_move_to(scroll_x, scroll_y + scroll_distance, duration=0.1)
+            time.sleep(0.2)
+            pyautogui.scroll(scroll_up_amount)  # 向上滚动
+            time.sleep(0.8)
+            if find_and_click_multiscale(qq_number_img, timeout=3):
+                time.sleep(0.5)
+                print("🔍 点击 QQ 登录按钮...")
+                if not find_and_click(QQ_LOGIN_BTN, timeout=10):
+                    print("❌ 未找到 QQ 登录按钮")
+                    return False
+                print("✅ QQ 自动登录完成")
+                return True
+        print("❌ 向上查找后仍未找到目标 QQ 号")
         return False
-    print("✅ QQ 自动登录完成")
-    return True
+    else:
+        print("❌ 未找到目标 QQ 号")
+        return False
 
 def schedule_startup_task(time_str):
     """

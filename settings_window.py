@@ -78,6 +78,10 @@ class SettingsWindow:
         # 账号列表滚动查找变量
         self.qq_mouse_move_distance_var = tk.IntVar(value=app.settings.get("qq_mouse_move_distance", 100))
         self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
+        self.qq_scroll_down_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_down_amount", app.settings.get("scroll_amount", 100)))
+        self.qq_scroll_up_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_up_amount", app.settings.get("scroll_amount", 100)))
+        self.qq_scroll_down_times_var = tk.IntVar(value=app.settings.get("qq_scroll_down_times", 1))
+        self.qq_scroll_up_times_var = tk.IntVar(value=app.settings.get("qq_scroll_up_times", 3))
         self.game_launch_wait_var = tk.IntVar(value=app.settings.get("game_launch_wait", 0))
 
         # 一键出售变量
@@ -678,9 +682,27 @@ class SettingsWindow:
 
         f3 = ttk.Frame(frame3, style='SettingsInner.TFrame')
         f3.pack(fill=tk.X)
-        ttk.Label(f3, text="滚动幅度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3, from_=50, to=150, increment=10,
-                    textvariable=self.scroll_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+        ttk.Label(f3, text="向下滚动幅度（滚到底部）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f3, from_=50, to=300, increment=10,
+                    textvariable=self.qq_scroll_down_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+
+        f3up = ttk.Frame(frame3, style='SettingsInner.TFrame')
+        f3up.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(f3up, text="向上滚动幅度（查找账号）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f3up, from_=50, to=300, increment=10,
+                    textvariable=self.qq_scroll_up_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+
+        f3b = ttk.Frame(frame3, style='SettingsInner.TFrame')
+        f3b.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(f3b, text="向下滚动到底部次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f3b, from_=1, to=10, increment=1,
+                    textvariable=self.qq_scroll_down_times_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+
+        f3c = ttk.Frame(frame3, style='SettingsInner.TFrame')
+        f3c.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(f3c, text="向上查找账号次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(f3c, from_=1, to=20, increment=1,
+                    textvariable=self.qq_scroll_up_times_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
         # ----- 游戏启动等待时间 -----
         frame4 = ttk.LabelFrame(parent, text="  游戏启动等待时间  ", style='SettingsCard.TLabelframe', padding=12)
@@ -1117,12 +1139,18 @@ class SettingsWindow:
             # 拼接所有识别到的文本
             all_text = "".join(item[1] for item in result)
 
-            # 匹配资产格式：数字+K/M/B
+            # 匹配资产格式：数字+K/M/B（过滤"现有资产"等无效文字）
             match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
             if match:
                 asset_str = f"{match.group(1)}{match.group(2).upper()}"
             else:
-                asset_str = "未匹配到资产格式"
+                # 降级：清理非数字/KMB字符后重试
+                cleaned = re.sub(r'[^0-9.KMBkmb]', '', all_text)
+                match2 = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', cleaned)
+                if match2:
+                    asset_str = f"{match2.group(1)}{match2.group(2).upper()}"
+                else:
+                    asset_str = "未匹配到资产格式"
 
             detail_lines = [f"  {item[1]}  (置信度：{float(item[2]):.2f})" for item in result]
             detail_text = "\n".join(detail_lines)
@@ -1250,6 +1278,10 @@ class SettingsWindow:
         # 账号列表滚动查找设置
         self.app.settings["qq_mouse_move_distance"] = self.qq_mouse_move_distance_var.get()
         self.app.settings["scroll_amount"] = self.scroll_amount_var.get()
+        self.app.settings["qq_scroll_down_amount"] = self.qq_scroll_down_amount_var.get()
+        self.app.settings["qq_scroll_up_amount"] = self.qq_scroll_up_amount_var.get()
+        self.app.settings["qq_scroll_down_times"] = self.qq_scroll_down_times_var.get()
+        self.app.settings["qq_scroll_up_times"] = self.qq_scroll_up_times_var.get()
         self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
 
         # 一键出售设置
