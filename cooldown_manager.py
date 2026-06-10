@@ -8,25 +8,42 @@ import datetime
 
 COOLDOWN_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown.json")
 
+# 内存缓存：避免每次读操作都访问磁盘
+_cache = None
+_cache_mtime = 0.0
+
 
 def _load_data():
-    """加载冷却数据"""
-    if not os.path.exists(COOLDOWN_JSON_PATH):
-        return {}
+    """加载冷却数据（带内存缓存，仅在文件修改时间变化时重新读取）"""
+    global _cache, _cache_mtime
+    try:
+        mtime = os.path.getmtime(COOLDOWN_JSON_PATH)
+    except OSError:
+        _cache = {}
+        _cache_mtime = 0.0
+        return _cache
+    if _cache is not None and mtime == _cache_mtime:
+        return _cache
     try:
         with open(COOLDOWN_JSON_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            _cache = json.load(f)
+        _cache_mtime = mtime
     except Exception:
-        return {}
+        _cache = {}
+        _cache_mtime = 0.0
+    return _cache
 
 
 def _save_data(data):
     """保存冷却数据（原子写入，防止崩溃导致数据损坏）"""
+    global _cache, _cache_mtime
     tmp_path = COOLDOWN_JSON_PATH + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, COOLDOWN_JSON_PATH)
+        _cache = data
+        _cache_mtime = os.path.getmtime(COOLDOWN_JSON_PATH)
     except Exception as e:
         print(f"⚠️ 保存冷却数据失败：{e}")
         try:

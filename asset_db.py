@@ -6,26 +6,38 @@ import os
 import sqlite3
 import datetime
 
+from utils import parse_asset_value, format_asset_num
+
 DB_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_assets.db")
+
+# 单例连接：避免每次操作都重新建表和创建连接
+_conn = None
 
 
 def _get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""CREATE TABLE IF NOT EXISTS asset_records (
+    global _conn
+    if _conn is not None:
+        try:
+            _conn.execute("SELECT 1")
+            return _conn
+        except Exception:
+            _conn = None
+    _conn = sqlite3.connect(DB_PATH)
+    _conn.execute("""CREATE TABLE IF NOT EXISTS asset_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         account TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         value TEXT NOT NULL,
         value_num REAL NOT NULL
     )""")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_account_ts ON asset_records(account, timestamp)")
-    conn.commit()
-    return conn
+    _conn.execute("CREATE INDEX IF NOT EXISTS idx_account_ts ON asset_records(account, timestamp)")
+    _conn.commit()
+    return _conn
 
 
 def record_asset(account, value_str):
     """记录资产快照，自动解析 '1.2M' -> 1200000"""
-    num = _parse_asset_value(value_str)
+    num = parse_asset_value(value_str)
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = _get_conn()
     conn.execute(
@@ -33,7 +45,6 @@ def record_asset(account, value_str):
         (account, ts, value_str, num),
     )
     conn.commit()
-    conn.close()
 
 
 def query_total_change(days):
@@ -64,21 +75,7 @@ def query_total_change(days):
             diff = last_val - first_val
             total_diff += diff
             results.append((account, first_val, last_val, diff))
-    conn.close()
     return total_diff, results
-
-
-def format_asset_num(val):
-    """将数值格式化为资产字符串，如 1200000 -> '1.20M'"""
-    abs_val = abs(val)
-    if abs_val >= 1_000_000_000:
-        return f"{val / 1_000_000_000:.2f}B"
-    elif abs_val >= 1_000_000:
-        return f"{val / 1_000_000:.2f}M"
-    elif abs_val >= 1_000:
-        return f"{val / 1_000:.1f}K"
-    else:
-        return f"{val:.0f}"
 
 
 def delete_account_records(account):
@@ -86,21 +83,3 @@ def delete_account_records(account):
     conn = _get_conn()
     conn.execute("DELETE FROM asset_records WHERE account = ?", (account,))
     conn.commit()
-    conn.close()
-
-
-def _parse_asset_value(val_str):
-    if not val_str or val_str == "0":
-        return 0
-    val_str = val_str.strip().upper()
-    multipliers = {"K": 1000, "M": 1_000_000, "B": 1_000_000_000}
-    for suffix, mult in multipliers.items():
-        if val_str.endswith(suffix):
-            try:
-                return float(val_str[:-1]) * mult
-            except ValueError:
-                return 0
-    try:
-        return float(val_str)
-    except ValueError:
-        return 0

@@ -1,6 +1,6 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.1.3
+版本: v1.1.4
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
@@ -13,6 +13,7 @@ v1.1.0 新增：资产识别修复（直接 numpy 数组，无 BGR 转换）、�
 v1.1.1 新增：资产监测（SQLite 持久化 + 时间段统计）、账号备注（账号密码输入框）、使用说明移至设置页面。
 v1.1.2 新增：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞尔曲线移动、运行完成后清空残余状态。
 v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中。
+v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试（35项）。
 
 【核心文件】
 
@@ -23,7 +24,10 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │
 ├── gui_app.py                  # 主 GUI 应用（入口层，约 900 行）
 │   - App 类：主窗口、UI 构建、样式设置、系统托盘
-│   - __init__：初始化各模块、预初始化 OCR 引擎、服务器验证、_account_notes 备注
+│   - __init__：初始化各模块、预初始化 OCR 引擎、异步服务器验证、_account_notes 备注
+│   - _async_validate() / _check_validate_result()：后台线程服务器验证（v1.1.4，不阻塞 UI）
+│   - _continue_init()：验证通过后继续初始化（v1.1.4 拆分）
+│   - running 属性：threading.Event 包装（v1.1.4，线程安全布尔标志）
 │   - _build_ui()：构建主界面（Treeview 账号列表、日志区域、控制按钮）
 │     - 按钮栏：添加账号、清空列表、冷却重置、资产监测
 │     - Treeview 颜色标签：cooling（蓝色）、runnable（绿色）、paused（红色）
@@ -33,7 +37,9 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │
 ├── automation_runner.py        # 自动化运行模块（v1.1.0 拆分，约 596 行）
 │   - start_run() / stop_run()：启动/停止自动化任务
-│   - run_script_main()：主自动化循环（QQ登录→WeGame→进游戏→资产识别→操作→关闭）
+│   - run_script_main()：主自动化循环（v1.1.4 重构为 ~80 行，调用 8 个子函数）
+│   - _validate_daily() / _cleanup_processes() / _login_qq() / _login_wegame()
+│   - _launch_game() / _recognize_and_store_asset() / _close_game() / _cleanup_account_processes()
 │   - _recognize_asset()：资产识别（RapidOCR 缓存引擎，直接 numpy 数组，无 BGR 转换）
 │   - 资产识别后自动调用 asset_db.record_asset() 写入 SQLite
 │   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作（含 asset_db 钩子）
@@ -70,6 +76,7 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │   - test_recognition() / crop_account_image()：识别测试
 │
 ├── email_notifier.py           # 邮件通知模块（v1.1.0 拆分，约 250 行）
+│   - _get_email_config()：共享邮箱配置检查（v1.1.4 提取），4 个发送函数复用
 │   - send_run_report_email()：运行报告邮件（含每个账号资产数）
 │   - send_failure_email()：运行失败通知
 │   - send_account_failure_email()：单账号失败通知
@@ -91,9 +98,17 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │   - 数据存储：~/.delta_auto_assets.db
 │   - record_asset()：记录资产快照（账号、时间戳、原始值、数值）
 │   - query_total_change(days)：查询最近 N 天所有账号资产变化总和
-│   - format_asset_num()：数值格式化（1200000 → '1.20M'）
-│   - 自动创建表和索引（account + timestamp）
+│   - format_asset_num()：代理到 utils.format_asset_num()
+│   - 单例连接（v1.1.4）：CREATE TABLE 仅首次执行，连接复用
 │
+├── credential_crypto.py        # 凭据加密模块（v1.1.4 新增）
+│   - 密钥派生：PBKDF2（机器指纹 + 固定盐，10万次迭代，32字节）
+│   - encrypt_value() / decrypt_value()：Fernet 对称加密/解密
+│   - is_encrypted()：判断是否已加密（Fernet token 以 'gAAAAA' 开头）
+│   - encrypt_settings() / decrypt_settings()：加密设置中的敏感字段（smtp_code）
+│   - encrypt_account_notes() / decrypt_account_notes()：加密账号密码
+│   - 向后兼容：解密失败时原样返回明文
+
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
 │   - handle_facility()：单个设施操作（制造→收取→领取→产出→购买材料）
@@ -101,7 +116,7 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │
 ├── config.py                   # 配置管理
 │   - DEFAULT_SETTINGS：所有默认配置项（含 server_url、client_key、post_run_shutdown_delay）
-│   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json
+│   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json（v1.1.4 自动加解密敏感字段）
 │   - resource_path()：PyInstaller/Nuitka 资源路径处理
 │   - resolve_template_path()：用户自定义模板优先
 │   - get_sell_items()：获取售卖物品图片列表
@@ -146,6 +161,10 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │     - schedule_startup_task() / remove_startup_task()
 │   - 邮件发送：
 │     - send_email_notification()：QQ 邮箱 SMTP 发送
+│   - 共享工具（v1.1.4 新增）：
+│     - set_window_icon()：统一窗口图标设置（替代 8 处重复代码）
+│     - parse_asset_value()：资产字符串解析（'1.2M' → 1200000）
+│     - format_asset_num()：资产数值格式化（1200000 → '1.20M'）
 │
 ├── relative_mouse_move.py      # 鼠标移动算法模块（v1.1.2 新增）
 │   - generate_relative_path_points()：生成贝塞尔曲线/Smoothstep路径点
@@ -164,9 +183,11 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │     - Tab 6: 其他设置（开机自启、冷却管理、滚动设置）
 │   - 资产识别：区域框选（全屏 overlay）、测试识别（直接 RapidOCR，无 BGR 转换）
 │   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
+│   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
 │
 ├── cooldown_manager.py         # 冷却管理
 │   - 数据存储：~/.delta_auto_cooldown.json
+│   - 内存缓存（v1.1.4）：mtime 校验，文件未变直接返回缓存，避免重复磁盘读取
 │   - is_cooling_down()：检查账号是否在冷却中（含暂停状态判断）
 │   - record_run()：记录运行时间，计算下次可运行时间
 │   - reset_cooldown() / reset_all_cooldowns()：重置冷却
@@ -187,9 +208,17 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 │   - 全局 OCR 设置：统一配置 OCR 区域、置信度、文本列表（底部含使用说明）
 │   - 保存到 ~/.delta_auto_templates/
 │
-├── test_all_features.py        # 单元测试（54 项）
+├── test_all_features.py        # 全功能测试（52 项）
 │   - 测试配置、冷却、互斥、QQ降级、邮件、代码一致性
 │   - 验证各模块函数存在性和调用关系
+│
+├── test_core_modules.py        # 核心模块单元测试（v1.1.4 新增，35 项）
+│   - cooldown_manager：缓存命中/失效、暂停恢复、过期清理、自定义冷却
+│   - asset_db：单例连接、建表去重、记录/查询、删除
+│   - credential_crypto：加解密往返、空值、明文兼容、设置/备注加密
+│   - config：默认值、保存加载、向下兼容、分辨率、物品元数据
+│   - utils：资产解析/格式化、往返一致性、图标设置
+│   - email_notifier：配置检查、禁用安全性
 
 【服务器端文件】（部署到云端，不在客户端打包）
 
@@ -224,8 +253,8 @@ v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线�
 
 【用户数据目录】(~/.delta_auto_*)
 
-├── ~/.delta_auto_settings.json     # 用户设置（含 ocr_configs、global_ocr_* 配置）
-├── ~/.delta_auto_accounts.json     # QQ 账号列表（含 assets、asset_history、notes）
+├── ~/.delta_auto_settings.json     # 用户设置（含 ocr_configs、global_ocr_* 配置，敏感字段加密）
+├── ~/.delta_auto_accounts.json     # QQ 账号列表（含 assets、asset_history、notes，密码加密）
 ├── ~/.delta_auto_cooldown.json     # 冷却数据
 ├── ~/.delta_auto_assets.db         # 资产记录 SQLite 数据库（v1.1.1 新增）
 ├── ~/.delta_auto_templates/        # 用户自定义模板 + OCR 模板图片

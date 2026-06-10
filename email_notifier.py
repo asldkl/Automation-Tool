@@ -13,15 +13,24 @@ import utils
 import cooldown_manager
 
 
-def send_account_failure_email(app, account_name, next_run_str, processed_accounts=None):
-    """单个账号失败时立即发送邮件通知"""
+def _get_email_config(app):
+    """获取邮箱配置，返回 (smtp_code, sender, receiver) 或 None（未配置）"""
     if not app.settings.get("email_enabled", False):
-        return
+        return None
     smtp_code = app.settings.get("smtp_code", "").strip()
     sender = app.settings.get("sender_email", "").strip()
     receiver = app.settings.get("receiver_email", "").strip()
     if not smtp_code or not sender or not receiver:
+        return None
+    return smtp_code, sender, receiver
+
+
+def send_account_failure_email(app, account_name, next_run_str, processed_accounts=None):
+    """单个账号失败时立即发送邮件通知"""
+    cfg = _get_email_config(app)
+    if not cfg:
         return
+    smtp_code, sender, receiver = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     stats = app.run_stats
@@ -69,13 +78,10 @@ def send_cooldown_ready_email(app, ready_accounts):
     """冷却到期时发送邮件提醒"""
     if not app.settings.get("cooldown_email_enabled", False):
         return
-    if not app.settings.get("email_enabled", False):
+    cfg = _get_email_config(app)
+    if not cfg:
         return
-    smtp_code = app.settings.get("smtp_code", "").strip()
-    sender = app.settings.get("sender_email", "").strip()
-    receiver = app.settings.get("receiver_email", "").strip()
-    if not smtp_code or not sender or not receiver:
-        return
+    smtp_code, sender, receiver = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     account_items = "".join(f"<li style='padding:3px 0;'>{html.escape(name)}</li>" for name in ready_accounts)
@@ -110,13 +116,10 @@ def send_cooldown_ready_email(app, ready_accounts):
 
 def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     """在后台线程中发送邮件通知"""
-    if not app.settings.get("email_enabled", False):
+    cfg = _get_email_config(app)
+    if not cfg:
         return
-    smtp_code = app.settings.get("smtp_code", "").strip()
-    sender = app.settings.get("sender_email", "").strip()
-    receiver = app.settings.get("receiver_email", "").strip()
-    if not smtp_code or not sender or not receiver:
-        return
+    smtp_code, sender, receiver = cfg
 
     m, s = divmod(int(elapsed), 60)
     h, m = divmod(m, 60)
@@ -186,13 +189,10 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
 
 def send_failure_email(app, error, processed_accounts=None):
     """程序异常退出时发送失败邮件通知"""
-    if not app.settings.get("email_enabled", False):
+    cfg = _get_email_config(app)
+    if not cfg:
         return
-    smtp_code = app.settings.get("smtp_code", "").strip()
-    sender = app.settings.get("sender_email", "").strip()
-    receiver = app.settings.get("receiver_email", "").strip()
-    if not smtp_code or not sender or not receiver:
-        return
+    smtp_code, sender, receiver = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     stats = app.run_stats

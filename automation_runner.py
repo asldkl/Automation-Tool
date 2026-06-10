@@ -133,53 +133,310 @@ def set_operation(app, text):
     app.root.after(0, lambda: app.op_label.config(text=text))
 
 
+def _validate_daily(app):
+    """每日首次运行时进行服务器验证，返回 True=通过，False=应退出"""
+    today_str = datetime.date.today().isoformat()
+    if hasattr(app, '_last_validated_date') and app._last_validated_date == today_str:
+        return True
+    print("🔒 每日验证：正在连接服务器...")
+    set_operation(app, "服务器验证中")
+    allowed, expiry, error = server_client.validate_with_server(app)
+    if allowed is True:
+        app._last_validated_date = today_str
+        print(f"✅ 每日验证通过，有效期至：{expiry}")
+        return True
+    fingerprint = machine_fingerprint.get_machine_id()
+    if allowed is False:
+        print(f"❌ 验证失败：{error}")
+        app.root.after(0, lambda: messagebox.showerror("验证失败",
+            f"每日验证未通过，程序将退出。\n\n原因：{error}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n本机机器指纹：\n\n  {fingerprint}\n\n━━━━━━━━━━━━━━━━━━━━"))
+    else:
+        print(f"❌ 服务器连接失败：{error}")
+        app.root.after(0, lambda: messagebox.showerror("验证失败",
+            f"无法连接验证服务器，程序将退出。\n\n错误：{error}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n本机机器指纹：\n\n  {fingerprint}\n\n━━━━━━━━━━━━━━━━━━━━"))
+    app.root.after(100, app.root.destroy)
+    return False
+
+
+def _cleanup_processes(app):
+    """运行前清理 QQ、WeGame 和三角洲行动进程"""
+    print("🧹 运行前清理：退出 QQ、WeGame 和三角洲行动...")
+    set_operation(app, "清理进程")
+    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
+    utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
+    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+    time.sleep(2)
+
+
+def _login_qq(app, img_path, qq_path, i, total, processed_accounts):
+    """QQ 登录流程：启动 QQ、等待窗口（含降级方案）、快捷登录。返回 True=成功"""
+    set_operation(app, f"启动 QQ ({i+1}/{total})")
+    print("启动 QQ...")
+    if not qq_path or not utils.start_app(qq_path, "QQ", wait_time=3):
+        print("❌ QQ 启动失败，跳过此账号")
+        return False
+
+    # 等待 QQ 窗口出现（含降级方案）
+    qq_ready = False
+    qq_activate_fail_count = 0
+    for _ in range(30):
+        if app._stop_event.is_set():
+            return False
+        if utils.activate_window_by_title("QQ", partial_match=True, exclude_titles=["WeGame"]):
+            qq_ready = True
+            break
+        qq_activate_fail_count += 1
+        if qq_activate_fail_count >= 5:
+            print("⚠️ QQ 窗口激活连续失败5次，启动降级方案：尝试图像识别...")
+            for img_retry in range(3):
+                if app._stop_event.is_set():
+                    return False
+                if utils.find_multiscale(config.QQ_ACCOUNT_SELECT, timeout=5):
+                    qq_ready = True
+                    print(f"✅ 降级方案成功：检测到 QQ_ACCOUNT_SELECT（第 {img_retry+1} 次）")
+                    break
+                print(f"⚠️ 降级方案重试 ({img_retry+1}/3)...")
+                time.sleep(1)
+            if qq_ready:
+                break
+            account_name = os.path.basename(img_path)
+            print(f"❌ 降级方案失败，账号 {account_name} 登录失败，跳过")
+            if not app._user_stopped_cooldown:
+                email_notifier.send_account_failure_email(app, account_name, "未启用", processed_accounts)
+            return False
+        time.sleep(0.5)
+
+    if not qq_ready:
+        print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
+    if qq_ready:
+        time.sleep(1)
+
+    if app._stop_event.is_set():
+        return False
+
+    set_operation(app, "QQ 快捷登录")
+    print("开始 QQ 快捷登录...")
+    if not utils.qq_quick_login(img_path):
+        print("❌ QQ 快捷登录失败，跳过此账号")
+        utils.kill_process(config.QQ_PROCESS)
+        return False
+
+    time.sleep(2)
+    utils.close_window_by_title("QQ", partial_match=True)
+    time.sleep(1)
+    return True
+
+
+def _login_wegame(app):
+    """WeGame 启动并快捷登录。返回 True=成功"""
+    set_operation(app, "启动 WeGame")
+    print("启动 WeGame...")
+    if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
+        print("❌ WeGame 启动失败，跳过此账号")
+        return False
+    time.sleep(3)
+
+    if app._stop_event.is_set():
+        return False
+
+    set_operation(app, "快捷登录 WeGame")
+    print("开始快捷登录 WeGame ...")
+    if not utils.wegame_quick_login():
+        print("❌ WeGame 快捷登录失败，跳过此账号")
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
+    time.sleep(3)
+    return True
+
+
+def _launch_game(app):
+    """查找三角洲图标、资产识别、启动游戏、等待窗口。返回 True=成功"""
+    set_operation(app, "查找三角洲游戏图标")
+    print("\n--- 启动三角洲行动 ---")
+    utils.activate_window_by_title("WeGame", partial_match=True)
+    time.sleep(2)
+
+    delta_icon_found = False
+    for retry in range(3):
+        if app._stop_event.is_set():
+            return False
+        if utils.find_and_click(config.DELTA_GAME_ICON, timeout=15):
+            delta_icon_found = True
+            break
+        print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
+        time.sleep(3)
+    if not delta_icon_found:
+        print("❌ 多次重试后仍未找到三角洲游戏图标，跳过此账号")
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
+
+    # 资产识别
+    _recognize_and_store_asset(app)
+    time.sleep(2)  # 资产识别缓冲
+    time.sleep(2)
+
+    launch_found = False
+    for retry in range(3):
+        if app._stop_event.is_set():
+            return False
+        if utils.find_and_click(config.DELTA_LAUNCH_BTN, timeout=15):
+            launch_found = True
+            break
+        print(f"⚠️ 未找到启动按钮，3秒后重试 ({retry+1}/3)...")
+        time.sleep(3)
+    if not launch_found:
+        print("❌ 多次重试后仍未找到启动按钮，跳过此账号")
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
+
+    print("✅ 三角洲正在启动，等待游戏窗口出现...")
+    game_loaded = False
+    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+    for _ in range(45):
+        if app._stop_event.is_set():
+            break
+        for title in delta_titles:
+            if utils.activate_window_by_title(title, partial_match=True,
+                                               exclude_titles=["WeGame", "腾讯"]):
+                game_loaded = True
+                break
+        if game_loaded:
+            break
+        time.sleep(2)
+    if game_loaded:
+        print("✅ 检测到游戏窗口，等待界面就绪...")
+        time.sleep(8)
+        extra_wait = app.settings.get("game_launch_wait", 0)
+        if extra_wait > 0:
+            print(f"⏳ 游戏已启动，额外等待 {extra_wait} 秒...")
+            time.sleep(extra_wait)
+    else:
+        print("⚠️ 未检测到游戏窗口，继续尝试操作...")
+
+    if not game_operations_wrapper(app):
+        if app._stop_event.is_set():
+            return False
+        print("❌ 游戏内操作失败，跳过此账号")
+        return False
+    return not app._stop_event.is_set()
+
+
+def _recognize_and_store_asset(app):
+    """执行资产识别并存储结果"""
+    settings = config.load_settings()
+    if not settings.get("enable_asset_recognition", False):
+        return
+    set_operation(app, "识别资产")
+    asset_region = settings.get("asset_region", [0, 0, 0, 0])
+    if not asset_region or asset_region[2] <= 0 or asset_region[3] <= 0:
+        return
+    print(f"🔍 正在识别资产区域：{asset_region}")
+    time.sleep(4)
+    asset_value = _recognize_asset(app, asset_region)
+    if asset_value:
+        print(f"💰 识别到资产：{asset_value}")
+        if app._current_account_name:
+            app._account_assets[app._current_account_name] = asset_value
+            if app._current_account_name not in app._asset_history:
+                app._asset_history[app._current_account_name] = []
+            app._asset_history[app._current_account_name].append({
+                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "value": asset_value
+            })
+            asset_db.record_asset(app._current_account_name, asset_value)
+            app.root.after(0, app._refresh_account_tree)
+    else:
+        print("ℹ️ 未识别到资产数值")
+
+
+def _close_game(app):
+    """关闭三角洲游戏窗口"""
+    set_operation(app, "关闭三角洲游戏")
+    print("\n--- 关闭三角洲游戏 ---")
+    for _ in range(3):
+        pyautogui.hotkey('alt', 'f4')
+        time.sleep(0.5)
+    time.sleep(1)
+    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+    for title in delta_titles:
+        if app._stop_event.is_set():
+            break
+        utils.close_window_by_title(title, partial_match=True)
+    time.sleep(2)
+    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
+
+
+def _cleanup_account_processes(app):
+    """清理当前账号的所有相关进程"""
+    set_operation(app, "清理进程")
+    print("\n--- 退出三角洲行动、QQ 和 WeGame ---")
+    utils.close_window_by_title("WeGame", partial_match=True)
+    time.sleep(1)
+    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
+    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+    utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
+    time.sleep(2)
+
+
+def _process_account_result(app, account_name, account_failed, account_interrupted,
+                            processed_accounts):
+    """处理单个账号的执行结果：记录状态、冷却、邮件通知"""
+    next_run_str = "未启用"
+    if app.settings.get("enable_cooldown", False):
+        _, next_run_str = cooldown_manager.is_cooling_down(account_name)
+        next_run_str = next_run_str or "已冷却"
+
+    if account_interrupted:
+        print(f"⏹️ 账号 {account_name} 被用户中断，跳过冷却记录")
+        processed_accounts.append(f"{account_name} (中断)")
+        server_client.update_account_status(app, account_name, "idle")
+    elif account_failed:
+        app.run_stats["fail"] += 1
+        processed_accounts.append(f"{account_name} (失败)")
+        server_client.update_account_status(app, account_name, "failed")
+        if not app._user_stopped_cooldown:
+            email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts)
+    else:
+        if app.settings.get("enable_cooldown", False):
+            cd_hours = app.settings.get("cooldown_hours", 8)
+            cooldown_manager.record_run(account_name, cd_hours)
+        app.run_stats["success"] += 1
+        processed_accounts.append(f"{account_name} (成功)")
+        server_client.update_account_status(app, account_name, "success")
+
+
+def _wait_account_interval(app, i, total):
+    """账号间隔等待，返回 True=被中断应退出循环"""
+    if i >= total - 1 or app._stop_event.is_set():
+        return app._stop_event.is_set()
+    interval = app.settings.get("cooldown_delay_minutes", 1)
+    if interval <= 0:
+        return False
+    print(f"⏳ 等待 {interval} 分钟后执行下一个账号...")
+    set_operation(app, f"账号间隔等待 ({interval}分钟)")
+    wait_seconds = interval * 60
+    waited = 0
+    while waited < wait_seconds and not app._stop_event.is_set():
+        chunk = min(5, wait_seconds - waited)
+        time.sleep(chunk)
+        waited += chunk
+    return app._stop_event.is_set()
+
+
 def run_script_main(app):
     """主工作线程：遍历账号执行登录和游戏操作"""
+    processed_accounts = []
     try:
         print(f"🟢 run_script_main() 已启动，ignore_cooldown={app._ignore_cooldown_this_run}")
         total = len(app.qq_account_images)
         qq_path = app.settings.get("qq_path", "")
-        processed_accounts = []  # 记录已处理的QQ号名称
 
-        # 每日首次运行时进行服务器验证
-        today_str = datetime.date.today().isoformat()
-        if not hasattr(app, '_last_validated_date') or app._last_validated_date != today_str:
-            print("🔒 每日验证：正在连接服务器...")
-            set_operation(app, "服务器验证中")
-            allowed, expiry, error = server_client.validate_with_server(app)
-            if allowed is True:
-                app._last_validated_date = today_str
-                print(f"✅ 每日验证通过，有效期至：{expiry}")
-            elif allowed is False:
-                print(f"❌ 验证失败：{error}")
-                app.root.after(0, lambda: messagebox.showerror("验证失败",
-                    f"每日验证未通过，程序将退出。\n\n"
-                    f"原因：{error}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"本机机器指纹：\n\n"
-                    f"  {machine_fingerprint.get_machine_id()}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━"))
-                app.root.after(100, app.root.destroy)
-                return
-            else:
-                print(f"❌ 服务器连接失败：{error}")
-                app.root.after(0, lambda: messagebox.showerror("验证失败",
-                    f"无法连接验证服务器，程序将退出。\n\n"
-                    f"错误：{error}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"本机机器指纹：\n\n"
-                    f"  {machine_fingerprint.get_machine_id()}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━"))
-                app.root.after(100, app.root.destroy)
-                return
+        if not _validate_daily(app):
+            return
 
-        # 运行前先退出 QQ、WeGame 和三角洲行动，确保干净状态
-        print("🧹 运行前清理：退出 QQ、WeGame 和三角洲行动...")
-        set_operation(app, "清理进程")
-        utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
-        utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
-        utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
-        time.sleep(2)
+        _cleanup_processes(app)
 
         print("=" * 55)
         print("  QQ 登录 + WeGame 快捷登录 + 三角洲行动 多账号轮换脚本")
@@ -191,17 +448,14 @@ def run_script_main(app):
                 break
 
             file_name = os.path.basename(img_path)
-            current_account_name = file_name
             app._current_account_name = file_name
 
-            # 账号暂停检查（暂停后运行时跳过该账号）
             if cooldown_manager.is_account_paused(file_name):
                 print(f"⏸️ 账号 {file_name} 已暂停，跳过。")
                 processed_accounts.append(f"{file_name} (已暂停)")
                 server_client.update_account_status(app, file_name, "cooling")
                 continue
 
-            # 冷却检查（定时任务/冷却到期触发时可跳过冷却检查，但开机启动时强制检查）
             if app._ignore_cooldown_this_run and not app._is_boot_startup:
                 print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
             if app.settings.get("enable_cooldown", False) and (not app._ignore_cooldown_this_run or app._is_boot_startup):
@@ -222,267 +476,45 @@ def run_script_main(app):
             account_interrupted = False
             server_client.update_account_status(app, file_name, "running")
 
-            # 步骤1：启动 QQ 并登录
+            # 步骤1：QQ 登录
             if app._stop_event.is_set():
                 account_interrupted = True
             if not account_interrupted:
-                set_operation(app, f"启动 QQ ({i+1}/{total})")
-                print("启动 QQ...")
-                if not qq_path or not utils.start_app(qq_path, "QQ", wait_time=3):
-                    print("❌ QQ 启动失败，跳过此账号")
+                if not _login_qq(app, img_path, qq_path, i, total, processed_accounts):
                     account_failed = True
 
-            if not account_failed:
-                # 等待 QQ 窗口出现（含降级方案）
-                qq_ready = False
-                qq_activate_fail_count = 0
-                qq_degrade_triggered = False
-                for _ in range(30):
-                    if app._stop_event.is_set(): break
-                    if utils.activate_window_by_title("QQ", partial_match=True,
-                                                       exclude_titles=["WeGame"]):
-                        qq_ready = True
-                        qq_activate_fail_count = 0
-                        break
-                    qq_activate_fail_count += 1
-                    # 连续激活失败5次，启动降级方案：直接图像识别点击 QQ_ACCOUNT_SELECT
-                    if qq_activate_fail_count >= 5:
-                        qq_degrade_triggered = True
-                        print("⚠️ QQ 窗口激活连续失败5次，启动降级方案：尝试图像识别...")
-                        img_found = False
-                        for img_retry in range(3):
-                            if app._stop_event.is_set(): break
-                            if utils.find_multiscale(config.QQ_ACCOUNT_SELECT, timeout=5):
-                                img_found = True
-                                qq_ready = True
-                                print(f"✅ 降级方案成功：检测到 QQ_ACCOUNT_SELECT（第 {img_retry+1} 次），等待后续登录流程处理")
-                                break
-                            print(f"⚠️ 降级方案重试 ({img_retry+1}/3)...")
-                            time.sleep(1)
-                        if img_found:
-                            break
-                        else:
-                            print(f"❌ 降级方案失败：QQ_ACCOUNT_SELECT 图像识别3次均未找到，账号 {current_account_name} 登录失败，跳过")
-                            if not app._user_stopped_cooldown:
-                                email_notifier.send_account_failure_email(app, current_account_name, "未启用", processed_accounts)
-                            account_failed = True
-                            break
-                    time.sleep(0.5)
-                if not qq_ready and not account_failed:
-                    print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
-                if qq_ready:
-                    time.sleep(1)
-
+            # 步骤2：WeGame 登录
             if not account_failed and app._stop_event.is_set():
                 account_interrupted = True
             if not account_failed and not account_interrupted:
-                set_operation(app, "QQ 快捷登录")
-                print("开始 QQ 快捷登录...")
-                if not utils.qq_quick_login(img_path):
-                    print("❌ QQ 快捷登录失败，跳过此账号")
-                    utils.kill_process(config.QQ_PROCESS)
+                if not _login_wegame(app):
                     account_failed = True
-                else:
-                    time.sleep(2)
-                    # QQ 登录成功后关闭 QQ 窗口（保留后台进程供 WeGame 使用）
-                    utils.close_window_by_title("QQ", partial_match=True)
-                    time.sleep(1)
 
-            # 步骤2：启动 WeGame 并快捷登录（使用当前 QQ 账号）
+            # 步骤3：启动游戏并执行操作
             if not account_failed and app._stop_event.is_set():
                 account_interrupted = True
             if not account_failed and not account_interrupted:
-                set_operation(app, "启动 WeGame")
-                print("启动 WeGame...")
-                if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
-                    print("❌ WeGame 启动失败，跳过此账号")
-                    account_failed = True
-                else:
-                    time.sleep(3)
-
-            if not account_failed and app._stop_event.is_set():
-                account_interrupted = True
-            if not account_failed and not account_interrupted:
-                set_operation(app, "快捷登录 WeGame")
-                print("开始快捷登录 WeGame ...")
-                if not utils.wegame_quick_login():
-                    print("❌ WeGame 快捷登录失败，跳过此账号")
-                    utils.kill_process(config.WEGAME_PROCESS)
-                    account_failed = True
-                else:
-                    time.sleep(3)
-
-            # 步骤3：启动三角洲行动
-            if not account_failed and app._stop_event.is_set():
-                account_interrupted = True
-            if not account_failed and not account_interrupted:
-                set_operation(app, "查找三角洲游戏图标")
-                print("\n--- 启动三角洲行动 ---")
-                utils.activate_window_by_title("WeGame", partial_match=True)
-                time.sleep(2)
-
-                delta_icon_found = False
-                for retry in range(3):
-                    if app._stop_event.is_set(): break
-                    if utils.find_and_click(config.DELTA_GAME_ICON, timeout=15):
-                        delta_icon_found = True
-                        break
-                    print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
-                    time.sleep(3)
-                if not delta_icon_found:
-                    print("❌ 多次重试后仍未找到三角洲游戏图标，跳过此账号")
-                    utils.kill_process(config.WEGAME_PROCESS)
-                    account_failed = True
-
-            # 资产识别（三角洲图标后、启动按钮前）
-            if not account_failed and not account_interrupted:
-                settings = config.load_settings()
-                if settings.get("enable_asset_recognition", False):
-                    set_operation(app, "识别资产")
-                    asset_region = settings.get("asset_region", [0, 0, 0, 0])
-                    if asset_region and asset_region[2] > 0 and asset_region[3] > 0:
-                        print(f"🔍 正在识别资产区域：{asset_region}")
-                        import re
-                        time.sleep(4)
-                        asset_value = _recognize_asset(app, asset_region)
-                        if asset_value:
-                            print(f"💰 识别到资产：{asset_value}")
-                            if app._current_account_name:
-                                app._account_assets[app._current_account_name] = asset_value
-                                # 记录资产历史
-                                if app._current_account_name not in app._asset_history:
-                                    app._asset_history[app._current_account_name] = []
-                                app._asset_history[app._current_account_name].append({
-                                    "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                    "value": asset_value
-                                })
-                                # 写入 SQLite 持久化记录
-                                asset_db.record_asset(app._current_account_name, asset_value)
-                                app.root.after(0, app._refresh_account_tree)
-                        else:
-                            print("ℹ️ 未识别到资产数值")
-            time.sleep(2)# 资产识别缓冲
-
-            if not account_failed:
-                time.sleep(2)
-
-                launch_found = False
-                for retry in range(3):
-                    if app._stop_event.is_set(): break
-                    if utils.find_and_click(config.DELTA_LAUNCH_BTN, timeout=15):
-                        launch_found = True
-                        break
-                    print(f"⚠️ 未找到启动按钮，3秒后重试 ({retry+1}/3)...")
-                    time.sleep(3)
-                if not launch_found:
-                    print("❌ 多次重试后仍未找到启动按钮，跳过此账号")
-                    utils.kill_process(config.WEGAME_PROCESS)
-                    account_failed = True
-
-            if not account_failed:
-                print("✅ 三角洲正在启动，等待游戏窗口出现...")
-                game_loaded = False
-                delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
-                for _ in range(45):
-                    if app._stop_event.is_set():
-                        break
-                    for title in delta_titles:
-                        if utils.activate_window_by_title(title, partial_match=True,
-                                                           exclude_titles=["WeGame", "腾讯"]):
-                            game_loaded = True
-                            break
-                    if game_loaded:
-                        break
-                    time.sleep(2)
-                if game_loaded:
-                    print("✅ 检测到游戏窗口，等待界面就绪...")
-                    time.sleep(8)
-                    extra_wait = app.settings.get("game_launch_wait", 0)
-                    if extra_wait > 0:
-                        print(f"⏳ 游戏已启动，额外等待 {extra_wait} 秒...")
-                        time.sleep(extra_wait)
-                else:
-                    print("⚠️ 未检测到游戏窗口，继续尝试操作...")
-
-                if not game_operations_wrapper(app):
+                if not _launch_game(app):
                     if app._stop_event.is_set():
                         account_interrupted = True
                     else:
-                        print("❌ 游戏内操作失败，跳过此账号")
                         account_failed = True
-                if app._stop_event.is_set():
-                    account_interrupted = True
 
-            # 步骤4 + 清理：仅在未中断时执行
+            # 步骤4：清理进程
             if not account_interrupted:
-                # 步骤4：关闭游戏和 WeGame，退出 QQ 和 WeGame 进程
                 if not account_failed:
-                    set_operation(app, "关闭三角洲游戏")
-                    print("\n--- 关闭三角洲游戏 ---")
-                    # 多次按 Alt+F4 确保游戏窗口关闭（处理确认弹窗等）
-                    for _ in range(3):
-                        pyautogui.hotkey('alt', 'f4')
-                        time.sleep(0.5)
-                    time.sleep(1)
-                    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
-                    for title in delta_titles:
-                        if app._stop_event.is_set(): break
-                        utils.close_window_by_title(title, partial_match=True)
-                    time.sleep(2)
-                    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
+                    _close_game(app)
+                _cleanup_account_processes(app)
 
-                # 每轮结束后退出三角洲、QQ 和 WeGame，不保留后台
-                set_operation(app, "清理进程")
-                print("\n--- 退出三角洲行动、QQ 和 WeGame ---")
-                utils.close_window_by_title("WeGame", partial_match=True)
-                time.sleep(1)
-                utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
-                utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
-                utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
-                time.sleep(2)
-
-            # 获取下次运行时间
-            next_run_str = "未启用"
-            if app.settings.get("enable_cooldown", False):
-                _, next_run_str = cooldown_manager.is_cooling_down(current_account_name)
-                next_run_str = next_run_str or "已冷却"
+            # 记录结果
+            _process_account_result(app, file_name, account_failed, account_interrupted,
+                                    processed_accounts)
 
             if account_interrupted:
-                # 用户手动停止，不记录冷却，不计入成功/失败
-                print(f"⏹️ 账号 {current_account_name} 被用户中断，跳过冷却记录")
-                processed_accounts.append(f"{current_account_name} (中断)")
-                server_client.update_account_status(app, current_account_name, "idle")
                 break
-            elif account_failed:
-                app.run_stats["fail"] += 1
-                processed_accounts.append(f"{current_account_name} (失败)")
-                server_client.update_account_status(app, current_account_name, "failed")
-                # 立即发送失败邮件通知（手动停止时不发送）
-                if not app._user_stopped_cooldown:
-                    email_notifier.send_account_failure_email(app, current_account_name, next_run_str, processed_accounts)
-            else:
-                # 只有成功运行的账号才记录冷却时间
-                if app.settings.get("enable_cooldown", False):
-                    cd_hours = app.settings.get("cooldown_hours", 8)
-                    cooldown_manager.record_run(current_account_name, cd_hours)
-                app.run_stats["success"] += 1
-                processed_accounts.append(f"{current_account_name} (成功)")
-                server_client.update_account_status(app, current_account_name, "success")
 
-            # 账号间隔等待：非最后一个账号且未被停止时，等待固定间隔再执行下一个
-            if i < total - 1 and not app._stop_event.is_set():
-                interval = app.settings.get("cooldown_delay_minutes", 1)
-                if interval > 0:
-                    print(f"⏳ 等待 {interval} 分钟后执行下一个账号...")
-                    set_operation(app, f"账号间隔等待 ({interval}分钟)")
-                    wait_seconds = interval * 60
-                    waited = 0
-                    while waited < wait_seconds and not app._stop_event.is_set():
-                        chunk = min(5, wait_seconds - waited)
-                        time.sleep(chunk)
-                        waited += chunk
-                    if app._stop_event.is_set():
-                        break
+            if _wait_account_interval(app, i, total):
+                break
 
         print("\n🎉 所有账号处理完毕！")
     except Exception as e:

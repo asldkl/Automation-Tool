@@ -21,10 +21,11 @@ ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts
 # ---------- 账号持久化 ----------
 def save_accounts(app):
     try:
+        from credential_crypto import encrypt_account_notes
         data = {"wegame": [], "qq": app.qq_account_images,
                 "assets": app._account_assets,
                 "asset_history": app._asset_history,
-                "notes": app._account_notes}
+                "notes": encrypt_account_notes(app._account_notes)}
         with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -46,7 +47,9 @@ def load_accounts(app):
             current_names = {os.path.basename(p) for p in app.qq_account_images}
             app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
             app._asset_history = {k: v for k, v in data.get("asset_history", {}).items() if k in current_names}
-            app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
+            raw_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
+            from credential_crypto import decrypt_account_notes
+            app._account_notes = decrypt_account_notes(raw_notes)
         # 刷新账号列表
         refresh_account_tree(app)
         print(f"✅ 已加载 {len(app.qq_account_images)} 个 QQ 账号")
@@ -332,14 +335,7 @@ def custom_cooldown_time(app):
     dx = (dialog.winfo_screenwidth() - 300) // 2
     dy = (dialog.winfo_screenheight() - 170) // 2
     dialog.geometry(f"300x170+{dx}+{dy}")
-    try:
-        icon_path = config.resource_path("picture/icon/icon.ico")
-        if os.path.exists(icon_path):
-            from PIL import Image, ImageTk
-            dialog._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
-            dialog.iconphoto(False, dialog._icon_photo)
-    except Exception:
-        pass
+    utils.set_window_icon(dialog)
 
     ttk.Label(dialog, text=f"账号：{account_name}").pack(pady=(15, 5))
     ttk.Label(dialog, text="冷却小时数：").pack()
@@ -495,14 +491,7 @@ def crop_account_image(app):
     crop_win.grab_set()
 
     # 设置图标
-    try:
-        icon_path = config.resource_path("picture/icon/icon.ico")
-        if os.path.exists(icon_path):
-            icon_img = Image.open(icon_path)
-            crop_win._icon_photo = ImageTk.PhotoImage(icon_img)
-            crop_win.iconphoto(False, crop_win._icon_photo)
-    except Exception:
-        pass
+    utils.set_window_icon(crop_win)
 
     # 说明文字
     ttk.Label(crop_win, text="拖动鼠标框选包含头像+名称+QQ号的区域（三个特征组合可精确区分不同账号），然后点击「保存裁剪」",
@@ -638,15 +627,7 @@ def show_cooldown_window(app):
     y = (win.winfo_screenheight() - 480) // 2
     win.geometry(f"700x480+{x}+{y}")
     # 图标
-    try:
-        icon_path = config.resource_path("picture/icon/icon.ico")
-        if os.path.exists(icon_path):
-            from PIL import Image, ImageTk
-            icon_img = Image.open(icon_path)
-            win._icon_photo = ImageTk.PhotoImage(icon_img)
-            win.iconphoto(False, win._icon_photo)
-    except Exception:
-        pass
+    utils.set_window_icon(win)
 
     # Treeview 区域（独立 Frame，确保与按钮区域垂直排列）
     tree_frame = ttk.Frame(win)
@@ -846,21 +827,8 @@ def show_help(app):
 
 
 def _parse_asset_value(val_str):
-    """将资产字符串转为数值用于排序和变化计算，如 '1.2M' → 1200000"""
-    if not val_str or val_str == "0":
-        return 0
-    val_str = val_str.strip().upper()
-    multipliers = {"K": 1000, "M": 1000000, "B": 1000000000}
-    for suffix, mult in multipliers.items():
-        if val_str.endswith(suffix):
-            try:
-                return float(val_str[:-1]) * mult
-            except ValueError:
-                return 0
-    try:
-        return float(val_str)
-    except ValueError:
-        return 0
+    """代理到 utils.parse_asset_value"""
+    return utils.parse_asset_value(val_str)
 
 
 def _strip_year(time_str):
@@ -899,14 +867,7 @@ def show_asset_history(app):
     win.grab_set()
 
     # 设置图标
-    try:
-        icon_path = config.resource_path("picture/icon/icon.ico")
-        if os.path.exists(icon_path):
-            from PIL import Image, ImageTk
-            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
-            win.iconphoto(False, win._icon_photo)
-    except Exception:
-        pass
+    utils.set_window_icon(win)
 
     # 窗口居中
     win.update_idletasks()
@@ -977,16 +938,8 @@ def show_asset_history(app):
 
 
 def _format_asset_num(val):
-    """将数值格式化为资产字符串，如 1200000 → '1.2M'"""
-    abs_val = abs(val)
-    if abs_val >= 1_000_000_000:
-        return f"{val / 1_000_000_000:.2f}B"
-    elif abs_val >= 1_000_000:
-        return f"{val / 1_000_000:.2f}M"
-    elif abs_val >= 1_000:
-        return f"{val / 1_000:.1f}K"
-    else:
-        return f"{val:.0f}"
+    """代理到 utils.format_asset_num"""
+    return utils.format_asset_num(val)
 
 
 def show_asset_monitor(app):
@@ -1000,14 +953,7 @@ def show_asset_monitor(app):
     win.grab_set()
 
     # 设置图标
-    try:
-        icon_path = config.resource_path("picture/icon/icon.ico")
-        if os.path.exists(icon_path):
-            from PIL import Image, ImageTk
-            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
-            win.iconphoto(False, win._icon_photo)
-    except Exception:
-        pass
+    utils.set_window_icon(win)
 
     # 窗口居中
     win.update_idletasks()
@@ -1128,14 +1074,7 @@ def show_account_note(app):
     win.grab_set()
 
     # 设置图标
-    try:
-        icon_path = config.resource_path("picture/icon/icon.ico")
-        if os.path.exists(icon_path):
-            from PIL import Image, ImageTk
-            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
-            win.iconphoto(False, win._icon_photo)
-    except Exception:
-        pass
+    utils.set_window_icon(win)
 
     # 窗口居中
     win.update_idletasks()

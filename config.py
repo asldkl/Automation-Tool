@@ -153,7 +153,7 @@ DEFAULT_SETTINGS = {
 }
 
 def load_settings():
-    """加载用户设置，若文件不存在则返回默认设置"""
+    """加载用户设置（敏感字段自动解密），若文件不存在则返回默认设置"""
     if not os.path.exists(SETTINGS_JSON_PATH):
         return dict(DEFAULT_SETTINGS)
     try:
@@ -162,15 +162,20 @@ def load_settings():
         # 合并默认值，防止新版本字段缺失
         settings = dict(DEFAULT_SETTINGS)
         settings.update(saved)
+        # 解密敏感字段
+        from credential_crypto import decrypt_settings
+        settings = decrypt_settings(settings)
         return settings
     except Exception:
         return dict(DEFAULT_SETTINGS)
 
 def save_settings(settings):
-    """保存用户设置到 JSON 文件"""
+    """保存用户设置到 JSON 文件（敏感字段加密存储）"""
     try:
+        from credential_crypto import encrypt_settings
+        to_save = encrypt_settings(settings)
         with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
+            json.dump(to_save, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"⚠️ 保存设置失败：{e}")
 

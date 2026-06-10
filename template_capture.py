@@ -8,6 +8,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import config
+import utils
 from PIL import Image, ImageTk
 
 
@@ -85,14 +86,7 @@ class TemplateCaptureWizard:
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
-        try:
-            icon_path = config.resource_path("picture/icon/icon.ico")
-            if os.path.exists(icon_path):
-                icon_img = Image.open(icon_path)
-                self._icon_photo = ImageTk.PhotoImage(icon_img)
-                self.win.iconphoto(False, self._icon_photo)
-        except Exception:
-            pass
+        utils.set_window_icon(self.win)
 
         self._build_ui()
         self._update_progress()
@@ -799,14 +793,7 @@ class TemplateCaptureWizard:
 
     def _set_dialog_icon(self, dialog):
         """为对话框设置图标"""
-        try:
-            icon_path = config.resource_path("picture/icon/icon.ico")
-            if os.path.exists(icon_path):
-                icon_img = Image.open(icon_path)
-                dialog._icon_photo = ImageTk.PhotoImage(icon_img)
-                dialog.iconphoto(False, dialog._icon_photo)
-        except Exception:
-            pass
+        utils.set_window_icon(dialog)
 
     def _open_template_setting(self, var_name, rel_path, name):
         """打开模板设置窗口：预览图片 + OCR识别/恢复默认/上传 按钮"""

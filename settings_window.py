@@ -7,6 +7,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import ast
 import re
 import winreg
 import config
@@ -31,14 +32,7 @@ class SettingsWindow:
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
-        try:
-            icon_path = config.resource_path("picture/icon/icon.ico")
-            if os.path.exists(icon_path):
-                icon_img = Image.open(icon_path)
-                self._icon_photo = ImageTk.PhotoImage(icon_img)
-                self.win.iconphoto(False, self._icon_photo)
-        except Exception:
-            pass
+        utils.set_window_icon(self.win)
 
         # 全局设置变量
         self.wegame_var = tk.StringVar(value=app.settings.get("wegame_path", ""))
@@ -578,7 +572,7 @@ class SettingsWindow:
                  style='SettingsSmall.TLabel', font=('Microsoft YaHei UI', 8, 'bold')).pack(anchor=tk.W)
 
     def _test_send_email(self):
-        """发送测试邮件"""
+        """发送测试邮件（异步，不阻塞 UI 线程）"""
         sender = self.sender_email_var.get().strip()
         code = self.smtp_code_var.get().strip()
         receiver = self.receiver_email_var.get().strip()
@@ -588,14 +582,21 @@ class SettingsWindow:
             return
 
         self.email_test_label.config(text="正在发送...", foreground="#f39c12")
-        self.win.update_idletasks()
 
-        import utils
-        success, msg = utils.send_email_notification(
-            code, sender, receiver,
-            "三角洲自动化工具 - 测试邮件",
-            "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>"
-        )
+        def _send():
+            import utils
+            success, msg = utils.send_email_notification(
+                code, sender, receiver,
+                "三角洲自动化工具 - 测试邮件",
+                "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>"
+            )
+            self.win.after(0, lambda: self._on_test_email_result(success, msg))
+
+        import threading
+        threading.Thread(target=_send, daemon=True).start()
+
+    def _on_test_email_result(self, success, msg):
+        """测试邮件发送结果回调（UI 线程）"""
         if success:
             self.email_test_label.config(text="✓ 发送成功！", foreground="#27ae60")
         else:
@@ -1101,7 +1102,7 @@ class SettingsWindow:
             if not region_str:
                 messagebox.showwarning("提示", "请先设置识别区域", parent=self.win)
                 return
-            region = eval(region_str)
+            region = ast.literal_eval(region_str)
             if not isinstance(region, list) or len(region) != 4 or region[2] <= 0 or region[3] <= 0:
                 messagebox.showwarning("提示", "识别区域格式不正确，应为 [x, y, w, h]", parent=self.win)
                 return
@@ -1305,7 +1306,7 @@ class SettingsWindow:
         try:
             region_str = self.asset_region_var.get().strip()
             if region_str:
-                region = eval(region_str)
+                region = ast.literal_eval(region_str)
                 if isinstance(region, list) and len(region) == 4:
                     self.app.settings["asset_region"] = region
         except Exception:

@@ -500,7 +500,6 @@ def close_window_by_title(title_contains, partial_match=True):
 
 # ==================== 电源管理 ====================
 import ctypes
-import datetime as _dt
 
 _kernel32 = ctypes.windll.kernel32
 
@@ -1029,3 +1028,48 @@ def find_and_click_smart(img_path, timeout=20, region=None, confidence=None):
                 print("⚠️ OCR 连续超时 2 次，已自动禁用 OCR，后续全部使用图像识别")
 
     return find_and_click(img_path, timeout=timeout, region=region, confidence=confidence)
+
+
+# ==================== 窗口图标设置 ====================
+def set_window_icon(win):
+    """为 Tkinter 窗口统一设置应用图标"""
+    try:
+        icon_path = config.resource_path("picture/icon/icon.ico")
+        if os.path.exists(icon_path):
+            from PIL import Image, ImageTk
+            win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+            win.iconphoto(False, win._icon_photo)
+    except Exception:
+        pass
+
+
+# ==================== 资产数值解析/格式化 ====================
+def parse_asset_value(val_str):
+    """将资产字符串转为数值，如 '1.2M' → 1200000"""
+    if not val_str or val_str == "0":
+        return 0
+    val_str = val_str.strip().upper()
+    multipliers = {"K": 1000, "M": 1_000_000, "B": 1_000_000_000}
+    for suffix, mult in multipliers.items():
+        if val_str.endswith(suffix):
+            try:
+                return float(val_str[:-1]) * mult
+            except ValueError:
+                return 0
+    try:
+        return float(val_str)
+    except ValueError:
+        return 0
+
+
+def format_asset_num(val):
+    """将数值格式化为资产字符串，如 1200000 → '1.20M'"""
+    abs_val = abs(val)
+    if abs_val >= 1_000_000_000:
+        return f"{val / 1_000_000_000:.2f}B"
+    elif abs_val >= 1_000_000:
+        return f"{val / 1_000_000:.2f}M"
+    elif abs_val >= 1_000:
+        return f"{val / 1_000:.1f}K"
+    else:
+        return f"{val:.0f}"

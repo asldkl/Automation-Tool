@@ -34,23 +34,6 @@ try:
 except ImportError:
     TRAY_AVAILABLE = False
 
-# ==================== 干扰代码（增加分析难度） ====================
-def _v1_check():
-    """校验许可证完整性"""
-    return True
-
-def _v2_check():
-    """验证环境配置"""
-    if _v1_check():
-        return False
-    return True
-
-def _v3_check():
-    """检查系统兼容性"""
-    _ = _v1_check()
-    _ = _v2_check()
-    return _ and not _
-
 # -------------------- 有效期由服务器端统一校验 --------------------
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
@@ -89,7 +72,7 @@ class App:
         self.root.title("三角洲行动自动化工具")
         self.root.resizable(True, True)
         self.root.minsize(500, 600)
-        self.running = False
+        self.running_event = threading.Event()
         self.qq_account_images = []
         self._account_assets = {}
         self._asset_history = {}
@@ -128,55 +111,67 @@ class App:
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
         config.CONFIDENCE = self.settings["confidence"]
 
-        # 服务器验证
+        # 服务器验证（异步，不阻塞 UI 线程）
         self._server_validated = False
         self._server_expiry = None
         try:
-            machine_id = machine_fingerprint.get_machine_id()
+            self._machine_id = machine_fingerprint.get_machine_id()
         except Exception:
-            machine_id = "获取失败"
+            self._machine_id = "获取失败"
 
+        # 显示加载提示，后台执行验证
+        self._loading_label = ttk.Label(self.root, text="正在验证许可证...",
+                                        font=('Microsoft YaHei UI', 11), foreground="#666")
+        self._loading_label.pack(expand=True)
+        self._validate_thread = threading.Thread(target=self._async_validate, daemon=True)
+        self._validate_thread.start()
+        self.root.after(200, self._check_validate_result)
+        return
+
+    def _async_validate(self):
+        """后台线程执行服务器验证"""
         try:
-            allowed, expiry, error = server_client.validate_with_server(self)
-            if allowed is True:
-                self._server_validated = True
-                self._server_expiry = expiry
-                print(f"✅ 服务器验证通过，有效期至：{expiry}")
-            elif allowed is False:
-                print(f"❌ 服务器验证失败：{error}")
-                messagebox.showerror("验证失败",
-                    f"程序无法启动：{error}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"本机机器指纹（请发送给管理员）：\n\n"
-                    f"  {machine_id}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━")
-                self.root.after(100, self.root.destroy)
-                return
-            else:
-                print(f"❌ 服务器验证失败：{error}")
-                messagebox.showerror("验证失败",
-                    f"无法连接到验证服务器，程序无法启动。\n\n"
-                    f"错误信息：{error}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"本机机器指纹（请发送给管理员）：\n\n"
-                    f"  {machine_id}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"请将此指纹发送给管理员添加白名单。")
-                self.root.after(100, self.root.destroy)
-                return
+            self._validate_result = server_client.validate_with_server(self)
         except Exception as e:
-            print(f"❌ 服务器验证异常: {e}")
+            self._validate_result = (None, None, f"服务器验证异常: {e}")
+
+    def _check_validate_result(self):
+        """轮询验证结果，完成后继续初始化或退出"""
+        if self._validate_thread.is_alive():
+            self.root.after(200, self._check_validate_result)
+            return
+        # 验证完成，处理结果
+        allowed, expiry, error = self._validate_result
+        if allowed is True:
+            self._server_validated = True
+            self._server_expiry = expiry
+            print(f"✅ 服务器验证通过，有效期至：{expiry}")
+            self._loading_label.destroy()
+            self._continue_init()
+        elif allowed is False:
+            print(f"❌ 服务器验证失败：{error}")
             messagebox.showerror("验证失败",
-                f"服务器验证异常，程序无法启动。\n\n"
-                f"错误信息：{e}\n\n"
+                f"程序无法启动：{error}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"本机机器指纹（请发送给管理员）：\n\n"
-                f"  {machine_id}\n\n"
+                f"  {self._machine_id}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━")
+            self.root.destroy()
+        else:
+            print(f"❌ 服务器验证失败：{error}")
+            messagebox.showerror("验证失败",
+                f"无法连接到验证服务器，程序无法启动。\n\n"
+                f"错误信息：{error}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"本机机器指纹（请发送给管理员）：\n\n"
+                f"  {self._machine_id}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"请将此指纹发送给管理员添加白名单。")
-            self.root.after(100, self.root.destroy)
-            return
+            self.root.destroy()
 
+    def _continue_init(self):
+        """服务器验证通过后继续初始化"""
+        root = self.root
         # 心跳相关
         self._heartbeat_thread = None
         self._heartbeat_stop = None
@@ -246,6 +241,18 @@ class App:
 
         # 关闭按钮 → 最小化到托盘
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ==================== 线程安全属性 ====================
+    @property
+    def running(self):
+        return self.running_event.is_set()
+
+    @running.setter
+    def running(self, value):
+        if value:
+            self.running_event.set()
+        else:
+            self.running_event.clear()
 
     # ==================== 样式 ====================
     def _setup_styles(self):
@@ -899,14 +906,7 @@ class App:
         self._log_win = win
 
         # 图标
-        try:
-            icon_path = config.resource_path("picture/icon/icon.ico")
-            if os.path.exists(icon_path):
-                from PIL import Image, ImageTk
-                win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
-                win.iconphoto(False, win._icon_photo)
-        except Exception:
-            pass
+        utils.set_window_icon(win)
 
         # 定位到主窗口右侧
         self.root.update_idletasks()
