@@ -220,25 +220,26 @@ def refresh_account_tree(app):
 
 # ---------- 账号右键菜单 ----------
 def show_account_menu(app, event):
-    try:
-        item = app.account_tree.identify_row(event.y)
-        if item:
-            if "separator" in app.account_tree.item(item, "tags"):
-                return
-            app.account_tree.selection_set(item)
-            # 动态更新"暂停账号"/"恢复账号"菜单标签
-            import cooldown_manager
-            idx = _tree_idx_to_account_idx(app, item)
-            if idx < len(app.qq_account_images):
-                name = os.path.basename(app.qq_account_images[idx])
-                is_paused = cooldown_manager.is_account_paused(name)
-                if is_paused:
-                    app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="恢复账号")
-                else:
-                    app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="暂停账号")
-            app.account_menu.tk_popup(event.x_root, event.y_root)
-    finally:
-        app.account_menu.grab_release()
+    item = app.account_tree.identify_row(event.y)
+    if not item:
+        return
+    if "separator" in app.account_tree.item(item, "tags"):
+        return
+    app.account_tree.selection_set(item)
+    # 动态更新"暂停账号"/"恢复账号"菜单标签
+    import cooldown_manager
+    idx = _tree_idx_to_account_idx(app, item)
+    if idx < len(app.qq_account_images):
+        name = os.path.basename(app.qq_account_images[idx])
+        is_paused = cooldown_manager.is_account_paused(name)
+        try:
+            if is_paused:
+                app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="恢复账号")
+            else:
+                app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="暂停账号")
+        except Exception:
+            pass
+    app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
 def manual_add_cooldown(app, event):

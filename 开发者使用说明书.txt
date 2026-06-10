@@ -626,6 +626,7 @@ v1.1.4 (2026-06-10)
 - 代码去重：提取 utils.parse_asset_value() / format_asset_num()，消除 account_manager 和 asset_db 间的重复
 - 测试新增：test_core_modules.py，35 个真实功能测试，覆盖 6 个核心模块
 - automation_runner.py run_script_main() 重构为 8 个子函数（约 80 行主函数）
+- Bug修复：修复多次鼠标点击账号后右键菜单无法弹出的问题（移除 tk_popup 后的 grab_release 干扰）
 - 重新打包 PyInstaller（~100MB）
 
 ----------------------------------------
