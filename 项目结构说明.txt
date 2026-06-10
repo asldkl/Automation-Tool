@@ -13,7 +13,7 @@ v1.1.0 新增：资产识别修复（直接 numpy 数组，无 BGR 转换）、�
 v1.1.1 新增：资产监测（SQLite 持久化 + 时间段统计）、账号备注（账号密码输入框）、使用说明移至设置页面。
 v1.1.2 新增：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞尔曲线移动、运行完成后清空残余状态。
 v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中。
-v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试（35项）。
+v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试（35项）。UI简化：删除电源管理页签和定时执行功能，全部改用冷却执行，设置页签从6个精简为5个。售卖物品列表支持多图片同时添加、自动跳过重复项。
 
 【核心文件】
 
@@ -22,7 +22,7 @@ v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安�
 │   - 启动 gui_app.main()
 │   - 异常日志写入 ~/.delta_auto_error.log
 │
-├── gui_app.py                  # 主 GUI 应用（入口层，约 900 行）
+├── gui_app.py                  # 主 GUI 应用（入口层，约 800 行）
 │   - App 类：主窗口、UI 构建、样式设置、系统托盘
 │   - __init__：初始化各模块、预初始化 OCR 引擎、异步服务器验证、_account_notes 备注
 │   - _async_validate() / _check_validate_result()：后台线程服务器验证（v1.1.4，不阻塞 UI）
@@ -48,17 +48,10 @@ v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安�
 │   - update_ui() / set_operation()：UI 更新辅助
 │   - get_account_next_run() / build_accounts_html()：账号信息构建
 │
-├── scheduler.py                # 定时调度模块（v1.1.0 拆分，约 540 行）
-│   - start_scheduler() / stop_scheduler()：启动/停止调度器
-│   - schedule_loop()：调度主循环（根据 run_mode 分发）
-│   - schedule_loop_daily()：每日循环模式
-│   - schedule_loop_single()：单次模式
-│   - check_reminder_daily()：每日提醒检查
-│   - execute_scheduled_run()：执行定时任务
-│   - show_reminder() / reminder_run_now/cancel/dismiss()：提醒弹窗
-│   - set_next_wake_timer() / update_cooldown_wake_timer()：唤醒定时器
-│   - check_shutdown()：定时关机检查
-│   - apply_auto_settings()：应用自动设置
+├── scheduler.py                # 调度模块（v1.1.4 精简，约 100 行）
+│   - set_next_wake_timer()：计算冷却到期时间，设置唤醒定时器
+│   - update_cooldown_wake_timer()：冷却监听专用唤醒定时器更新
+│   - apply_auto_settings()：应用冷却执行设置
 │
 ├── account_manager.py          # 账号管理模块（v1.1.0 拆分，约 738 行）
 │   - save_accounts() / load_accounts()：账号持久化（含 notes 备注数据）
@@ -173,14 +166,13 @@ v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安�
 │   - Smoothstep模式：eased = progress² × (3.0 - 2.0 × progress) S曲线缓动
 │   - precise_sleep()：高精度睡眠（内联实现，修复原 utils.precise_sleep 导入错误）
 │
-├── settings_window.py          # 设置对话框（约 1295 行）
-│   - SettingsWindow 类：6个选项卡
+├── settings_window.py          # 设置对话框（v1.1.4 精简，约 1100 行）
+│   - SettingsWindow 类：5个选项卡
 │     - Tab 1: 全局设置（路径、置信度、资产识别、日志目录、机器指纹、使用说明）
 │     - Tab 2: 售卖物品（物品列表、出售参数、一键出售开关）
-│     - Tab 3: 自动任务（定时、操作选择、提醒）
-│     - Tab 4: 电源管理（唤醒、关机、定时开机、运行完成后延迟关机）
-│     - Tab 5: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
-│     - Tab 6: 其他设置（开机自启、冷却管理、滚动设置）
+│     - Tab 3: 自动任务（冷却执行、操作选择）
+│     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
+│     - Tab 5: 其他设置（开机自启、自动关机、运行完成后关机、滚动设置）
 │   - 资产识别：区域框选（全屏 overlay）、测试识别（直接 RapidOCR，无 BGR 转换）
 │   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
 │   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
@@ -267,7 +259,7 @@ gui_app.py (入口层)
   ├── automation_runner.py  ← start_run / stop_run / on_finish
   │     ├── automation.py   ← game_operations / sell_operations
   │     └── asset_db.py     ← record_asset（资产识别后写入 SQLite）
-  ├── scheduler.py          ← start_scheduler / stop_scheduler
+  ├── scheduler.py          ← set_next_wake_timer / apply_auto_settings
   │     └── cooldown_watcher.py
   ├── account_manager.py    ← 账号 CRUD / 冷却管理 UI / 资产监测 / 备注
   │     └── asset_db.py     ← query_total_change（资产统计查询）
@@ -290,6 +282,8 @@ gui_app.py (入口层)
 | server_url                  | 服务器地址                         | http://112.74.106.69:8000    |
 | client_key                  | 客户端密钥                         | Client_Normal_Key_2026       |
 | post_run_shutdown_delay     | 运行完成后延迟关机（分钟，0=不关机）  | 0                            |
+| auto_shutdown_enabled       | 启用自动关机                       | False                        |
+| auto_shutdown_time          | 自动关机时间                       | 22:00                        |
 | enable_cooldown             | 启用账号冷却                       | False                        |
 | cooldown_hours              | 冷却小时数                         | 8                            |
 | cooldown_run_immediately    | 冷却完立即运行                     | False                        |
@@ -300,8 +294,6 @@ gui_app.py (入口层)
 | sell_quantity               | 出售数量（1-99）                   | 1                            |
 | sell_confidence             | 出售物品匹配置信度                  | 0.55                         |
 | email_enabled               | 启用邮件通知                       | False                        |
-| auto_start                  | 启用定时执行                       | False                        |
-| run_mode                    | 运行模式（单次/每日循环）           | 单次                         |
 | enable_email_currency       | 自动领取邮箱货币                   | False                        |
 | global_ocr_enabled          | 启用全局 OCR 文字识别              | False                        |
 | global_ocr_region           | 全局 OCR 识别区域 [x,y,w,h]       | None                         |
@@ -319,7 +311,7 @@ gui_app.py (入口层)
 【运行流程】
 
 1. 启动 → 单实例检查 → 预初始化 OCR 引擎 → 服务器验证（机器指纹+有效期） → 加载设置 → 显示主界面
-2. 用户点击"开始运行"或定时触发或冷却到期触发
+2. 用户点击"开始运行"或冷却到期自动触发
 3. 每天首次运行时再次验证服务器（防长期不退出绕过）
 4. 启动心跳线程（每30秒同步账号状态）
 5. 清理进程（QQ/WeGame）

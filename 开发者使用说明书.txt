@@ -32,8 +32,8 @@
 本工具是《三角洲行动》游戏的日常自动化工具，基于图像识别 + OCR 文字识别技术，支持：
 - QQ 登录 + WeGame 快捷登录
 - 多账号管理
-- 定时执行
-- 电源管理
+- 冷却执行（冷却到期自动运行）
+- 自动关机
 - 邮件通知
 - OCR 文字识别（RapidOCR）
 - 机器指纹绑定（防复制/防滥用）
@@ -137,12 +137,10 @@ automation_runner.py（约 596 行）
     - game_operations_wrapper / sell_operations_wrapper
     - on_finish：任务完成后处理（延迟关机等）
 
-scheduler.py（约 540 行）
-    - start_scheduler / stop_scheduler：调度器生命周期
-    - schedule_loop_daily / schedule_loop_single：两种运行模式
-    - show_reminder / reminder_run_now/cancel/dismiss：提醒弹窗
-    - set_next_wake_timer / update_cooldown_wake_timer：唤醒定时器
-    - apply_auto_settings：应用自动设置
+scheduler.py（约 100 行，v1.1.4 精简）
+    - set_next_wake_timer：计算下一个冷却到期时间，设置唤醒定时器
+    - update_cooldown_wake_timer：冷却监听专用唤醒定时器更新
+    - apply_auto_settings：应用冷却执行设置
 
 account_manager.py（约 738 行）
     - 账号 CRUD：save/load/add/delete/clear
@@ -601,6 +599,15 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 v1.1.4 (2026-06-10)
 ----------------------------------------
 
+- UI 简化：删除「电源管理」设置页签，仅保留「自动关机」和「运行完成后关机」移至「其他设置」
+- UI 简化：删除「自动任务」中的定时执行功能，全部改用冷却执行模式
+  - 删除：启用定时执行、运行模式（单次/每日循环）、时间点管理、运行提醒
+  - 冷却设置移入「自动任务」页签：冷却小时数、账号间隔时间、冷却完立即运行
+- UI 简化：删除日志按钮中的图标，仅保留文字
+- 售卖物品列表改进：支持多图片同时添加（askopenfilenames），自动跳过重复文件名，添加完成后显示结果统计
+- 代码精简：scheduler.py 从约 540 行精简至约 100 行，删除 15 个定时执行相关函数
+- 代码精简：gui_app.py 删除 15+ 个调度器代理方法和相关实例变量
+- 代码精简：config.py DEFAULT_SETTINGS 删除 10 个已废弃配置项
 - 安全修复：settings_window.py 中 eval() 替换为 ast.literal_eval()，防止代码注入
 - 安全新增：credential_crypto.py 凭据加密模块（Fernet 对称加密 + PBKDF2 密钥派生）
   - SMTP 授权码加密存储（~/.delta_auto_settings.json 中 smtp_code 字段）
@@ -706,8 +713,8 @@ v1.1.0 (2026-06-06)
   - 设置界面支持区域框选和测试识别
 - 主界面账号列表重新设计：从 Listbox 升级为 Treeview，新增四列（账号名称、现有资产、冷却剩余、下次运行）
 - 主界面简化：删除刷新按钮，右键菜单集成测试截图识别/上移/下移/重置冷却/自定义冷却/删除
-- 设置窗口重新布局：
-  - 6 个选项卡：全局设置 → 售卖物品 → 自动任务 → 电源管理 → 邮件通知 → 其他设置
+- 设置窗口重新布局（v1.1.4 精简为 5 个选项卡）：
+  - 5 个选项卡：全局设置 → 售卖物品 → 自动任务 → 邮件通知 → 其他设置
   - 窗口 550x700，可调整大小，minsize(500, 600)
   - 去除所有浏览按钮，路径/日志目录直接输入
   - 机器指纹自动加载显示，无需手动刷新

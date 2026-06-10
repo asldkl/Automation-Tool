@@ -1,7 +1,7 @@
 """
 图形用户界面模块
 包含多账号管理、游戏内操作、停止机制及快捷键
-支持账号列表本地持久化、启动联网时间校验、多时间点定时执行、每日循环、静默托盘、开机自启动
+支持账号列表本地持久化、启动联网时间校验、冷却执行、开机自启动
 """
 import os
 import sys
@@ -80,21 +80,10 @@ class App:
         self._current_account_name = None
         self._stop_event = threading.Event()
         self._scheduler_stop_event = threading.Event()
-        self._auto_timer = None
         self._schedule_thread = None
-        self._daily_loop = False
-        self._silent = False
-        self._schedule_times = []
         self._settings_window = None
-        self._reminder_shown = False
-        self._reminder_cancelled_time = None
-        self._reminder_target = None
-        self._reminder_window = None
-        self._next_run_time_str = ""
         self._wake_timer_handle = None
         self._last_wake_time = None
-        self._wake_attempted = False
-        self._shutdown_handled_today = False
         self._ignore_cooldown_this_run = False
         self._is_boot_startup = False
         self._user_stopped_cooldown = False
@@ -211,16 +200,6 @@ class App:
         # 单实例前台显示事件
         self._setup_show_event()
 
-        # 互斥校验
-        if self.settings.get("auto_start", False) and self.settings.get("cooldown_run_immediately", False):
-            print("⚠️ 检测到「定时执行」与「冷却完立即运行」同时启用，自动关闭「冷却完立即运行」")
-            self.settings["cooldown_run_immediately"] = False
-            config.save_settings(self.settings)
-
-        # 定时任务初始化
-        if self.settings.get("auto_start", False):
-            self._start_scheduler()
-
         # 冷却完立即运行
         if self.settings.get("cooldown_run_immediately", False):
             self._start_cooldown_watcher()
@@ -236,8 +215,6 @@ class App:
             else:
                 print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
                       f"账号数={len(self.qq_account_images)})")
-            if self.settings.get("silent_mode", False) and TRAY_AVAILABLE:
-                self.root.withdraw()
 
         # 关闭按钮 → 最小化到托盘
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -655,56 +632,11 @@ class App:
 
 
     # --- 调度器 ---
-    def _start_scheduler(self):
-        sched.start_scheduler(self)
-
-    def _schedule_loop(self):
-        sched.schedule_loop(self)
-
-    def _restart_scheduler(self):
-        sched.restart_scheduler(self)
-
-    def _schedule_loop_daily(self):
-        sched.schedule_loop_daily(self)
-
-    def _schedule_loop_single(self):
-        sched.schedule_loop_single(self)
-
-    def _check_reminder_daily(self, now, executed_today=None):
-        sched.check_reminder_daily(self, now, executed_today)
-
-    def _check_shutdown(self, now):
-        sched.check_shutdown(self, now)
-
-    def _is_within_pre_run_window(self, now, minutes=10):
-        return sched.is_within_pre_run_window(self, now, minutes)
-
-    def _execute_scheduled_run(self, time_str):
-        sched.execute_scheduled_run(self, time_str)
-
     def _set_next_wake_timer(self):
         sched.set_next_wake_timer(self)
 
     def _update_cooldown_wake_timer(self):
         sched.update_cooldown_wake_timer(self)
-
-    def _show_reminder(self, minutes):
-        sched.show_reminder(self, minutes)
-
-    def _reminder_run_now(self):
-        sched.reminder_run_now(self)
-
-    def _reminder_cancel(self):
-        sched.reminder_cancel(self)
-
-    def _reminder_dismiss(self):
-        sched.reminder_dismiss(self)
-
-    def _update_ui_after_single(self):
-        sched.update_ui_after_single(self)
-
-    def _reschedule_single(self, skipped_target):
-        sched.reschedule_single(self, skipped_target)
 
     # --- 冷却监听 ---
     def _start_cooldown_watcher(self):
@@ -774,7 +706,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.1.3  |  多账号轮换 · 定时执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.1.4  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -875,7 +807,7 @@ class App:
         self.settings_btn = ttk.Button(ctrl_frame, text="⚙ 设置", style='TButton',
                                        command=self.open_settings, width=10)
         self.settings_btn.pack(side=tk.RIGHT, padx=8)
-        self.log_toggle_btn = ttk.Button(ctrl_frame, text="📋 日志", style='Accent.TButton',
+        self.log_toggle_btn = ttk.Button(ctrl_frame, text="日志", style='Accent.TButton',
                                          command=self._toggle_log_panel, width=10)
         self.log_toggle_btn.pack(side=tk.RIGHT, padx=8)
 

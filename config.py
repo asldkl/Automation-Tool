@@ -83,21 +83,10 @@ DEFAULT_SETTINGS = {
     "delta_path": "",                 # 三角洲启动程序路径（备用）
     "confidence": 0.7,                # 全局图像匹配置信度
     "log_save_path": "",              # 日志保存目录，若为空则仅显示在界面
-    "auto_start": False,              # 是否启用定时执行
-    "start_time": "08:00",            # 定时执行时间 (HH:MM)
-    "run_mode": "单次",               # "单次" 或 "每日循环"
-    "silent_mode": False,             # 静默运行（最小化到托盘）
-    "schedule_times": [],
     "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
-    # 运行前提醒
-    "reminder_enabled": False,        # 是否启用运行前提醒弹窗
-    "reminder_minutes": 5,            # 提前几分钟提醒（1-15）
-    # 电源管理
-    "wake_enabled": True,             # 运行前5分钟唤醒电脑（防休眠）
+    # 自动关机
     "auto_shutdown_enabled": False,   # 是否启用自动关机
     "auto_shutdown_time": "22:00",    # 关机时间 (HH:MM)
-    "auto_startup_enabled": False,    # 是否启用定时开机（从睡眠/休眠唤醒）
-    "auto_startup_time": "07:00",     # 开机时间 (HH:MM)
     # QQ 路径
     "qq_path": "",                    # QQ 程序路径
     # 邮件通知

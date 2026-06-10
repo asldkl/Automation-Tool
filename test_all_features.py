@@ -612,11 +612,11 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.1.0"""
+        """gui_app.py 中版本号应为 v1.1.4"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.1.0", content)
+        self.assertIn("v1.1.4", content)
 
     def test_readme_has_v190_section(self):
         """README.md 应包含 v1.0.2 更新日志"""
@@ -683,16 +683,6 @@ class TestBugFixes(unittest.TestCase):
             content = f.read()
         self.assertIn("_user_stopped_cooldown", content)
 
-    def test_bug4_startup_mutex_check(self):
-        """Bug4: 启动时应有互斥校验"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        # 在 __init__ 中应有互斥检查
-        init_start = content.find("def __init__(self, root):")
-        init_content = content[init_start:content.find("def _setup_styles")]
-        self.assertIn("互斥校验", init_content)
-
     def test_bug5_restart_cooldown_watcher_exists(self):
         """Bug5: 应有 restart_cooldown_watcher 函数"""
         watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
@@ -707,11 +697,6 @@ class TestBugFixes(unittest.TestCase):
         with open(gui_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_ignore_cooldown_this_run", content)
-        # scheduler 中 _execute_scheduled_run 应设置该标志
-        sched_path = os.path.join(os.path.dirname(__file__), "scheduler.py")
-        with open(sched_path, "r", encoding="utf-8") as f:
-            sched_content = f.read()
-        self.assertIn("_ignore_cooldown_this_run = True", sched_content)
         # automation_runner 中 on_finish 应重置该标志
         runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
@@ -725,14 +710,6 @@ class TestBugFixes(unittest.TestCase):
             content = f.read()
         self.assertIn("record_run", content)
         self.assertIn("首次启用", content)
-
-    def test_bug2_settings_cooldown_linkage(self):
-        """Bug2: settings_window.py 中应有冷却管理联动逻辑"""
-        sw_path = os.path.join(os.path.dirname(__file__), "settings_window.py")
-        with open(sw_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("_on_cooldown_enable_changed", content)
-        self.assertIn("_on_cooldown_run_immed_changed_for_enable", content)
 
 
 # ==================== 运行所有测试 ====================

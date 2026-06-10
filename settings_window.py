@@ -1,7 +1,7 @@
 """
 设置窗口模块
 提供 WeGame 路径、三角洲路径、置信度、开机自启动等全局设置，
-以及定时执行、运行模式等自动任务设置
+以及冷却执行、操作选择等自动任务设置
 """
 import os
 import sys
@@ -43,10 +43,7 @@ class SettingsWindow:
         self.run_on_startup_var = tk.BooleanVar(value=app.settings.get("run_on_startup", False))
 
         # 自动任务设置变量
-        self.auto_enable_var = tk.BooleanVar(value=app.settings.get("auto_start", False))
         self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
-        self.run_mode_var = tk.StringVar(value=app.settings.get("run_mode", "单次"))
-        self.silent_var = tk.BooleanVar(value=app.settings.get("silent_mode", False))
 
         # 操作选择变量
         selected = app.settings.get("selected_operations", [])
@@ -54,10 +51,6 @@ class SettingsWindow:
         self.op_bench = tk.BooleanVar(value="tool_bench" in selected)
         self.op_armor = tk.BooleanVar(value="armor_station" in selected)
         self.op_pharmacy = tk.BooleanVar(value="pharmacy_station" in selected)
-
-        # 运行提醒变量
-        self.reminder_enable_var = tk.BooleanVar(value=app.settings.get("reminder_enabled", False))
-        self.reminder_minutes_var = tk.IntVar(value=app.settings.get("reminder_minutes", 5))
 
         # QQ 路径
         self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
@@ -92,14 +85,12 @@ class SettingsWindow:
 
         # 冷却管理变量
         self.cooldown_enable_var = tk.BooleanVar(value=app.settings.get("enable_cooldown", False))
+        self.cooldown_hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
         self.cooldown_delay_var = tk.IntVar(value=app.settings.get("cooldown_delay_minutes", 1))
 
-        # 电源管理变量
-        self.wake_var = tk.BooleanVar(value=app.settings.get("wake_enabled", True))
+        # 自动关机变量
         self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
         self.shutdown_time_var = tk.StringVar(value=app.settings.get("auto_shutdown_time", "22:00"))
-        self.startup_enable_var = tk.BooleanVar(value=app.settings.get("auto_startup_enabled", False))
-        self.startup_time_var = tk.StringVar(value=app.settings.get("auto_startup_time", "07:00"))
         self.post_run_shutdown_delay_var = tk.IntVar(value=app.settings.get("post_run_shutdown_delay", 0))
 
         self._active_canvas = None
@@ -199,19 +190,13 @@ class SettingsWindow:
         auto_tab = self._create_scrollable_tab(auto_tab_outer)
         self._build_auto_tab(auto_tab)
 
-        # ----- Tab 4: 电源管理 -----
-        power_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
-        notebook.add(power_tab_outer, text="  电源管理  ")
-        power_tab = self._create_scrollable_tab(power_tab_outer)
-        self._build_power_tab(power_tab)
-
-        # ----- Tab 5: 邮件通知 -----
+        # ----- Tab 4: 邮件通知 -----
         email_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(email_tab_outer, text="  邮件通知  ")
         email_tab = self._create_scrollable_tab(email_tab_outer)
         self._build_email_tab(email_tab)
 
-        # ----- Tab 6: 其他设置 -----
+        # ----- Tab 5: 其他设置 -----
         other_tab_outer = ttk.Frame(notebook, style='Settings.TFrame')
         notebook.add(other_tab_outer, text="  其他设置  ")
         other_tab = self._create_scrollable_tab(other_tab_outer)
@@ -328,93 +313,30 @@ class SettingsWindow:
                    command=lambda: account_manager.show_help(self.app), width=14).pack(anchor='w', padx=5, pady=5)
 
     def _build_auto_tab(self, parent):
-        """自动任务设置选项卡内容"""
-        # 第1行：启用 + 模式 + 静默
-        row1 = ttk.Frame(parent, style='SettingsInner.TFrame')
-        row1.pack(fill=tk.X, pady=(0, 12))
+        """自动任务设置选项卡内容（冷却执行模式）"""
+        # ----- 冷却执行 -----
+        cooldown_frame = ttk.LabelFrame(parent, text="  冷却执行  ", style='SettingsCard.TLabelframe', padding=10)
+        cooldown_frame.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Checkbutton(row1, text="启用定时执行",
-                        variable=self.auto_enable_var).pack(side=tk.LEFT, padx=(0, 18))
+        cd_row1 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(cd_row1, text="启用账号冷却（每次运行完成后进入冷却期）",
+                       variable=self.cooldown_enable_var).pack(side=tk.LEFT, padx=5, pady=5)
 
-        ttk.Label(row1, text="运行模式：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        mode_combo = ttk.Combobox(row1, textvariable=self.run_mode_var,
-                                  values=["每日循环", "单次"],
-                                  state="readonly", width=10)
-        mode_combo.pack(side=tk.LEFT, padx=(0, 18))
+        cd_row2 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row2.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(cd_row2, text="冷却小时数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
+        ttk.Spinbox(cd_row2, from_=1, to=24, increment=1,
+                    textvariable=self.cooldown_hours_var, width=6).pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Label(cd_row2, text="账号间隔时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(cd_row2, from_=0, to=5, increment=1,
+                    textvariable=self.cooldown_delay_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(cd_row2, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
 
-        ttk.Checkbutton(row1, text="静默运行（托盘）",
-                       variable=self.silent_var).pack(side=tk.LEFT)
-
-        # 第1.5行：冷却完立即运行（与启用定时执行互斥）
-        row1b = ttk.Frame(parent, style='SettingsInner.TFrame')
-        row1b.pack(fill=tk.X, pady=(0, 12))
-
-        self._cooldown_run_immed_cb = ttk.Checkbutton(
-            row1b, text="冷却完立即运行（冷却结束后自动执行，与定时执行互斥）",
-            variable=self.cooldown_run_immediately_var)
-        self._cooldown_run_immed_cb.pack(side=tk.LEFT, padx=(0, 18))
-
-        # 获取"启用定时执行"Checkbutton 引用（row1 的第一个子控件）
-        self._auto_enable_cb = row1.winfo_children()[0]
-
-        # 互斥逻辑：勾选一个时取消另一个并禁用，取消时恢复另一个
-        def _on_auto_enable_changed(*args):
-            if self.auto_enable_var.get():
-                self.cooldown_run_immediately_var.set(False)
-                self._cooldown_run_immed_cb.state(['disabled'])
-            else:
-                self._cooldown_run_immed_cb.state(['!disabled'])
-
-        def _on_cooldown_run_immed_changed(*args):
-            if self.cooldown_run_immediately_var.get():
-                self.auto_enable_var.set(False)
-                self._auto_enable_cb.state(['disabled'])
-            else:
-                self._auto_enable_cb.state(['!disabled'])
-
-        self.auto_enable_var.trace_add('write', _on_auto_enable_changed)
-        self.cooldown_run_immediately_var.trace_add('write', _on_cooldown_run_immed_changed)
-
-        # 初始化互斥状态
-        if self.auto_enable_var.get():
-            self._cooldown_run_immed_cb.state(['disabled'])
-        if self.cooldown_run_immediately_var.get():
-            self._auto_enable_cb.state(['disabled'])
-
-        # 第2行：时间点管理
-        row2 = ttk.Frame(parent, style='SettingsInner.TFrame')
-        row2.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(row2, text="执行时间点（HH:MM）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        self.time_var = tk.StringVar()
-        time_entry = ttk.Entry(row2, textvariable=self.time_var, width=8)
-        time_entry.pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(row2, text="添加", style='TButton', command=self._add_time, width=6).pack(side=tk.LEFT, padx=4)
-        ttk.Button(row2, text="删除选中", style='TButton', command=self._delete_time, width=8).pack(side=tk.LEFT, padx=4)
-
-        # 时间列表
-        time_list_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
-        time_list_frame.pack(fill=tk.X, pady=(0, 12))
-        scrollbar = ttk.Scrollbar(time_list_frame, orient=tk.VERTICAL)
-        self.time_listbox = tk.Listbox(time_list_frame, height=4,
-                                       yscrollcommand=scrollbar.set,
-                                       selectmode=tk.SINGLE,
-                                       font=('Microsoft YaHei UI', 9),
-                                       bg='#fafbfc', fg='#333333',
-                                       selectbackground='#0078d4',
-                                       selectforeground='#ffffff',
-                                       relief='flat', highlightthickness=1,
-                                       highlightcolor='#e0e0e0', borderwidth=0)
-        scrollbar.config(command=self.time_listbox.yview)
-        self.time_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
-
-        # 填充已有时间
-        times = self.app.settings.get("schedule_times", [])
-        if not times and self.app.settings.get("start_time"):
-            times = [self.app.settings["start_time"]]
-        for t in times:
-            self.time_listbox.insert(tk.END, t)
+        cd_row3 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row3.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(cd_row3, text="冷却完立即运行（冷却结束后自动执行任务）",
+                       variable=self.cooldown_run_immediately_var).pack(side=tk.LEFT, padx=5, pady=5)
 
         # ----- 执行操作选择 -----
         ops_frame = ttk.LabelFrame(parent, text="  执行操作（可多选）  ", style='SettingsCard.TLabelframe', padding=10)
@@ -427,88 +349,6 @@ class SettingsWindow:
         ttk.Checkbutton(ops_inner, text="防具台", variable=self.op_armor).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Checkbutton(ops_inner, text="制药台", variable=self.op_pharmacy).pack(side=tk.LEFT)
 
-        # ----- 运行提醒 -----
-        reminder_frame = ttk.LabelFrame(parent, text="  运行提醒  ", style='SettingsCard.TLabelframe', padding=10)
-        reminder_frame.pack(fill=tk.X, pady=(8, 0))
-
-        reminder_inner = ttk.Frame(reminder_frame, style='SettingsInner.TFrame')
-        reminder_inner.pack(fill=tk.X)
-        ttk.Checkbutton(reminder_inner, text="启用运行前提醒弹窗",
-                       variable=self.reminder_enable_var).pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(reminder_inner, text="提前", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        reminder_combo = ttk.Combobox(reminder_inner, textvariable=self.reminder_minutes_var,
-                                      values=[1, 2, 3, 5, 10, 15],
-                                      state="readonly", width=5)
-        reminder_combo.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(reminder_inner, text="分钟弹出提示", style='Settings.TLabel').pack(side=tk.LEFT)
-
-
-    def _build_power_tab(self, parent):
-        """电源管理选项卡"""
-        # ----- 唤醒设置 -----
-        frame1 = ttk.LabelFrame(parent, text="  唤醒设置  ", style='SettingsCard.TLabelframe', padding=12)
-        frame1.pack(fill=tk.X, pady=(0, 8))
-
-        f1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
-        f1.pack(fill=tk.X)
-        ttk.Checkbutton(f1, text="运行前5分钟唤醒电脑（防止休眠 / 睡眠状态）",
-                       variable=self.wake_var).pack(side=tk.LEFT, padx=5, pady=5)
-        note1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
-        note1.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(note1, text="电脑挂机休眠时可自动唤醒，确保定时任务正常执行",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
-
-        # ----- 自动关机 -----
-        frame2 = ttk.LabelFrame(parent, text="  自动关机  ", style='SettingsCard.TLabelframe', padding=12)
-        frame2.pack(fill=tk.X, pady=(0, 8))
-
-        f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
-        f2.pack(fill=tk.X)
-        ttk.Checkbutton(f2, text="启用自动关机",
-                       variable=self.shutdown_enable_var).pack(side=tk.LEFT, padx=(0, 18))
-        ttk.Label(f2, text="关机时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        shutdown_entry = ttk.Entry(f2, textvariable=self.shutdown_time_var, width=8)
-        shutdown_entry.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f2, text="(HH:MM)", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-        # 说明文字另起一行
-        note2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
-        note2.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(note2, text="到达设定时间后系统将自动关机（任务运行中会等待完成后执行）",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
-
-        # ----- 运行完成后延迟关机 -----
-        frame2b = ttk.LabelFrame(parent, text="  运行完成后关机  ", style='SettingsCard.TLabelframe', padding=12)
-        frame2b.pack(fill=tk.X, pady=(0, 8))
-
-        f2b = ttk.Frame(frame2b, style='SettingsInner.TFrame')
-        f2b.pack(fill=tk.X)
-        ttk.Label(f2b, text="所有账号运行完成后延迟关机：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f2b, from_=0, to=5, increment=1,
-                    textvariable=self.post_run_shutdown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f2b, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
-        note2b = ttk.Frame(frame2b, style='SettingsInner.TFrame')
-        note2b.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(note2b, text="所有账号处理完毕后，按设定延迟时间自动关机（0表示不关机）",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5)
-
-        # ----- 自动开机（唤醒） -----
-        frame3 = ttk.LabelFrame(parent, text="  定时开机（从睡眠/休眠唤醒）  ", style='SettingsCard.TLabelframe', padding=12)
-        frame3.pack(fill=tk.X, pady=(0, 8))
-
-        f3 = ttk.Frame(frame3, style='SettingsInner.TFrame')
-        f3.pack(fill=tk.X)
-        ttk.Checkbutton(f3, text="启用定时开机唤醒",
-                       variable=self.startup_enable_var).pack(side=tk.LEFT, padx=(0, 18))
-        ttk.Label(f3, text="开机时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        startup_entry = ttk.Entry(f3, textvariable=self.startup_time_var, width=8)
-        startup_entry.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(f3, text="(HH:MM)", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-
-        note_frame = ttk.Frame(frame3, style='SettingsInner.TFrame')
-        note_frame.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(note_frame,
-                 text="💡 定时开机功能可在电脑处于睡眠/休眠状态时将其唤醒。\n    若电脑为完全关机状态，需主板支持 RTC 唤醒并在 BIOS 中启用【定时开机】或「RTC Alarm」功能。",
-                 style='SettingsSmall.TLabel', wraplength=480, justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
 
     def _build_email_tab(self, parent):
         """邮件通知选项卡内容"""
@@ -638,35 +478,34 @@ class SettingsWindow:
         ttk.Label(frame1, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
-        # ----- 冷却管理 -----
-        frame_cooldown = ttk.LabelFrame(parent, text="  冷却管理  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_cooldown.pack(fill=tk.X, pady=(0, 8))
+        # ----- 自动关机 -----
+        frame_shutdown = ttk.LabelFrame(parent, text="  自动关机  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_shutdown.pack(fill=tk.X, pady=(0, 8))
 
-        cd_row1 = ttk.Frame(frame_cooldown, style='SettingsInner.TFrame')
-        cd_row1.pack(fill=tk.X, pady=(0, 4))
-        self._cooldown_enable_cb = ttk.Checkbutton(cd_row1, text="启用账号冷却（每次运行完成后进入冷却期）",
-                       variable=self.cooldown_enable_var)
-        self._cooldown_enable_cb.pack(side=tk.LEFT, padx=5, pady=5)
+        fs1 = ttk.Frame(frame_shutdown, style='SettingsInner.TFrame')
+        fs1.pack(fill=tk.X)
+        ttk.Checkbutton(fs1, text="启用自动关机",
+                       variable=self.shutdown_enable_var).pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Label(fs1, text="关机时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(fs1, textvariable=self.shutdown_time_var, width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(fs1, text="(HH:MM)", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
-        # 冷却完立即运行与启用账号冷却的联动
-        def _on_cooldown_enable_changed(*args):
-            if not self.cooldown_enable_var.get():
-                # 取消启用账号冷却时，自动取消冷却完立即运行
-                self.cooldown_run_immediately_var.set(False)
+        ttk.Label(frame_shutdown, text="到达设定时间后系统将自动关机（任务运行中会等待完成后执行）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
 
-        def _on_cooldown_run_immed_changed_for_enable(*args):
-            if self.cooldown_run_immediately_var.get():
-                # 启用冷却完立即运行时，自动勾选启用账号冷却
-                self.cooldown_enable_var.set(True)
+        # ----- 运行完成后延迟关机 -----
+        frame_post = ttk.LabelFrame(parent, text="  运行完成后关机  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_post.pack(fill=tk.X, pady=(0, 8))
 
-        self.cooldown_enable_var.trace_add('write', _on_cooldown_enable_changed)
-        self.cooldown_run_immediately_var.trace_add('write', _on_cooldown_run_immed_changed_for_enable)
+        fp1 = ttk.Frame(frame_post, style='SettingsInner.TFrame')
+        fp1.pack(fill=tk.X)
+        ttk.Label(fp1, text="所有账号运行完成后延迟关机：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Spinbox(fp1, from_=0, to=5, increment=1,
+                    textvariable=self.post_run_shutdown_delay_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(fp1, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
 
-        cd_row2 = ttk.Frame(frame_cooldown, style='SettingsInner.TFrame')
-        cd_row2.pack(fill=tk.X)
-        ttk.Label(cd_row2, text="账号间隔时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
-        ttk.Spinbox(cd_row2, from_=0, to=5, increment=1,
-                    textvariable=self.cooldown_delay_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+        ttk.Label(frame_post, text="所有账号处理完毕后，按设定延迟时间自动关机（0表示不关机）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
 
         # ----- 账号列表鼠标下移距离设置 -----
         frame2 = ttk.LabelFrame(parent, text="  账号列表鼠标下移距离  ", style='SettingsCard.TLabelframe', padding=12)
@@ -842,32 +681,47 @@ class SettingsWindow:
             ))
 
     def _add_sell_item(self):
-        """添加售卖物品图片"""
+        """添加售卖物品图片（支持多选，自动跳过重复）"""
         filetypes = [("图片文件", "*.png;*.jpg;*.jpeg;*.bmp"), ("所有文件", "*.*")]
-        src = filedialog.askopenfilename(title="选择售卖物品图片", filetypes=filetypes)
-        if not src:
+        sources = filedialog.askopenfilenames(title="选择售卖物品图片（可多选）", filetypes=filetypes)
+        if not sources:
             return
-        try:
-            os.makedirs(config.SELL_ITEMS_DIR, exist_ok=True)
-            basename = os.path.basename(src)
-            name, ext = os.path.splitext(basename)
-            save_path = os.path.join(config.SELL_ITEMS_DIR, basename)
-            counter = 1
-            while os.path.exists(save_path):
-                save_path = os.path.join(config.SELL_ITEMS_DIR, f"{name}_{counter}{ext}")
-                counter += 1
-            with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
-                f_out.write(f_in.read())
-            saved_name = os.path.basename(save_path)
-            self._sell_items_meta.setdefault("items", []).append({
-                "filename": saved_name,
-                "name": os.path.splitext(saved_name)[0],
-                "discount_times": 0,
-                "quantity": 1
-            })
-            self._refresh_sell_treeview()
-        except Exception as e:
-            messagebox.showerror("错误", f"添加失败：{e}")
+        os.makedirs(config.SELL_ITEMS_DIR, exist_ok=True)
+        existing_filenames = {i["filename"] for i in self._sell_items_meta.get("items", [])}
+        added = 0
+        skipped = 0
+        for src in sources:
+            try:
+                basename = os.path.basename(src)
+                name, ext = os.path.splitext(basename)
+                save_path = os.path.join(config.SELL_ITEMS_DIR, basename)
+                counter = 1
+                while os.path.exists(save_path):
+                    save_path = os.path.join(config.SELL_ITEMS_DIR, f"{name}_{counter}{ext}")
+                    counter += 1
+                saved_name = os.path.basename(save_path)
+                if saved_name in existing_filenames:
+                    skipped += 1
+                    continue
+                with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
+                    f_out.write(f_in.read())
+                self._sell_items_meta.setdefault("items", []).append({
+                    "filename": saved_name,
+                    "name": os.path.splitext(saved_name)[0],
+                    "discount_times": 0,
+                    "quantity": 1
+                })
+                existing_filenames.add(saved_name)
+                added += 1
+            except Exception:
+                pass
+        self._refresh_sell_treeview()
+        msg = f"成功添加 {added} 个物品。"
+        if skipped:
+            msg += f"\n跳过 {skipped} 个重复物品。"
+        if added == 0 and skipped == 0:
+            msg = "未添加任何物品。"
+        messagebox.showinfo("添加结果", msg)
 
     def _delete_sell_item(self):
         """删除选中的售卖物品"""
@@ -1005,24 +859,6 @@ class SettingsWindow:
             self.win.after(0, lambda: messagebox.showinfo("出售测试完成", stats_text))
 
         threading.Thread(target=_run, daemon=True).start()
-
-    def _add_time(self):
-        raw = self.time_var.get().strip()
-        if re.match(r'^\d{1,2}:\d{2}$', raw):
-            h, m = map(int, raw.split(":"))
-            if h < 0 or h > 23 or m < 0 or m > 59:
-                messagebox.showwarning("格式错误", "时间超出范围，请输入 00:00 ~ 23:59")
-                return
-            normalized = f"{h:02d}:{m:02d}"
-            self.time_listbox.insert(tk.END, normalized)
-            self.time_var.set("")
-        else:
-            messagebox.showwarning("格式错误", "请输入 HH:MM 格式的时间，例如 08:30")
-
-    def _delete_time(self):
-        sel = self.time_listbox.curselection()
-        if sel:
-            self.time_listbox.delete(sel[0])
 
     def _update_conf_display(self):
         val = self.confidence_var.get()
@@ -1229,23 +1065,8 @@ class SettingsWindow:
         self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())
         self.app.settings["run_on_startup"] = self.run_on_startup_var.get()
 
-        # 自动任务设置
-        self.app.settings["auto_start"] = self.auto_enable_var.get()
+        # 冷却执行设置
         self.app.settings["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
-        self.app.settings["run_mode"] = self.run_mode_var.get()
-        self.app.settings["silent_mode"] = self.silent_var.get()
-        times = [self.time_listbox.get(i) for i in range(self.time_listbox.size())]
-        # 标准化时间格式（补零）
-        normalized_times = []
-        for t in times:
-            try:
-                h, m = map(int, t.split(":"))
-                normalized_times.append(f"{h:02d}:{m:02d}")
-            except Exception:
-                continue
-        self.app.settings["schedule_times"] = normalized_times
-        if normalized_times:
-            self.app.settings["start_time"] = normalized_times[0]
 
         # 执行操作
         ops = []
@@ -1255,16 +1076,9 @@ class SettingsWindow:
         if self.op_pharmacy.get(): ops.append("pharmacy_station")
         self.app.settings["selected_operations"] = ops
 
-        # 运行提醒
-        self.app.settings["reminder_enabled"] = self.reminder_enable_var.get()
-        self.app.settings["reminder_minutes"] = self.reminder_minutes_var.get()
-
-        # 电源管理
-        self.app.settings["wake_enabled"] = self.wake_var.get()
+        # 自动关机
         self.app.settings["auto_shutdown_enabled"] = self.shutdown_enable_var.get()
         self.app.settings["auto_shutdown_time"] = self.shutdown_time_var.get()
-        self.app.settings["auto_startup_enabled"] = self.startup_enable_var.get()
-        self.app.settings["auto_startup_time"] = self.startup_time_var.get()
         self.app.settings["post_run_shutdown_delay"] = self.post_run_shutdown_delay_var.get()
 
         # QQ 设置
@@ -1314,6 +1128,7 @@ class SettingsWindow:
 
         # 冷却管理设置
         self.app.settings["enable_cooldown"] = self.cooldown_enable_var.get()
+        self.app.settings["cooldown_hours"] = self.cooldown_hours_var.get()
         self.app.settings["cooldown_delay_minutes"] = self.cooldown_delay_var.get()
 
         config.APP_SETTINGS.update(self.app.settings)
@@ -1324,14 +1139,6 @@ class SettingsWindow:
 
         # 应用定时设置
         self.app.apply_auto_settings_from_window()
-
-        # 更新定时开机任务
-        if self.startup_enable_var.get():
-            import utils
-            utils.schedule_startup_task(self.startup_time_var.get())
-        else:
-            import utils
-            utils.remove_startup_task()
 
         messagebox.showinfo("提示", "设置已保存。")
         self.win.destroy()
