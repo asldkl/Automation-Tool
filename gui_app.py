@@ -249,63 +249,132 @@ class App:
 
     # ==================== 样式 ====================
     def _setup_styles(self):
-        """配置现代化 ttk 样式"""
+        """配置浅色主题 ttk 样式（参考 themes/light.qss 色板）"""
         style = ttk.Style()
         available_themes = style.theme_names()
         if 'clam' in available_themes:
             style.theme_use('clam')
 
-        PRIMARY = "#2c3e50"
-        ACCENT = "#3498db"
-        SUCCESS = "#27ae60"
-        DANGER = "#e74c3c"
-        WARNING = "#f39c12"
-        BG_LIGHT = "#f0f2f5"
-        CARD_BG = "#ffffff"
-        TEXT_DARK = "#2c3e50"
-        TEXT_LIGHT = "#ffffff"
-        BORDER = "#dcdde1"
+        # 浅色主题色板（来自 light.qss）
+        PRIMARY = "#2c3e50"       # 页头/默认按钮
+        ACCENT = "#0078d4"        # 主强调色（Windows 蓝）
+        ACCENT_HOVER = "#1084d8"
+        ACCENT_PRESSED = "#006cbe"
+        SUCCESS = "#4CAF50"       # 成功/开始按钮（绿色）
+        SUCCESS_HOVER = "#45a049"
+        DANGER = "#f44336"        # 危险/停止按钮（红色）
+        DANGER_HOVER = "#d32f2f"
+        WARNING = "#ff8c00"       # 警告（橙色）
+        BG = "#ffffff"            # 主背景
+        BG_SURFACE = "#f5f5f5"    # 按钮/表面背景
+        CARD_BG = "#ffffff"       # 卡片背景
+        TEXT_DARK = "#333333"     # 主文字
+        TEXT_SEC = "#666666"      # 次要文字
+        TEXT_LIGHT = "#ffffff"    # 按钮文字
+        BORDER = "#e0e0e0"        # 边框
+        BORDER_LIGHT = "#d0d0d0"  # 悬停边框
 
-        style.configure('.', background=BG_LIGHT, font=('Microsoft YaHei UI', 9))
-        style.configure('TFrame', background=BG_LIGHT)
-        style.configure('TLabel', background=BG_LIGHT, foreground=TEXT_DARK)
-        style.configure('TButton', background=PRIMARY, foreground=TEXT_LIGHT,
-                        borderwidth=0, focusthickness=3, font=('Microsoft YaHei UI', 9, 'bold'))
+        # 全局默认
+        style.configure('.', background=BG, foreground=TEXT_DARK,
+                        font=('Microsoft YaHei UI', 9))
+        # 框架
+        style.configure('TFrame', background=BG)
+        style.configure('CardInner.TFrame', background=CARD_BG)
+        # 标签
+        style.configure('TLabel', background=BG, foreground=TEXT_DARK)
+        # 按钮 - 浅色表面风格（参考 light.qss QPushButton）
+        style.configure('TButton', background=BG_SURFACE, foreground=TEXT_DARK,
+                        bordercolor=BORDER, borderwidth=1, focusthickness=3,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
         style.map('TButton',
-                  background=[('active', ACCENT), ('disabled', '#bdc3c7')],
-                  foreground=[('disabled', '#95a5a6')])
+                  background=[('active', '#e8e8e8'), ('disabled', '#fafafa'),
+                              ('pressed', '#d8d8d8')],
+                  foreground=[('disabled', '#999999')],
+                  bordercolor=[('active', BORDER_LIGHT), ('disabled', '#e8e8e8')])
+        # 成功按钮 - 绿色（参考 light.qss #assignAllButton / #saveButton）
+        style.configure('Success.TButton', background=SUCCESS, foreground=TEXT_LIGHT,
+                        bordercolor=SUCCESS, borderwidth=1,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Success.TButton',
+                  background=[('active', SUCCESS_HOVER), ('disabled', '#fafafa'),
+                              ('pressed', '#3d8b40')],
+                  foreground=[('disabled', '#999999')],
+                  bordercolor=[('active', SUCCESS_HOVER)])
+        # 危险按钮 - 红色（参考 light.qss #stopAllButton / #cancelButton）
+        style.configure('Danger.TButton', background=DANGER, foreground=TEXT_LIGHT,
+                        bordercolor=DANGER, borderwidth=1,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Danger.TButton',
+                  background=[('active', DANGER_HOVER), ('disabled', '#fafafa'),
+                              ('pressed', '#b71c1c')],
+                  foreground=[('disabled', '#999999')],
+                  bordercolor=[('active', DANGER_HOVER)])
+        # 强调按钮 - 蓝色（参考 light.qss #okButton / primary）
+        style.configure('Accent.TButton', background=ACCENT, foreground=TEXT_LIGHT,
+                        bordercolor=ACCENT, borderwidth=1,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Accent.TButton',
+                  background=[('active', ACCENT_HOVER), ('disabled', '#fafafa'),
+                              ('pressed', ACCENT_PRESSED)],
+                  foreground=[('disabled', '#999999')],
+                  bordercolor=[('active', ACCENT_HOVER)])
+        # 卡片标签框
         style.configure('Card.TLabelframe', background=CARD_BG, foreground=TEXT_DARK,
                         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
                         relief='solid', borderwidth=1)
         style.configure('Card.TLabelframe.Label', background=CARD_BG, foreground=PRIMARY,
                         font=('Microsoft YaHei UI', 9, 'bold'))
-        style.configure('CardInner.TFrame', background=CARD_BG)
+        # 页头
         style.configure('Header.TFrame', background=PRIMARY)
         style.configure('Header.TLabel', background=PRIMARY, foreground=TEXT_LIGHT,
                         font=('Microsoft YaHei UI', 14, 'bold'))
         style.configure('HeaderSub.TLabel', background=PRIMARY, foreground='#bdc3c7',
                         font=('Microsoft YaHei UI', 8))
+        # 信息标签
         style.configure('Info.TLabel', background=CARD_BG, foreground=TEXT_DARK)
-        style.configure('Accent.TLabel', background=CARD_BG, foreground=ACCENT, font=('Microsoft YaHei UI', 9, 'bold'))
+        style.configure('Accent.TLabel', background=CARD_BG, foreground=ACCENT,
+                        font=('Microsoft YaHei UI', 9, 'bold'))
         style.configure('Success.TLabel', background=CARD_BG, foreground=SUCCESS)
         style.configure('Warning.TLabel', background=CARD_BG, foreground=WARNING)
-        style.configure('Success.TButton', background=SUCCESS, foreground=TEXT_LIGHT,
-                        font=('Microsoft YaHei UI', 9, 'bold'))
-        style.map('Success.TButton', background=[('active', '#219a52'), ('disabled', '#bdc3c7')])
-        style.configure('Danger.TButton', background=DANGER, foreground=TEXT_LIGHT,
-                        font=('Microsoft YaHei UI', 9, 'bold'))
-        style.map('Danger.TButton', background=[('active', '#c0392b'), ('disabled', '#bdc3c7')])
-        style.configure('Accent.TButton', background=ACCENT, foreground=TEXT_LIGHT,
-                        font=('Microsoft YaHei UI', 9, 'bold'))
-        style.map('Accent.TButton', background=[('active', '#2980b9'), ('disabled', '#bdc3c7')])
-        style.configure('Accent.Horizontal.TProgressbar', background=ACCENT, troughcolor=BG_LIGHT,
-                        bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
-        style.configure('TCheckbutton', background=BG_LIGHT, foreground=TEXT_DARK, font=('Microsoft YaHei UI', 9))
-        style.configure('TScrollbar', background='#dfe6e9', bordercolor=BG_LIGHT,
-                        arrowcolor=PRIMARY, troughcolor=BG_LIGHT)
+        # 进度条
+        style.configure('Accent.Horizontal.TProgressbar', background=ACCENT,
+                        troughcolor=BG_SURFACE, bordercolor=BORDER,
+                        lightcolor=ACCENT, darkcolor=ACCENT)
+        # 复选框
+        style.configure('TCheckbutton', background=BG, foreground=TEXT_DARK,
+                        font=('Microsoft YaHei UI', 9))
+        # 滚动条
+        style.configure('TScrollbar', background='#dfe6e9', bordercolor=BG,
+                        arrowcolor=PRIMARY, troughcolor=BG)
+        # 下拉框
         style.configure('TCombobox', fieldbackground=CARD_BG, foreground=TEXT_DARK,
-                        background=PRIMARY, arrowcolor=TEXT_LIGHT)
-        style.configure('TEntry', fieldbackground=CARD_BG, foreground=TEXT_DARK, borderwidth=1)
+                        background=PRIMARY, bordercolor=BORDER,
+                        arrowcolor=TEXT_LIGHT, selectbackground=ACCENT,
+                        selectforeground=TEXT_LIGHT)
+        # 输入框
+        style.configure('TEntry', fieldbackground=CARD_BG, foreground=TEXT_DARK,
+                        bordercolor=BORDER, borderwidth=1,
+                        insertcolor=TEXT_DARK)
+        style.map('TEntry',
+                  bordercolor=[('focus', ACCENT)])
+        # Treeview
+        style.configure('Treeview', background=CARD_BG, foreground=TEXT_DARK,
+                        fieldbackground=CARD_BG, bordercolor=BORDER,
+                        font=('Microsoft YaHei UI', 9))
+        style.configure('Treeview.Heading', background=BG_SURFACE, foreground=TEXT_DARK,
+                        bordercolor=BORDER, font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Treeview',
+                  background=[('selected', ACCENT)],
+                  foreground=[('selected', TEXT_LIGHT)])
+        style.map('Treeview.Heading',
+                  background=[('active', '#e8e8e8')])
+        # Notebook（标签页）
+        style.configure('TNotebook', background=BG, bordercolor=BORDER)
+        style.configure('TNotebook.Tab', background=BG_SURFACE, foreground=TEXT_DARK,
+                        bordercolor=BORDER, padding=[10, 4])
+        style.map('TNotebook.Tab',
+                  background=[('selected', BG)],
+                  foreground=[('selected', ACCENT)])
 
     # ==================== 托盘 ====================
     def _setup_tray(self):
@@ -692,6 +761,8 @@ class App:
 
     # ==================== UI 构建 ====================
     def _build_ui(self):
+        # 设置根窗口浅色背景
+        self.root.configure(bg='#ffffff')
         # ===== 顶部标题栏 =====
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
@@ -734,10 +805,10 @@ class App:
         self.account_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
         # 账号状态颜色标签
-        self.account_tree.tag_configure("cooling", foreground="#3498db")   # 蓝色 - 冷却中
-        self.account_tree.tag_configure("runnable", foreground="#27ae60")  # 绿色 - 可运行
-        self.account_tree.tag_configure("paused", foreground="#e74c3c")    # 红色 - 已暂停
-        self.account_tree.tag_configure("separator", background="#dcdde1")  # 分隔线
+        self.account_tree.tag_configure("cooling", foreground="#0078d4")   # 蓝色 - 冷却中
+        self.account_tree.tag_configure("runnable", foreground="#4CAF50")  # 绿色 - 可运行
+        self.account_tree.tag_configure("paused", foreground="#f44336")    # 红色 - 已暂停
+        self.account_tree.tag_configure("separator", background="#e0e0e0")  # 分隔线
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame2.pack(fill=tk.X, pady=(6, 0))

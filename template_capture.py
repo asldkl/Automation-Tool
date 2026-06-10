@@ -113,7 +113,7 @@ class TemplateCaptureWizard:
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.RIGHT)
 
         ttk.Label(self.win, text="请按照提示逐个上传模板图片。点击「上传」后，从本地选择对应的图片文件。",
-                  font=('Microsoft YaHei UI', 9), foreground='#555').pack(padx=30, anchor='w')
+                  font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(padx=30, anchor='w')
 
         # 进度
         prog_frame = ttk.Frame(self.win)
@@ -205,7 +205,7 @@ class TemplateCaptureWizard:
                 info_frame = ttk.Frame(row)
                 info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
                 ttk.Label(info_frame, text=name, font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w')
-                ttk.Label(info_frame, text=hint, font=('Microsoft YaHei UI', 8), foreground='#888').pack(anchor='w')
+                ttk.Label(info_frame, text=hint, font=('Microsoft YaHei UI', 8), foreground='#7f8c8d').pack(anchor='w')
 
             # 模板设置按钮
             setting_btn = ttk.Button(row, text="模板设置", width=10,
@@ -414,7 +414,7 @@ class TemplateCaptureWizard:
         else:
             region_text = f"识别区域: ({result_region[0]}, {result_region[1]}, {result_region[2]}, {result_region[3]})"
         ttk.Label(dialog, text=region_text,
-                  font=('Microsoft YaHei UI', 9), foreground='#555').pack()
+                  font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack()
 
         ttk.Label(dialog, text="目标识别文本：").pack(pady=(10, 2))
         global_texts = settings.get("global_ocr_texts", {}) if settings.get("global_text_enabled", False) else {}
@@ -491,7 +491,7 @@ class TemplateCaptureWizard:
             region_text = "未设置"
 
         region_label = ttk.Label(dialog, text=f"当前全局区域：{region_text}",
-                                 font=('Microsoft YaHei UI', 9), foreground='#555', wraplength=450)
+                                 font=('Microsoft YaHei UI', 9), foreground='#7f8c8d', wraplength=450)
         region_label.pack(anchor='w', padx=25, pady=(5, 5))
 
         result_region = list(global_region)
@@ -571,7 +571,7 @@ class TemplateCaptureWizard:
         ttk.Spinbox(conf_frame, from_=0.5, to=1.0, increment=0.05,
                     textvariable=global_conf_var, width=6).pack(side=tk.LEFT, padx=5)
         ttk.Label(conf_frame, text="（模板未单独配置时使用此值）",
-                  font=('Microsoft YaHei UI', 8), foreground='#888',
+                  font=('Microsoft YaHei UI', 8), foreground='#7f8c8d',
                   wraplength=250).pack(side=tk.LEFT)
 
         # 启用全局文本配置
@@ -700,7 +700,7 @@ class TemplateCaptureWizard:
                 cb = ttk.Checkbutton(row, variable=chk_var, state='disabled', width=4)
                 cb.pack(side=tk.LEFT)
                 ttk.Label(row, text=f"{display_name}（不可文字识别）",
-                          font=('Microsoft YaHei UI', 9), foreground='#aaa').pack(side=tk.LEFT, padx=(5, 0))
+                          font=('Microsoft YaHei UI', 9), foreground='#999').pack(side=tk.LEFT, padx=(5, 0))
             else:
                 cb = ttk.Checkbutton(row, variable=chk_var, width=4)
                 cb.pack(side=tk.LEFT)
@@ -795,7 +795,7 @@ class TemplateCaptureWizard:
             "未勾选的模板将使用图片识别，不可识别的模板（如游戏币、降价按钮）无法勾选。"
         )
         ttk.Label(win, text=tips_text, font=('Microsoft YaHei UI', 8),
-                  foreground='#888', justify=tk.LEFT, wraplength=500).pack(anchor='w', padx=20, pady=(0, 8))
+                  foreground='#7f8c8d', justify=tk.LEFT, wraplength=500).pack(anchor='w', padx=20, pady=(0, 8))
 
     def _set_dialog_icon(self, dialog):
         """为对话框设置图标"""
@@ -863,7 +863,7 @@ class TemplateCaptureWizard:
         if orig_w and orig_h:
             info_text += f"  |  尺寸：{orig_w}x{orig_h}"
         ttk.Label(win, text=info_text, font=('Microsoft YaHei UI', 9),
-                  foreground='#555').pack(padx=10, pady=(0, 8))
+                  foreground='#7f8c8d').pack(padx=10, pady=(0, 8))
 
         # 检查 OCR 配置状态
         settings = config.load_settings()

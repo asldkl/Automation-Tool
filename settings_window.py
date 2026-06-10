@@ -115,16 +115,17 @@ class SettingsWindow:
 
     def _setup_styles(self):
         style = ttk.Style()
-        style.configure('Settings.TFrame', background='#f0f2f5')
-        style.configure('SettingsCard.TLabelframe', background='#ffffff', foreground='#2c3e50',
-                        bordercolor='#dcdde1', lightcolor='#dcdde1', darkcolor='#dcdde1',
+        # 浅色主题（参考 themes/light.qss）
+        style.configure('Settings.TFrame', background='#ffffff')
+        style.configure('SettingsCard.TLabelframe', background='#ffffff', foreground='#333333',
+                        bordercolor='#e0e0e0', lightcolor='#e0e0e0', darkcolor='#e0e0e0',
                         relief='solid', borderwidth=1)
         style.configure('SettingsCard.TLabelframe.Label', background='#ffffff', foreground='#2c3e50',
                         font=('Microsoft YaHei UI', 9, 'bold'))
         style.configure('SettingsInner.TFrame', background='#ffffff')
-        style.configure('Settings.TLabel', background='#ffffff', foreground='#2c3e50',
+        style.configure('Settings.TLabel', background='#ffffff', foreground='#333333',
                         font=('Microsoft YaHei UI', 9))
-        style.configure('SettingsSmall.TLabel', background='#ffffff', foreground='#7f8c8d',
+        style.configure('SettingsSmall.TLabel', background='#ffffff', foreground='#666666',
                         font=('Microsoft YaHei UI', 8))
 
     def _on_mousewheel(self, event):
@@ -405,11 +406,11 @@ class SettingsWindow:
                                        yscrollcommand=scrollbar.set,
                                        selectmode=tk.SINGLE,
                                        font=('Microsoft YaHei UI', 9),
-                                       bg='#fafbfc', fg='#2c3e50',
-                                       selectbackground='#3498db',
+                                       bg='#fafbfc', fg='#333333',
+                                       selectbackground='#0078d4',
                                        selectforeground='#ffffff',
                                        relief='flat', highlightthickness=1,
-                                       highlightcolor='#dcdde1', borderwidth=0)
+                                       highlightcolor='#e0e0e0', borderwidth=0)
         scrollbar.config(command=self.time_listbox.yview)
         self.time_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))

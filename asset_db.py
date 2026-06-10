@@ -81,6 +81,14 @@ def format_asset_num(val):
         return f"{val:.0f}"
 
 
+def delete_account_records(account):
+    """删除指定账号的所有资产记录"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM asset_records WHERE account = ?", (account,))
+    conn.commit()
+    conn.close()
+
+
 def _parse_asset_value(val_str):
     if not val_str or val_str == "0":
         return 0

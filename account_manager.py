@@ -42,9 +42,11 @@ def load_accounts(app):
             app.qq_account_images = []
         else:
             app.qq_account_images = [p for p in data.get("qq", []) if os.path.exists(p)]
-            app._account_assets = data.get("assets", {})
-            app._asset_history = data.get("asset_history", {})
-            app._account_notes = data.get("notes", {})
+            # 只保留当前存在的账号对应的资产和备注数据
+            current_names = {os.path.basename(p) for p in app.qq_account_images}
+            app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
+            app._asset_history = {k: v for k, v in data.get("asset_history", {}).items() if k in current_names}
+            app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
         # 刷新账号列表
         refresh_account_tree(app)
         print(f"✅ 已加载 {len(app.qq_account_images)} 个 QQ 账号")
@@ -82,7 +84,18 @@ def delete_account(app):
         if "separator" in app.account_tree.item(sel[0], "tags"):
             return
         idx = _tree_idx_to_account_idx(app, sel[0])
+        # 在删除前获取账号名称，用于清理资产数据
+        account_name = os.path.basename(app.qq_account_images[idx])
         del app.qq_account_images[idx]
+        # 清理该账号的资产和备注数据
+        app._account_assets.pop(account_name, None)
+        app._asset_history.pop(account_name, None)
+        app._account_notes.pop(account_name, None)
+        # 清理 SQLite 中的资产记录
+        try:
+            asset_db.delete_account_records(account_name)
+        except Exception:
+            pass
         refresh_account_tree(app)
         update_account_count(app)
         save_accounts(app)
@@ -1025,13 +1038,11 @@ def show_asset_monitor(app):
     def _refresh_status():
         for item in asset_tree.get_children():
             asset_tree.delete(item)
-        for name in app._account_assets:
-            asset_tree.insert("", tk.END, values=(name, app._account_assets[name]))
-        # 也添加没有资产记录的账号
-        for img_path in app.qq_account_images:
-            name = os.path.basename(img_path)
-            if name not in app._account_assets:
-                asset_tree.insert("", tk.END, values=(name, "0"))
+        # 只显示当前存在的账号
+        current_names = {os.path.basename(p) for p in app.qq_account_images}
+        for name in current_names:
+            asset_value = app._account_assets.get(name, "0")
+            asset_tree.insert("", tk.END, values=(name, asset_value))
 
     _refresh_status()
 
@@ -1053,6 +1064,11 @@ def show_asset_monitor(app):
 
     def _show_stats(days):
         total_diff, details = asset_db.query_total_change(days)
+        # 只保留当前存在的账号
+        current_names = {os.path.basename(p) for p in app.qq_account_images}
+        details = [d for d in details if d[0] in current_names]
+        total_diff = sum(d[3] for d in details) if details else 0.0
+
         if not details:
             result_label.config(text=f"近 {days} 天暂无资产记录", foreground='#888')
             detail_label.config(text="")
@@ -1182,8 +1198,8 @@ def show_account_note(app):
     text_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(5, 10))
 
     text_widget = tk.Text(text_frame, wrap=tk.WORD, font=('Microsoft YaHei UI', 9),
-                          bg='#fafbfc', fg='#2c3e50', relief='flat', borderwidth=1,
-                          highlightthickness=1, highlightcolor='#dcdde1',
+                          bg='#fafbfc', fg='#333333', relief='flat', borderwidth=1,
+                          highlightthickness=1, highlightcolor='#e0e0e0',
                           padx=8, pady=6)
     scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
     text_widget.configure(yscrollcommand=scrollbar.set)
