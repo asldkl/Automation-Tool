@@ -231,19 +231,6 @@ class TestCredentialCrypto(unittest.TestCase):
         dec = decrypt_settings(enc)
         self.assertEqual(dec["smtp_code"], "my_code")
 
-    def test_encrypt_account_notes(self):
-        """加密账号备注中的密码"""
-        from credential_crypto import encrypt_account_notes, decrypt_account_notes, is_encrypted
-        notes = {
-            "acc1": {"password": "pwd123", "note": "test"},
-            "acc2": "simple_note"
-        }
-        enc = encrypt_account_notes(notes)
-        self.assertTrue(is_encrypted(enc["acc1"]["password"]))
-        self.assertEqual(enc["acc2"], "simple_note")
-        dec = decrypt_account_notes(enc)
-        self.assertEqual(dec["acc1"]["password"], "pwd123")
-
 
 # ==================== config ====================
 class TestConfigSettings(unittest.TestCase):

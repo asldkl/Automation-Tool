@@ -407,6 +407,107 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         server_client.update_account_status(app, account_name, "success")
 
 
+def _wait_and_run_nearby_cooldowns(app, processed_accounts):
+    """检查冷却列表，如果有 5 分钟内到期的账号则等待并运行"""
+    while not app._stop_event.is_set():
+        all_cooldowns = cooldown_manager.get_all_cooldowns()
+        now = datetime.datetime.now()
+        nearby = []  # (剩余秒数, 账号名)
+        for name, entry in all_cooldowns.items():
+            if entry.get("account_paused") or entry.get("paused"):
+                continue
+            next_run_str = entry.get("next_run_time", "")
+            if not next_run_str:
+                continue
+            try:
+                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                remaining = (next_run - now).total_seconds()
+                if 0 < remaining <= 300:  # 5 分钟内
+                    nearby.append((remaining, name))
+            except Exception:
+                continue
+
+        if not nearby:
+            break
+
+        nearby.sort(key=lambda x: x[0])
+        wait_seconds = int(nearby[0][0])
+        names = [n for _, n in nearby]
+        print(f"⏳ 检测到 {len(names)} 个账号将在 5 分钟内冷却结束：{', '.join(names)}")
+        print(f"⏳ 等待 {wait_seconds} 秒后执行...")
+        set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
+
+        waited = 0
+        while waited < wait_seconds and not app._stop_event.is_set():
+            chunk = min(5, wait_seconds - waited)
+            time.sleep(chunk)
+            waited += chunk
+
+        if app._stop_event.is_set():
+            break
+
+        # 冷却到期，逐个运行到期账号
+        for _, name in nearby:
+            if app._stop_event.is_set():
+                break
+            cooling, _ = cooldown_manager.is_cooling_down(name)
+            if cooling:
+                continue
+            # 找到对应图片路径
+            img_path = None
+            for p in app.qq_account_images:
+                if os.path.basename(p) == name:
+                    img_path = p
+                    break
+            if not img_path:
+                continue
+            print(f"\n🔔 账号 {name} 冷却到期，开始执行...")
+            _run_single_account(app, img_path, len(app.qq_account_images), processed_accounts)
+
+
+def _run_single_account(app, img_path, total, processed_accounts):
+    """运行单个账号（从冷却等待中调用）"""
+    file_name = os.path.basename(img_path)
+    app._current_account_name = file_name
+    server_client.update_account_status(app, file_name, "running")
+    app.run_stats["total"] += 1
+    account_failed = False
+    account_interrupted = False
+
+    qq_path = app.settings.get("qq_path", "")
+    if app._stop_event.is_set():
+        account_interrupted = True
+    if not account_interrupted:
+        if not _login_qq(app, img_path, qq_path, 0, 1, processed_accounts):
+            account_failed = True
+    if not account_failed and app._stop_event.is_set():
+        account_interrupted = True
+    if not account_failed and not account_interrupted:
+        if not _login_wegame(app):
+            account_failed = True
+    if not account_failed and app._stop_event.is_set():
+        account_interrupted = True
+    if not account_failed and not account_interrupted:
+        if not _launch_game(app):
+            if app._stop_event.is_set():
+                account_interrupted = True
+            else:
+                account_failed = True
+        else:
+            _recognize_and_store_asset(app)
+            if not app._stop_event.is_set():
+                game_operations_wrapper(app)
+            if not account_failed and not app._stop_event.is_set() and app.settings.get("enable_sell_after_run", False):
+                sell_operations_wrapper(app)
+
+    if not account_interrupted:
+        if not account_failed:
+            _close_game(app)
+        _cleanup_account_processes(app)
+
+    _process_account_result(app, file_name, account_failed, account_interrupted, processed_accounts)
+
+
 def _wait_account_interval(app, i, total):
     """账号间隔等待，返回 True=被中断应退出循环"""
     if i >= total - 1 or app._stop_event.is_set():
@@ -517,6 +618,11 @@ def run_script_main(app):
                 break
 
         print("\n🎉 所有账号处理完毕！")
+
+        # 检查是否有 5 分钟内冷却结束的账号，等待并运行
+        if not app._stop_event.is_set() and app.settings.get("enable_cooldown", False):
+            _wait_and_run_nearby_cooldowns(app, processed_accounts)
+
     except Exception as e:
         print(f"❌ 运行出错: {e}")
         traceback.print_exc()
@@ -647,6 +753,8 @@ def get_account_next_run(app, account_name):
     """获取账号的下次运行时间描述"""
     if not app.settings.get("enable_cooldown", False):
         return "未启用"
+    if cooldown_manager.is_account_paused(account_name):
+        return "待定"
     _, next_time = cooldown_manager.is_cooling_down(account_name)
     return next_time or "已冷却"
 

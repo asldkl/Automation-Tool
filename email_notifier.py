@@ -26,34 +26,20 @@ def _get_email_config(app):
 
 
 def send_account_failure_email(app, account_name, next_run_str, processed_accounts=None):
-    """单个账号失败时立即发送邮件通知"""
+    """单个账号失败时立即发送邮件通知（仅包含账号名称和错误信息）"""
     cfg = _get_email_config(app)
     if not cfg:
         return
     smtp_code, sender, receiver = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    stats = app.run_stats
-    elapsed = time.time() - stats["start_time"] if stats["start_time"] else 0
-    m, s = divmod(int(elapsed), 60)
-    h, m = divmod(m, 60)
-    time_str = f"{h}时{m}分{s}秒" if h > 0 else f"{m}分{s}秒"
-
-    accounts_section = app._build_accounts_html(processed_accounts)
     safe_name = html.escape(account_name)
-    safe_next = html.escape(next_run_str or "无")
 
     body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
 <h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">三角洲行动自动化工具 - 账号运行失败</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">失败账号信息</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">账号名称</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;font-weight:bold;">{safe_name}</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">下次运行</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{safe_next}</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">已运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">累计成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">累计失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;">{stats['fail']} 个</td></tr>
-{accounts_section}
 </table>
 <div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#e74c3c15;border:1px solid #e74c3c40;">
 <span style="font-size:16px;font-weight:bold;color:#e74c3c;">账号 {safe_name} 运行失败，后续账号将继续执行</span>
@@ -134,11 +120,6 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     selected = app.settings.get("selected_operations", [])
     ops_text = "、".join(op_names.get(op, op) for op in selected) if selected else "无"
 
-    # 运行模式
-    run_mode = app.settings.get("run_mode", "单次")
-    schedule_times = app.settings.get("schedule_times", [])
-    mode_text = f"每日循环（{', '.join(schedule_times)}）" if run_mode == "每日循环" and schedule_times else "单次执行"
-
     # 一键出售统计
     sell_section = ""
     sell_stats = stats.get("sell_stats")
@@ -158,8 +139,7 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">基本信息</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">运行模式</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{mode_text}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">账号统计</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{stats['total']} 个</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>
@@ -208,10 +188,6 @@ def send_failure_email(app, error, processed_accounts=None):
     ops_text = "、".join(op_names.get(op, op) for op in selected) if selected else "无"
 
     # 运行模式
-    run_mode = app.settings.get("run_mode", "单次")
-    schedule_times = app.settings.get("schedule_times", [])
-    mode_text = f"每日循环（{', '.join(schedule_times)}）" if run_mode == "每日循环" and schedule_times else "单次执行"
-
     # QQ号名称列表（含下次运行时间）
     accounts_section = app._build_accounts_html(processed_accounts)
 
@@ -220,8 +196,7 @@ def send_failure_email(app, error, processed_accounts=None):
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">基本信息</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">运行时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">运行模式</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{mode_text}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
+<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">运行统计</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{stats['total']} 个</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>

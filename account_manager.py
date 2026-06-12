@@ -21,11 +21,10 @@ ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts
 # ---------- 账号持久化 ----------
 def save_accounts(app):
     try:
-        from credential_crypto import encrypt_account_notes
         data = {"wegame": [], "qq": app.qq_account_images,
                 "assets": app._account_assets,
                 "asset_history": app._asset_history,
-                "notes": encrypt_account_notes(app._account_notes)}
+                "notes": app._account_notes}
         with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -47,9 +46,7 @@ def load_accounts(app):
             current_names = {os.path.basename(p) for p in app.qq_account_images}
             app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
             app._asset_history = {k: v for k, v in data.get("asset_history", {}).items() if k in current_names}
-            raw_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
-            from credential_crypto import decrypt_account_notes
-            app._account_notes = decrypt_account_notes(raw_notes)
+            app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
         # 刷新账号列表
         refresh_account_tree(app)
         print(f"✅ 已加载 {len(app.qq_account_images)} 个 QQ 账号")
@@ -226,19 +223,16 @@ def show_account_menu(app, event):
     if "separator" in app.account_tree.item(item, "tags"):
         return
     app.account_tree.selection_set(item)
-    # 动态更新"暂停账号"/"恢复账号"菜单标签
+    # 动态更新"暂停账号"/"恢复账号"菜单标签（使用固定索引，避免标签变化后找不到）
     import cooldown_manager
     idx = _tree_idx_to_account_idx(app, item)
     if idx < len(app.qq_account_images):
         name = os.path.basename(app.qq_account_images[idx])
         is_paused = cooldown_manager.is_account_paused(name)
-        try:
-            if is_paused:
-                app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="恢复账号")
-            else:
-                app.account_menu.entryconfigure(app.account_menu.index("暂停账号"), label="暂停账号")
-        except Exception:
-            pass
+        if is_paused:
+            app.account_menu.entryconfigure(9, label="恢复账号")
+        else:
+            app.account_menu.entryconfigure(9, label="暂停账号")
     app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
@@ -1089,10 +1083,12 @@ def show_account_note(app):
     # 解析已有备注（兼容旧格式纯文本）
     existing = app._account_notes.get(account_name, "")
     if isinstance(existing, dict):
+        saved_game = existing.get("game_name", "")
         saved_user = existing.get("account", "")
         saved_pass = existing.get("password", "")
         saved_note = existing.get("note", "")
     else:
+        saved_game = ""
         saved_user = ""
         saved_pass = ""
         saved_note = existing
@@ -1100,6 +1096,12 @@ def show_account_note(app):
     # 账号密码输入框
     input_frame = ttk.Frame(win)
     input_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
+
+    row_game = ttk.Frame(input_frame)
+    row_game.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_game, text="游戏名称：", width=10, anchor='e').pack(side=tk.LEFT)
+    game_var = tk.StringVar(value=saved_game)
+    ttk.Entry(row_game, textvariable=game_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     row_user = ttk.Frame(input_frame)
     row_user.pack(fill=tk.X, pady=(0, 4))
@@ -1149,12 +1151,14 @@ def show_account_note(app):
     text_widget.insert("1.0", saved_note)
 
     def _save_note():
+        game_text = game_var.get().strip()
         user_text = user_var.get().strip()
         pass_text = pass_var.get().strip()
         note_text = text_widget.get("1.0", tk.END).strip()
         # 只要有任何内容就保存
-        if user_text or pass_text or note_text:
+        if game_text or user_text or pass_text or note_text:
             app._account_notes[account_name] = {
+                "game_name": game_text,
                 "account": user_text,
                 "password": pass_text,
                 "note": note_text,

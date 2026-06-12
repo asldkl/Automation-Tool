@@ -606,6 +606,13 @@ class App:
     def _show_asset_history(self):
         account_manager.show_asset_history(self)
 
+    def _show_machine_fingerprint(self):
+        import machine_fingerprint
+        info = machine_fingerprint.get_machine_info()
+        msg = f"机器指纹: {info['machine_id']}\n\n硬盘序列号: {info['disk_serial']}\n主板序列号: {info['board_serial']}\n来源: {info['source']}"
+        from tkinter import messagebox
+        messagebox.showinfo("机器指纹", msg)
+
     def _crop_account_image(self):
         account_manager.crop_account_image(self)
 
@@ -767,6 +774,7 @@ class App:
         self.account_menu.add_command(label="暂停账号", command=self._toggle_cooldown_pause)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
+        self.account_menu.add_command(label="机器指纹", command=self._show_machine_fingerprint)
         self.account_tree.bind("<Button-3>", self._show_account_menu)
         self.account_tree.bind("<Double-1>", self._manual_add_cooldown)
         self.account_tree.bind("<Button-1>", self._on_tree_click)

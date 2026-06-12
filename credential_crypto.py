@@ -85,33 +85,3 @@ def decrypt_settings(settings):
         if val:
             decrypted[key] = decrypt_value(val)
     return decrypted
-
-
-def encrypt_account_notes(notes):
-    """加密账号备注中的密码字段"""
-    encrypted = {}
-    for name, note in notes.items():
-        if isinstance(note, dict):
-            enc_note = dict(note)
-            pwd = enc_note.get("password", "")
-            if pwd and not is_encrypted(pwd):
-                enc_note["password"] = encrypt_value(pwd)
-            encrypted[name] = enc_note
-        else:
-            encrypted[name] = note
-    return encrypted
-
-
-def decrypt_account_notes(notes):
-    """解密账号备注中的密码字段"""
-    decrypted = {}
-    for name, note in notes.items():
-        if isinstance(note, dict):
-            dec_note = dict(note)
-            pwd = dec_note.get("password", "")
-            if pwd:
-                dec_note["password"] = decrypt_value(pwd)
-            decrypted[name] = dec_note
-        else:
-            decrypted[name] = note
-    return decrypted

@@ -89,7 +89,7 @@ def heartbeat_loop(app):
 
 
 def send_heartbeat(app, server_url, client_key, machine_id):
-    """发送一次心跳到服务器"""
+    """发送一次心跳到服务器，处理远程指令"""
     accounts = []
     for img_path in app.qq_account_images:
         fname = os.path.basename(img_path)
@@ -108,7 +108,18 @@ def send_heartbeat(app, server_url, client_key, machine_id):
     req.add_header("Content-Type", "application/json")
 
     with urllib.request.urlopen(req, timeout=10) as resp:
-        pass
+        result = json.loads(resp.read().decode("utf-8"))
+
+    # 处理远程指令
+    commands = result.get("commands", [])
+    for cmd in commands:
+        action = cmd.get("action")
+        if action == "run" and not app.running:
+            print("📡 收到远程执行指令，正在启动任务...")
+            import utils
+            utils.prevent_sleep()
+            utils.wake_display()
+            app.root.after(0, app.start)
 
 
 def update_account_status(app, account_name, status):

@@ -63,8 +63,8 @@ def is_cooling_down(account_name):
         return False, None
 
     entry = data[account_name]
-    # 暂停状态视为冷却中
-    if entry.get("paused"):
+    # 暂停状态（冷却暂停 或 账号暂停）均视为冷却中
+    if entry.get("paused") or entry.get("account_paused"):
         return True, entry.get("next_run_time")
 
     next_run_str = entry.get("next_run_time")
@@ -90,10 +90,14 @@ def record_run(account_name, cooldown_hours=8):
     now = datetime.datetime.now()
     next_run = now + datetime.timedelta(hours=cooldown_hours)
 
-    data[account_name] = {
-        "last_run_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "next_run_time": next_run.strftime("%Y-%m-%d %H:%M:%S"),
-    }
+    if account_name in data:
+        data[account_name]["last_run_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        data[account_name]["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        data[account_name] = {
+            "last_run_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "next_run_time": next_run.strftime("%Y-%m-%d %H:%M:%S"),
+        }
     _save_data(data)
 
 
@@ -247,24 +251,34 @@ def is_account_paused(account_name):
 def remove_expired_cooldowns():
     """
     移除所有已过期的冷却记录
+    保留 account_paused 状态的记录（仅清除冷却字段，不清除暂停标记）
     返回: 被移除的账号名称列表
     """
     data = _load_data()
     now = datetime.datetime.now()
-    expired = []
+    removed = []
     for name, entry in list(data.items()):
+        # 账号暂停状态的记录不删除，仅清除冷却相关字段
+        if entry.get("account_paused"):
+            if "next_run_time" in entry or "last_run_time" in entry:
+                entry.pop("next_run_time", None)
+                entry.pop("last_run_time", None)
+                entry.pop("paused", None)
+                entry.pop("paused_remaining", None)
+                entry.pop("paused_at", None)
+            continue
         next_run_str = entry.get("next_run_time", "")
         if not next_run_str:
-            expired.append(name)
+            removed.append(name)
             continue
         try:
             next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
             if now >= next_run:
-                expired.append(name)
+                removed.append(name)
         except Exception:
-            expired.append(name)
-    for name in expired:
+            removed.append(name)
+    for name in removed:
         del data[name]
-    if expired:
+    if removed:
         _save_data(data)
-    return expired
+    return removed
