@@ -213,7 +213,7 @@ def _login_wegame_account(app, account_name, i, total, processed_accounts):
         if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
             print("❌ WeGame 启动失败，跳过此账号")
             return False
-        time.sleep(2)
+        time.sleep(1)
 
         if app._stop_event.is_set():
             return False
@@ -223,12 +223,12 @@ def _login_wegame_account(app, account_name, i, total, processed_accounts):
         print("🔍 识别登录界面...")
 
         # 先尝试找 QQAccount_Sign-in
-        if utils.find_and_click(config.QQ_ACCOUNT_SIGN_IN, timeout=10):
+        if utils.find_and_click(config.QQ_ACCOUNT_SIGN_IN, timeout=3):
             print("✅ 找到 QQAccount_Sign-in，已点击")
-            time.sleep(2)
+            time.sleep(1)
         else:
             # 没找到 QQAccount_Sign-in，尝试找 Sign-in（不点击）
-            if utils.find_multiscale(config.SIGN_IN, timeout=5):
+            if utils.find_multiscale(config.SIGN_IN, timeout=2):
                 print("✅ 找到 Sign-in，已在登录界面")
             else:
                 print(f"⚠️ 未找到 Sign-in，重试 ({attempt+1}/{max_retries})...")
@@ -243,7 +243,7 @@ def _login_wegame_account(app, account_name, i, total, processed_accounts):
         set_operation(app, "输入账号")
         print("🔍 查找账号输入框...")
 
-        if not utils.find_and_click(config.ACCOUNT_SELECT, timeout=10, clicks=2, x_offset=-15):
+        if not utils.find_and_click(config.ACCOUNT_SELECT, timeout=3, clicks=2, x_offset=-15):
             print(f"⚠️ 未找到账号输入框，重试 ({attempt+1}/{max_retries})...")
             utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
             time.sleep(2)
@@ -276,9 +276,9 @@ def _login_wegame_account(app, account_name, i, total, processed_accounts):
 
         # 点击 Sign-in
         print("🔍 查找并点击 Sign-in...")
-        if utils.find_and_click(config.SIGN_IN, timeout=10):
+        if utils.find_and_click(config.SIGN_IN, timeout=3):
             print("✅ 已点击 Sign-in")
-            time.sleep(3)
+            time.sleep(2)
             return True
         else:
             print(f"⚠️ 未找到 Sign-in 按钮，重试 ({attempt+1}/{max_retries})...")
@@ -526,12 +526,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
                 account_interrupted = True
             else:
                 account_failed = True
-        else:
-            _recognize_and_store_asset(app)
-            if not app._stop_event.is_set():
-                game_operations_wrapper(app)
-            if not account_failed and not app._stop_event.is_set() and app.settings.get("enable_sell_after_run", False):
-                sell_operations_wrapper(app)
+        # else: _launch_game 内部已调用 _recognize_and_store_asset、game_operations_wrapper（含一键出售）
 
     if not account_interrupted:
         if not account_failed:

@@ -1002,7 +1002,10 @@ def show_asset_history(app):
     item = selected[0]
     if "separator" in app.account_tree.item(item, "tags"):
         return
-    account_name = app.account_tree.item(item, "values")[0]
+    idx = _tree_idx_to_account_idx(app, item)
+    if idx >= len(app.qq_account_images):
+        return
+    account_name = _account_key_from_path(app.qq_account_images[idx])
 
     history = app._asset_history.get(account_name, [])
     if not history:
