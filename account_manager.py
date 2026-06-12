@@ -18,6 +18,14 @@ import numpy as np
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
 
 
+def _account_key_from_path(path):
+    """从账号路径提取账号标识（去掉 account: 前缀和 .png 后缀）"""
+    name = os.path.basename(path)
+    if name.startswith("account:"):
+        return name[len("account:"):]
+    return os.path.splitext(name)[0]
+
+
 # ---------- 账号持久化 ----------
 def save_accounts(app):
     try:
@@ -41,9 +49,10 @@ def load_accounts(app):
         if isinstance(data, list):
             app.qq_account_images = []
         else:
-            app.qq_account_images = [p for p in data.get("qq", []) if os.path.exists(p)]
+            app.qq_account_images = [p for p in data.get("qq", [])
+                                     if p.startswith("account:") or os.path.exists(p)]
             # 只保留当前存在的账号对应的资产和备注数据
-            current_names = {os.path.basename(p) for p in app.qq_account_images}
+            current_names = {_account_key_from_path(p) for p in app.qq_account_images}
             app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
             app._asset_history = {k: v for k, v in data.get("asset_history", {}).items() if k in current_names}
             app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
@@ -55,27 +64,169 @@ def load_accounts(app):
 
 
 def add_account(app):
-    file_paths = filedialog.askopenfilenames(
-        title="选择 QQ 号截图（可多选）",
-        filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")]
-    )
-    if file_paths:
-        added = 0
-        skipped = 0
-        for file_path in file_paths:
-            if file_path in app.qq_account_images:
-                skipped += 1
-                continue
-            app.qq_account_images.append(file_path)
-            added += 1
-        if added > 0:
-            refresh_account_tree(app)
-            update_account_count(app)
-            save_accounts(app)
-        if skipped > 0:
-            messagebox.showinfo("添加完成", f"已添加 {added} 个账号，跳过 {skipped} 个重复项。")
-        elif added > 0:
-            messagebox.showinfo("添加完成", f"已添加 {added} 个账号。")
+    """添加账号：弹出账号信息设置窗口"""
+    _open_account_info_window(app, None)
+
+
+def _open_account_info_window(app, account_key=None):
+    """打开账号信息设置窗口
+    account_key: 为 None 时是新建账号，否则是编辑已有账号
+    """
+    is_new = account_key is None
+
+    win = tk.Toplevel(app.root)
+    win.title("账号信息设置")
+    win.geometry("400x350")
+    win.resizable(True, True)
+    win.minsize(350, 300)
+    win.transient(app.root)
+    win.grab_set()
+    utils.set_window_icon(win)
+
+    # 窗口居中
+    win.update_idletasks()
+    w, h = 400, 350
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
+    # 解析已有数据
+    if not is_new and account_key:
+        existing = app._account_notes.get(account_key, {})
+        if isinstance(existing, dict):
+            saved_game = existing.get("game_name", "")
+            saved_user = existing.get("account", "")
+            saved_pass = existing.get("password", "")
+            saved_note = existing.get("note", "")
+        else:
+            saved_game = ""
+            saved_user = ""
+            saved_pass = ""
+            saved_note = existing if isinstance(existing, str) else ""
+    else:
+        saved_game = ""
+        saved_user = ""
+        saved_pass = ""
+        from datetime import datetime
+        saved_note = f"添加时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+    # 输入框区域
+    input_frame = ttk.Frame(win)
+    input_frame.pack(fill=tk.X, padx=15, pady=(12, 5))
+
+    row_game = ttk.Frame(input_frame)
+    row_game.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_game, text="备注：", width=10, anchor='e').pack(side=tk.LEFT)
+    game_var = tk.StringVar(value=saved_game)
+    ttk.Entry(row_game, textvariable=game_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    row_user = ttk.Frame(input_frame)
+    row_user.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_user, text="游戏账号：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
+    user_var = tk.StringVar(value=saved_user)
+    ttk.Entry(row_user, textvariable=user_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    row_pass = ttk.Frame(input_frame)
+    row_pass.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_pass, text="游戏密码：", width=10, anchor='e').pack(side=tk.LEFT)
+    pass_var = tk.StringVar(value=saved_pass)
+    pass_entry = ttk.Entry(row_pass, textvariable=pass_var, width=30, show="*")
+    pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    def _toggle_show():
+        if pass_entry.cget('show') == '*':
+            pass_entry.config(show='')
+            toggle_btn.config(text='隐藏密码')
+        else:
+            pass_entry.config(show='*')
+            toggle_btn.config(text='显示密码')
+
+    row_toggle = ttk.Frame(input_frame)
+    row_toggle.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_toggle, text="", width=10).pack(side=tk.LEFT)
+    toggle_btn = ttk.Button(row_toggle, text="显示密码", width=10, command=_toggle_show)
+    toggle_btn.pack(side=tk.LEFT)
+
+    ttk.Label(win, text="备注信息：", font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, anchor='w')
+
+    # 按钮固定在底部
+    btn_frame = ttk.Frame(win)
+    btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=(0, 10))
+
+    text_frame = ttk.Frame(win)
+    text_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(5, 10))
+
+    text_widget = tk.Text(text_frame, wrap=tk.WORD, font=('Microsoft YaHei UI', 9),
+                          bg='#fafbfc', fg='#333333', relief='flat', borderwidth=1,
+                          highlightthickness=1, highlightcolor='#e0e0e0',
+                          padx=8, pady=6)
+    scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+    text_widget.configure(yscrollcommand=scrollbar.set)
+    text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+    text_widget.insert("1.0", saved_note)
+
+    def _save():
+        game_text = game_var.get().strip()
+        user_text = user_var.get().strip()
+        pass_text = pass_var.get().strip()
+        note_text = text_widget.get("1.0", tk.END).strip()
+
+        # 游戏账号为必填
+        if not user_text:
+            messagebox.showwarning("提示", "游戏账号为必填项目！", parent=win)
+            return
+
+        nonlocal account_key
+        if is_new:
+            # 新建账号：使用游戏账号作为标识
+            account_key = user_text
+            # 检查是否已存在
+            if account_key in app._account_notes:
+                messagebox.showwarning("提示", f"账号「{account_key}」已存在！", parent=win)
+                return
+            # 添加到账号列表（使用占位路径）
+            placeholder = f"account:{account_key}"
+            app.qq_account_images.append(placeholder)
+        else:
+            # 编辑已有账号：如果游戏账号改了，需要更新key
+            new_key = user_text
+            if new_key != account_key:
+                if new_key in app._account_notes:
+                    messagebox.showwarning("提示", f"账号「{new_key}」已存在！", parent=win)
+                    return
+                # 更新列表中的占位路径
+                old_placeholder = f"account:{account_key}"
+                new_placeholder = f"account:{new_key}"
+                for i, p in enumerate(app.qq_account_images):
+                    if p == old_placeholder:
+                        app.qq_account_images[i] = new_placeholder
+                        break
+                # 迁移备注数据
+                app._account_notes[new_key] = app._account_notes.pop(account_key, {})
+                # 迁移资产数据
+                app._account_assets[new_key] = app._account_assets.pop(account_key, "0")
+                app._asset_history[new_key] = app._asset_history.pop(account_key, [])
+                account_key = new_key
+
+        # 保存备注
+        app._account_notes[account_key] = {
+            "game_name": game_text,
+            "account": user_text,
+            "password": pass_text,
+            "note": note_text,
+        }
+
+        refresh_account_tree(app)
+        update_account_count(app)
+        save_accounts(app)
+        messagebox.showinfo("已保存", f"账号「{user_text}」已保存。", parent=win)
+        win.destroy()
+
+    ttk.Button(btn_frame, text="保存", style='Success.TButton',
+               command=_save, width=10).pack(side=tk.LEFT)
+    ttk.Button(btn_frame, text="取消", style='TButton',
+               command=win.destroy, width=10).pack(side=tk.LEFT, padx=(8, 0))
 
 
 def delete_account(app):
@@ -85,7 +236,7 @@ def delete_account(app):
             return
         idx = _tree_idx_to_account_idx(app, sel[0])
         # 在删除前获取账号名称，用于清理资产数据
-        account_name = os.path.basename(app.qq_account_images[idx])
+        account_name = _account_key_from_path(app.qq_account_images[idx])
         del app.qq_account_images[idx]
         # 清理该账号的资产和备注数据
         app._account_assets.pop(account_name, None)
@@ -164,16 +315,27 @@ def refresh_account_tree(app):
     for item in app.account_tree.get_children():
         app.account_tree.delete(item)
     all_cooldowns = cooldown_manager.get_all_cooldowns()
+    seq = 0
     for i, p in enumerate(app.qq_account_images):
-        name = os.path.basename(p)
+        name = _account_key_from_path(p)
+        note_data = app._account_notes.get(name, {})
+        if isinstance(note_data, dict) and note_data.get("account"):
+            display_name = note_data["account"]
+        else:
+            display_name = name
+        seq += 1
+        display_name = f"{seq}. {display_name}"
         asset = app._account_assets.get(name, "0")
-        # 计算冷却剩余
-        cooldown_str = ""
+        # 备注信息（取单行备注字段）
+        note_text = ""
+        if isinstance(note_data, dict):
+            note_text = note_data.get("game_name", "")
+        # 计算下次运行时间（合并冷却剩余和下次运行）
         next_run_str = ""
         tag = "runnable"  # 默认可运行
         # 检查账号暂停状态（独立于冷却暂停）
         if cooldown_manager.is_account_paused(name):
-            cooldown_str = "已暂停"
+            next_run_str = "已暂停"
             tag = "paused"
         elif name in all_cooldowns:
             cd_info = all_cooldowns[name]
@@ -183,7 +345,7 @@ def refresh_account_tree(app):
                 remaining = cd_info.get("remaining_seconds", 0)
                 hours = int(remaining // 3600)
                 minutes = int((remaining % 3600) // 60)
-                cooldown_str = f"冷却暂停 {hours}h {minutes}m"
+                next_run_str = f"冷却暂停 {hours}h {minutes}m"
                 tag = "paused"
             elif next_time:
                 from datetime import datetime
@@ -194,14 +356,14 @@ def refresh_account_tree(app):
                         diff = next_dt - now
                         hours = int(diff.total_seconds() // 3600)
                         minutes = int((diff.total_seconds() % 3600) // 60)
-                        cooldown_str = f"{hours}h {minutes}m"
-                        next_run_str = next_dt.strftime("%H:%M")
+                        time_str = next_dt.strftime("%H:%M")
+                        next_run_str = f"{hours}h {minutes}m({time_str})"
                         tag = "cooling"
                     else:
-                        cooldown_str = "已到期"
+                        next_run_str = "已到期"
                 except Exception:
                     pass
-        app.account_tree.insert("", tk.END, values=(name, asset, cooldown_str, next_run_str), tags=(tag,))
+        app.account_tree.insert("", tk.END, values=(display_name, asset, next_run_str, note_text), tags=(tag,))
         # 插入分隔行（最后一行不插入）
         if i < len(app.qq_account_images) - 1:
             app.account_tree.insert("", tk.END, values=("", "", "", ""), tags=("separator",))
@@ -227,12 +389,12 @@ def show_account_menu(app, event):
     import cooldown_manager
     idx = _tree_idx_to_account_idx(app, item)
     if idx < len(app.qq_account_images):
-        name = os.path.basename(app.qq_account_images[idx])
+        name = _account_key_from_path(app.qq_account_images[idx])
         is_paused = cooldown_manager.is_account_paused(name)
         if is_paused:
-            app.account_menu.entryconfigure(9, label="恢复账号")
+            app.account_menu.entryconfigure(8, label="恢复账号")
         else:
-            app.account_menu.entryconfigure(9, label="暂停账号")
+            app.account_menu.entryconfigure(8, label="暂停账号")
     app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
@@ -246,8 +408,7 @@ def manual_add_cooldown(app, event):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    img_path = app.qq_account_images[idx]
-    account_name = os.path.basename(img_path)
+    account_name = _account_key_from_path(app.qq_account_images[idx])
 
     if not app.settings.get("enable_cooldown", False):
         messagebox.showinfo("提示",
@@ -293,7 +454,7 @@ def reset_selected_cooldown(app):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    account_name = os.path.basename(app.qq_account_images[idx])
+    account_name = _account_key_from_path(app.qq_account_images[idx])
     cooling, next_time = cooldown_manager.is_cooling_down(account_name)
     if not cooling:
         messagebox.showinfo("提示", f"「{account_name}」当前没有在冷却中。", parent=app.root)
@@ -316,7 +477,7 @@ def custom_cooldown_time(app):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    account_name = os.path.basename(app.qq_account_images[idx])
+    account_name = _account_key_from_path(app.qq_account_images[idx])
 
     # 弹出输入对话框
     dialog = tk.Toplevel(app.root)
@@ -373,7 +534,7 @@ def toggle_account_pause(app):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    account_name = os.path.basename(app.qq_account_images[idx])
+    account_name = _account_key_from_path(app.qq_account_images[idx])
     is_paused = cooldown_manager.is_account_paused(account_name)
     if is_paused:
         cooldown_manager.set_account_paused(account_name, False)
@@ -788,35 +949,31 @@ def show_cooldown_window(app):
 def show_help(app):
     help_text = (
         "【基本操作】\n"
-        "F1 / 「开始运行」 → 依次登录 QQ → WeGame → 进游戏执行任务\n"
+        "F1 / 「开始运行」 → 依次登录 WeGame → 进游戏执行任务\n"
         "F2 / 「停止」       → 终止当前运行\n\n"
         "【账号管理】\n"
-        "• 添加账号：点击「添加账号」选择 QQ 登录截图\n"
+        "• 添加账号：点击「添加账号」，填写游戏账号（必填）、密码、备注\n"
+        "• 编辑账号：右键账号 → 账号信息设置\n"
         "• 删除账号：右键账号 → 删除选中\n"
-        "• 双击账号：手动将该账号加入冷却（需先启用冷却功能）\n"
-        "• 右键账号 → 测试截图识别：验证当前截图能否被识别\n\n"
+        "• 双击账号：手动将该账号加入冷却（需先启用冷却功能）\n\n"
         "【账号冷却】\n"
-        "设置 → 其他设置 → 启用账号冷却（默认8小时）\n"
+        "设置 → 自动任务设置 → 启用账号冷却（默认8小时）\n"
         "• 点击「查看冷却」可查看所有账号冷却状态\n"
         "• 在冷却窗口中可重置单个账号或一键重置所有冷却\n"
         "• 运行失败或手动停止的账号不会记录冷却\n"
         "• 冷却完立即运行：冷却结束后自动执行任务\n\n"
-        "【定时执行】\n"
-        "设置 → 自动任务设置 → 启用定时，可设多个时间点（HH:MM）\n"
-        "支持「单次」和「每日循环」两种模式\n"
-        "可勾选需要执行的操作（技术中心/工作台/防具台/制药台）\n\n"
-        "【运行提醒】\n"
-        "开启后运行前弹窗提醒，可选择提前1~15分钟\n"
-        "取消本次不影响后续时间点\n\n"
-        "【电源管理】\n"
-        "自动唤醒系统显示器、自动关机、定时开机（需主板支持 RTC）\n\n"
+        "【资产监测】\n"
+        "• 点击「资产监测」查看所有账号资产状态\n"
+        "• 输入天数后点击「查询」统计资产变化\n"
+        "• 右键账号 → 查看资产记录：查看单个账号历史\n\n"
+        "【自动关机】\n"
+        "设置 → 其他设置 → 可配置自动关机和运行完成后延迟关机\n\n"
         "【开机自启动】\n"
-        "设置 → 其他设置 → 可配置开机自启动及开机立即运行\n\n"
+        "设置 → 其他设置 → 可配置开机自启动\n\n"
         "【注意】\n"
         "• 图像识别依赖固定分辨率/缩放比例\n"
         "• 步骤超时自动跳过当前账号，继续执行下一个\n"
-        "• 停止信号发出后，当前步骤完成才退出\n"
-        "• 定时执行前5分钟自动唤醒，请确保电脑处于休眠/睡眠状态"
+        "• 停止信号发出后，当前步骤完成才退出"
     )
     messagebox.showinfo("使用说明", help_text)
 
@@ -979,11 +1136,16 @@ def show_asset_monitor(app):
     def _refresh_status():
         for item in asset_tree.get_children():
             asset_tree.delete(item)
-        # 只显示当前存在的账号
-        current_names = {os.path.basename(p) for p in app.qq_account_images}
-        for name in current_names:
+        for i, p in enumerate(app.qq_account_images):
+            name = _account_key_from_path(p)
+            note_data = app._account_notes.get(name, {})
+            if isinstance(note_data, dict) and note_data.get("account"):
+                display_name = note_data["account"]
+            else:
+                display_name = name
+            display_name = f"{i+1}. {display_name}"
             asset_value = app._account_assets.get(name, "0")
-            asset_tree.insert("", tk.END, values=(name, asset_value))
+            asset_tree.insert("", tk.END, values=(display_name, asset_value))
 
     _refresh_status()
 
@@ -1005,12 +1167,14 @@ def show_asset_monitor(app):
 
     def _show_stats(days):
         total_diff, details = asset_db.query_total_change(days)
-        # 只保留当前存在的账号
-        current_names = {os.path.basename(p) for p in app.qq_account_images}
-        details = [d for d in details if d[0] in current_names]
-        total_diff = sum(d[3] for d in details) if details else 0.0
+        # 构建当前账号顺序映射（与主界面一致）
+        ordered_keys = [_account_key_from_path(p) for p in app.qq_account_images]
+        details_map = {d[0]: d for d in details}
+        # 按主界面顺序排列，只保留当前存在的账号
+        ordered_details = [details_map[k] for k in ordered_keys if k in details_map]
+        total_diff = sum(d[3] for d in ordered_details) if ordered_details else 0.0
 
-        if not details:
+        if not ordered_details:
             result_label.config(text=f"近 {days} 天暂无资产记录", foreground='#888')
             detail_label.config(text="")
             return
@@ -1024,30 +1188,37 @@ def show_asset_monitor(app):
         else:
             result_label.config(text=f"近 {days} 天总资产变化：无变化", foreground='#888')
 
-        # 明细
+        # 明细（带序号，与主界面顺序一致）
         lines = []
-        for account, first_val, last_val, diff in details:
+        for seq, (account, first_val, last_val, diff) in enumerate(ordered_details, 1):
+            # 获取显示名称
+            note_data = app._account_notes.get(account, {})
+            if isinstance(note_data, dict) and note_data.get("account"):
+                display_name = note_data["account"]
+            else:
+                display_name = account
             first_str = asset_db.format_asset_num(first_val)
             last_str = asset_db.format_asset_num(last_val)
             diff_s = asset_db.format_asset_num(diff)
             if diff > 0:
-                lines.append(f"  {account}：{first_str} → {last_str}（+{diff_s}）")
+                lines.append(f"  {seq}. {display_name}：{first_str} → {last_str}（+{diff_s}）")
             elif diff < 0:
-                lines.append(f"  {account}：{first_str} → {last_str}（{diff_s}）")
+                lines.append(f"  {seq}. {display_name}：{first_str} → {last_str}（{diff_s}）")
             else:
-                lines.append(f"  {account}：{first_str} → {last_str}（无变化）")
+                lines.append(f"  {seq}. {display_name}：{first_str} → {last_str}（无变化）")
         detail_label.config(text="\n".join(lines))
 
-    ttk.Button(btn_row, text="近 1 天", style='Accent.TButton',
-               command=lambda: _show_stats(1), width=10).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(btn_row, text="近 7 天", style='Accent.TButton',
-               command=lambda: _show_stats(7), width=10).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(btn_row, text="近 30 天", style='Accent.TButton',
-               command=lambda: _show_stats(30), width=10).pack(side=tk.LEFT)
+    ttk.Label(btn_row, text="近").pack(side=tk.LEFT)
+    days_var = tk.IntVar(value=1)
+    days_spin = ttk.Spinbox(btn_row, from_=1, to=365, textvariable=days_var, width=6)
+    days_spin.pack(side=tk.LEFT, padx=4)
+    ttk.Label(btn_row, text="天").pack(side=tk.LEFT)
+    ttk.Button(btn_row, text="查询", style='Accent.TButton',
+               command=lambda: _show_stats(days_var.get()), width=8).pack(side=tk.LEFT, padx=(8, 0))
 
 
 def show_account_note(app):
-    """弹出备注编辑窗口，为选中账号添加/编辑备注信息（账号密码等）"""
+    """弹出账号信息设置窗口，为选中账号添加/编辑备注信息"""
     sel = app.account_tree.selection()
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
@@ -1057,119 +1228,5 @@ def show_account_note(app):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    img_path = app.qq_account_images[idx]
-    account_name = os.path.basename(img_path)
-
-    win = tk.Toplevel(app.root)
-    win.title(f"备注 - {account_name}")
-    win.geometry("400x400")
-    win.resizable(True, True)
-    win.minsize(350, 300)
-    win.transient(app.root)
-    win.grab_set()
-
-    # 设置图标
-    utils.set_window_icon(win)
-
-    # 窗口居中
-    win.update_idletasks()
-    w, h = 400, 400
-    x = (win.winfo_screenwidth() - w) // 2
-    y = (win.winfo_screenheight() - h) // 2
-    win.geometry(f"{w}x{h}+{x}+{y}")
-
-    ttk.Label(win, text=f"账号：{account_name}", font=('Microsoft YaHei UI', 10, 'bold')).pack(padx=15, pady=(12, 5), anchor='w')
-
-    # 解析已有备注（兼容旧格式纯文本）
-    existing = app._account_notes.get(account_name, "")
-    if isinstance(existing, dict):
-        saved_game = existing.get("game_name", "")
-        saved_user = existing.get("account", "")
-        saved_pass = existing.get("password", "")
-        saved_note = existing.get("note", "")
-    else:
-        saved_game = ""
-        saved_user = ""
-        saved_pass = ""
-        saved_note = existing
-
-    # 账号密码输入框
-    input_frame = ttk.Frame(win)
-    input_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
-
-    row_game = ttk.Frame(input_frame)
-    row_game.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_game, text="游戏名称：", width=10, anchor='e').pack(side=tk.LEFT)
-    game_var = tk.StringVar(value=saved_game)
-    ttk.Entry(row_game, textvariable=game_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-    row_user = ttk.Frame(input_frame)
-    row_user.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_user, text="游戏账号：", width=10, anchor='e').pack(side=tk.LEFT)
-    user_var = tk.StringVar(value=saved_user)
-    ttk.Entry(row_user, textvariable=user_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-    row_pass = ttk.Frame(input_frame)
-    row_pass.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_pass, text="游戏密码：", width=10, anchor='e').pack(side=tk.LEFT)
-    pass_var = tk.StringVar(value=saved_pass)
-    pass_entry = ttk.Entry(row_pass, textvariable=pass_var, width=30, show="*")
-    pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-    def _toggle_show():
-        if pass_entry.cget('show') == '*':
-            pass_entry.config(show='')
-            toggle_btn.config(text='隐藏密码')
-        else:
-            pass_entry.config(show='*')
-            toggle_btn.config(text='显示密码')
-
-    row_toggle = ttk.Frame(input_frame)
-    row_toggle.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_toggle, text="", width=10).pack(side=tk.LEFT)
-    toggle_btn = ttk.Button(row_toggle, text="显示密码", width=10, command=_toggle_show)
-    toggle_btn.pack(side=tk.LEFT)
-
-    ttk.Label(win, text="备注信息：", font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, anchor='w')
-
-    # 按钮固定在底部（先 pack，确保不被挤压隐藏）
-    btn_frame = ttk.Frame(win)
-    btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=(0, 10))
-
-    text_frame = ttk.Frame(win)
-    text_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(5, 10))
-
-    text_widget = tk.Text(text_frame, wrap=tk.WORD, font=('Microsoft YaHei UI', 9),
-                          bg='#fafbfc', fg='#333333', relief='flat', borderwidth=1,
-                          highlightthickness=1, highlightcolor='#e0e0e0',
-                          padx=8, pady=6)
-    scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
-    text_widget.configure(yscrollcommand=scrollbar.set)
-    text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
-
-    text_widget.insert("1.0", saved_note)
-
-    def _save_note():
-        game_text = game_var.get().strip()
-        user_text = user_var.get().strip()
-        pass_text = pass_var.get().strip()
-        note_text = text_widget.get("1.0", tk.END).strip()
-        # 只要有任何内容就保存
-        if game_text or user_text or pass_text or note_text:
-            app._account_notes[account_name] = {
-                "game_name": game_text,
-                "account": user_text,
-                "password": pass_text,
-                "note": note_text,
-            }
-        else:
-            app._account_notes.pop(account_name, None)
-        save_accounts(app)
-        messagebox.showinfo("已保存", f"「{account_name}」的备注已保存。", parent=win)
-        win.destroy()
-
-    ttk.Button(btn_frame, text="保存", style='Success.TButton',
-               command=_save_note, width=10).pack(side=tk.LEFT)
-    ttk.Button(btn_frame, text="取消", style='TButton',
-               command=win.destroy, width=10).pack(side=tk.LEFT, padx=(8, 0))
+    account_name = _account_key_from_path(app.qq_account_images[idx])
+    _open_account_info_window(app, account_name)

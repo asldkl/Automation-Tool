@@ -5,6 +5,7 @@
 """
 import os
 import sys
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import ast
@@ -143,12 +144,17 @@ class SettingsWindow:
             if self._active_canvas is canvas:
                 self._active_canvas = None
 
+        def _on_canvas_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
         inner_frame.bind("<Configure>", _on_frame_configure)
         canvas.bind("<Configure>", _on_canvas_configure)
         canvas.bind("<Enter>", _on_enter)
         canvas.bind("<Leave>", _on_leave)
         inner_frame.bind("<Enter>", _on_enter)
         inner_frame.bind("<Leave>", _on_leave)
+        canvas.bind("<MouseWheel>", _on_canvas_mousewheel)
+        inner_frame.bind("<MouseWheel>", _on_canvas_mousewheel)
 
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -309,8 +315,12 @@ class SettingsWindow:
         guide_frame.pack(fill=tk.X, pady=(0, 8))
 
         import account_manager
-        ttk.Button(guide_frame, text="查看使用说明", style='Accent.TButton',
-                   command=lambda: account_manager.show_help(self.app), width=14).pack(anchor='w', padx=5, pady=5)
+        btn_row = ttk.Frame(guide_frame, style='SettingsInner.TFrame')
+        btn_row.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(btn_row, text="查看使用说明", style='Accent.TButton',
+                   command=lambda: account_manager.show_help(self.app), width=14).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="开发者测试", style='TButton',
+                   command=self._open_dev_test_window, width=12).pack(side=tk.LEFT)
 
     def _build_auto_tab(self, parent):
         """自动任务设置选项卡内容（冷却执行模式）"""
@@ -566,6 +576,309 @@ class SettingsWindow:
         )
         ttk.Label(tips_frame, text=tips_lines, style='SettingsSmall.TLabel',
                   justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
+
+    def _open_dev_test_window(self):
+        """打开开发者测试独立窗口"""
+        win = tk.Toplevel(self.win)
+        win.title("开发者测试")
+        win.geometry("500x600")
+        win.resizable(True, True)
+        win.transient(self.win)
+        win.grab_set()
+        utils.set_window_icon(win)
+
+        # 窗口居中
+        win.update_idletasks()
+        x = (win.winfo_screenwidth() - 500) // 2
+        y = (win.winfo_screenheight() - 600) // 2
+        win.geometry(f"500x600+{x}+{y}")
+
+        # 滚动容器
+        canvas = tk.Canvas(win, highlightthickness=0, bg='#ffffff')
+        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+        inner_frame = ttk.Frame(canvas)
+        inner_frame_id = canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_canvas_configure(event):
+            canvas.itemconfig(inner_frame_id, width=event.width)
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        inner_frame.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        inner_frame.bind("<MouseWheel>", _on_mousewheel)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 保存当前状态标签引用
+        self._dev_win = win
+        self._build_dev_test_tab(inner_frame)
+
+    def _build_dev_test_tab(self, parent):
+        """开发者测试内容"""
+        # ----- 账号登录测试 -----
+        frame_login = ttk.LabelFrame(parent, text="  账号登录测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_login.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_login, text="测试 WeGame QQ 账号登录流程（输入游戏账号名称）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        login_btn_frame = ttk.Frame(frame_login, style='SettingsInner.TFrame')
+        login_btn_frame.pack(fill=tk.X)
+
+        self._dev_login_account_var = tk.StringVar()
+        ttk.Label(login_btn_frame, text="游戏账号：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(login_btn_frame, textvariable=self._dev_login_account_var, width=20).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(login_btn_frame, text="测试登录", style='TButton',
+                   command=self._test_account_login, width=10).pack(side=tk.LEFT)
+
+        self._dev_login_status = ttk.Label(frame_login, text="", style='SettingsSmall.TLabel')
+        self._dev_login_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 图像识别测试 -----
+        frame_img = ttk.LabelFrame(parent, text="  图像识别测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_img.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_img, text="测试模板图片是否能正确识别",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        img_btn_frame = ttk.Frame(frame_img, style='SettingsInner.TFrame')
+        img_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(img_btn_frame, text="测试 QQAccount_Sign-in", style='TButton',
+                   command=lambda: self._test_image_recognition("QQ_ACCOUNT_SIGN_IN"), width=22).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(img_btn_frame, text="测试 account_select", style='TButton',
+                   command=lambda: self._test_image_recognition("ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(img_btn_frame, text="测试 Sign-in", style='TButton',
+                   command=lambda: self._test_image_recognition("SIGN_IN"), width=12).pack(side=tk.LEFT)
+
+        self._dev_img_status = ttk.Label(frame_img, text="", style='SettingsSmall.TLabel')
+        self._dev_img_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 驱动键盘测试 -----
+        frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_kb.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_kb, text="测试 PyDirectInput 驱动级键盘是否可用",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        kb_btn_frame = ttk.Frame(frame_kb, style='SettingsInner.TFrame')
+        kb_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(kb_btn_frame, text="检测驱动键盘状态", style='TButton',
+                   command=self._test_ola_status, width=16).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(kb_btn_frame, text="测试输入", style='TButton',
+                   command=self._test_keyboard_input, width=10).pack(side=tk.LEFT)
+
+        self._dev_kb_status = ttk.Label(frame_kb, text="", style='SettingsSmall.TLabel')
+        self._dev_kb_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 进程清理测试 -----
+        frame_proc = ttk.LabelFrame(parent, text="  进程清理测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_proc.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_proc, text="测试进程清理功能",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        proc_btn_frame = ttk.Frame(frame_proc, style='SettingsInner.TFrame')
+        proc_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(proc_btn_frame, text="清理 QQ", style='TButton',
+                   command=lambda: self._test_kill_process("QQ"), width=10).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(proc_btn_frame, text="清理 WeGame", style='TButton',
+                   command=lambda: self._test_kill_process("WeGame"), width=12).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(proc_btn_frame, text="清理三角洲", style='TButton',
+                   command=lambda: self._test_kill_process("DeltaForce"), width=12).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(proc_btn_frame, text="清理全部", style='TButton',
+                   command=self._test_kill_all, width=10).pack(side=tk.LEFT)
+
+        self._dev_proc_status = ttk.Label(frame_proc, text="", style='SettingsSmall.TLabel')
+        self._dev_proc_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 窗口查找测试 -----
+        frame_win = ttk.LabelFrame(parent, text="  窗口查找测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_win.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_win, text="测试窗口查找功能",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        win_btn_frame = ttk.Frame(frame_win, style='SettingsInner.TFrame')
+        win_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(win_btn_frame, text="查找 WeGame 窗口", style='TButton',
+                   command=lambda: self._test_find_window("WeGame"), width=16).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(win_btn_frame, text="查找 QQ 窗口", style='TButton',
+                   command=lambda: self._test_find_window("QQ"), width=14).pack(side=tk.LEFT)
+
+        self._dev_win_status = ttk.Label(frame_win, text="", style='SettingsSmall.TLabel')
+        self._dev_win_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+    def _test_account_login(self):
+        """测试账号登录流程"""
+        game_account = self._dev_login_account_var.get().strip()
+        if not game_account:
+            self._dev_login_status.config(text="请输入游戏账号名称", foreground="#e74c3c")
+            return
+
+        # 检查备注中是否有该账号
+        note_data = self.app._account_notes.get(game_account, {})
+        if isinstance(note_data, dict):
+            login_account = note_data.get("account", "").strip()
+        else:
+            login_account = ""
+
+        if not login_account:
+            self._dev_login_status.config(text=f"游戏账号 {game_account} 未找到或未设置", foreground="#e74c3c")
+            return
+
+        self._dev_login_status.config(text=f"正在测试登录 {game_account}...", foreground="#3498db")
+        self.win.update()
+
+        # 在新线程中执行测试
+        import threading
+        def _run_test():
+            try:
+                import automation_runner
+                result = automation_runner._login_wegame_account(self.app, game_account, 0, 1, [])
+                if result:
+                    self.win.after(0, lambda: self._dev_login_status.config(
+                        text=f"✓ 登录测试成功！", foreground="#27ae60"))
+                else:
+                    self.win.after(0, lambda: self._dev_login_status.config(
+                        text=f"✗ 登录测试失败", foreground="#e74c3c"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_login_status.config(
+                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run_test, daemon=True).start()
+
+    def _test_image_recognition(self, config_name):
+        """测试图像识别"""
+        import config
+        img_path = getattr(config, config_name, None)
+        if not img_path:
+            self._dev_img_status.config(text=f"配置 {config_name} 不存在", foreground="#e74c3c")
+            return
+
+        self._dev_img_status.config(text=f"正在识别 {config_name}...", foreground="#3498db")
+        self.win.update()
+
+        import threading
+        def _run_test():
+            try:
+                import utils
+                found = utils.find_multiscale(img_path, timeout=5)
+                if found:
+                    self.win.after(0, lambda: self._dev_img_status.config(
+                        text=f"✓ 找到 {config_name}", foreground="#27ae60"))
+                else:
+                    self.win.after(0, lambda: self._dev_img_status.config(
+                        text=f"✗ 未找到 {config_name}", foreground="#e74c3c"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_img_status.config(
+                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run_test, daemon=True).start()
+
+    def _test_ola_status(self):
+        """测试驱动键盘状态"""
+        try:
+            import driver_keyboard
+            available = driver_keyboard.is_available()
+            backend = driver_keyboard.get_backend()
+            if available:
+                self._dev_kb_status.config(text=f"✓ 驱动级键盘可用 (后端: {backend})", foreground="#27ae60")
+            else:
+                self._dev_kb_status.config(text="✗ 驱动级键盘不可用，将使用 pyautogui 回退", foreground="#f39c12")
+        except Exception as e:
+            self._dev_kb_status.config(text=f"✗ 检测异常: {e}", foreground="#e74c3c")
+
+    def _test_keyboard_input(self):
+        """测试键盘输入"""
+        self._dev_kb_status.config(text="正在测试键盘输入...", foreground="#3498db")
+        self.win.update()
+
+        import threading
+        def _run_test():
+            try:
+                import driver_keyboard
+                import pyautogui
+                # 提示用户将焦点放到目标窗口
+                self.win.after(0, lambda: self._dev_kb_status.config(
+                    text="3秒后开始输入测试，请将焦点放到目标窗口...", foreground="#3498db"))
+                time.sleep(3)
+                pyautogui.typewrite("test123", interval=0.05)
+                self.win.after(0, lambda: self._dev_kb_status.config(
+                    text="✓ 键盘输入测试完成", foreground="#27ae60"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_kb_status.config(
+                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run_test, daemon=True).start()
+
+    def _test_kill_process(self, process_name):
+        """测试清理指定进程"""
+        import utils
+        import config
+
+        process_map = {
+            "QQ": config.QQ_PROCESS,
+            "WeGame": config.WEGAME_PROCESS,
+            "DeltaForce": config.DELTA_PROCESS,
+        }
+
+        proc = process_map.get(process_name)
+        if not proc:
+            self._dev_proc_status.config(text=f"未知进程: {process_name}", foreground="#e74c3c")
+            return
+
+        self._dev_proc_status.config(text=f"正在清理 {process_name}...", foreground="#3498db")
+        self.win.update()
+
+        try:
+            utils.kill_process(proc, wait_exit=True, max_wait=5)
+            self._dev_proc_status.config(text=f"✓ {process_name} 已清理", foreground="#27ae60")
+        except Exception as e:
+            self._dev_proc_status.config(text=f"✗ 清理失败: {e}", foreground="#e74c3c")
+
+    def _test_kill_all(self):
+        """测试清理所有进程"""
+        import utils
+        import config
+
+        self._dev_proc_status.config(text="正在清理所有进程...", foreground="#3498db")
+        self.win.update()
+
+        try:
+            utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=5)
+            utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=5)
+            utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
+            self._dev_proc_status.config(text="✓ 所有进程已清理", foreground="#27ae60")
+        except Exception as e:
+            self._dev_proc_status.config(text=f"✗ 清理失败: {e}", foreground="#e74c3c")
+
+    def _test_find_window(self, window_name):
+        """测试窗口查找"""
+        import utils
+
+        self._dev_win_status.config(text=f"正在查找 {window_name} 窗口...", foreground="#3498db")
+        self.win.update()
+
+        try:
+            hwnd = utils.find_window_by_title(window_name)
+            if hwnd:
+                self._dev_win_status.config(
+                    text=f"✓ 找到 {window_name} 窗口 (hwnd={hwnd})", foreground="#27ae60")
+            else:
+                self._dev_win_status.config(
+                    text=f"✗ 未找到 {window_name} 窗口", foreground="#e74c3c")
+        except Exception as e:
+            self._dev_win_status.config(text=f"✗ 查找异常: {e}", foreground="#e74c3c")
 
     def _build_sell_tab(self, parent):
         """售卖物品选项卡内容"""

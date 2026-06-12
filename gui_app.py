@@ -713,14 +713,14 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.1.4  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.1.5  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
         main_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(8, 12))
 
         # ----- QQ 账号管理 -----
-        account_frame = ttk.LabelFrame(main_container, text=" QQ 账号管理（截图顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
+        account_frame = ttk.LabelFrame(main_container, text=" QQ 账号管理（添加顺序即运行顺序） ", style='Card.TLabelframe', padding=12)
         account_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
         btn_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
@@ -736,16 +736,16 @@ class App:
 
         list_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
         list_frame.pack(fill=tk.BOTH, expand=True)
-        columns = ("name", "asset", "cooldown", "next_run")
+        columns = ("name", "asset", "next_run", "note")
         self.account_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
         self.account_tree.heading("name", text="账号名称")
         self.account_tree.heading("asset", text="现有资产")
-        self.account_tree.heading("cooldown", text="冷却剩余")
-        self.account_tree.heading("next_run", text="下次运行")
-        self.account_tree.column("name", width=50, minwidth=40)
+        self.account_tree.heading("next_run", text="下次运行时间")
+        self.account_tree.heading("note", text="备注")
+        self.account_tree.column("name", width=50, minwidth=40, anchor=tk.W)
         self.account_tree.column("asset", width=30, minwidth=20, anchor=tk.CENTER)
-        self.account_tree.column("cooldown", width=40, minwidth=30, anchor=tk.CENTER)
-        self.account_tree.column("next_run", width=30, minwidth=20, anchor=tk.CENTER)
+        self.account_tree.column("next_run", width=50, minwidth=40, anchor=tk.CENTER)
+        self.account_tree.column("note", width=40, minwidth=30, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.account_tree.yview)
         self.account_tree.configure(yscrollcommand=scrollbar.set)
         self.account_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -762,9 +762,8 @@ class App:
                   style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888').pack(side=tk.LEFT)
 
         self.account_menu = tk.Menu(self.root, tearoff=0)
-        self.account_menu.add_command(label="测试截图识别", command=self._test_recognition)
         self.account_menu.add_command(label="查看资产记录", command=self._show_asset_history)
-        self.account_menu.add_command(label="备注", command=self._show_account_note)
+        self.account_menu.add_command(label="账号信息设置", command=self._show_account_note)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="上移", command=self._move_up)
         self.account_menu.add_command(label="下移", command=self._move_down)
@@ -774,7 +773,6 @@ class App:
         self.account_menu.add_command(label="暂停账号", command=self._toggle_cooldown_pause)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
-        self.account_menu.add_command(label="机器指纹", command=self._show_machine_fingerprint)
         self.account_tree.bind("<Button-3>", self._show_account_menu)
         self.account_tree.bind("<Double-1>", self._manual_add_cooldown)
         self.account_tree.bind("<Button-1>", self._on_tree_click)

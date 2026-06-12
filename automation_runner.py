@@ -23,6 +23,16 @@ import cooldown_watcher
 import server_client
 import scheduler
 import asset_db
+import driver_keyboard
+
+
+def _account_key(path):
+    """从账号路径提取账号标识（去掉 account: 前缀和 .png 后缀）"""
+    name = os.path.basename(path)
+    if name.startswith("account:"):
+        return name[len("account:"):]
+    return os.path.splitext(name)[0]
+
 
 # 缓存 OCR 引擎实例（首次约2-3秒，后续毫秒级）
 _ocr_engine = None
@@ -170,85 +180,114 @@ def _cleanup_processes(app):
     time.sleep(2)
 
 
-def _login_qq(app, img_path, qq_path, i, total, processed_accounts):
-    """QQ 登录流程：启动 QQ、等待窗口（含降级方案）、快捷登录。返回 True=成功"""
-    set_operation(app, f"启动 QQ ({i+1}/{total})")
-    print("启动 QQ...")
-    if not qq_path or not utils.start_app(qq_path, "QQ", wait_time=3):
-        print("❌ QQ 启动失败，跳过此账号")
+def _login_wegame_account(app, account_name, i, total, processed_accounts):
+    """WeGame QQ 账号登录流程（新模式）：
+    1. 清理进程，打开 WeGame
+    2. 识别 QQAccount_Sign-in 并点击，或识别 Sign-in 确认已在登录页
+    3. 双击 account_select，清空已有账号，输入备注中的账号，点击 Sign-in
+    返回 True=成功"""
+    set_operation(app, f"WeGame 登录 ({i+1}/{total})")
+
+    # 获取备注中的账号
+    note_data = app._account_notes.get(account_name, {})
+    if isinstance(note_data, dict):
+        login_account = note_data.get("account", "").strip()
+    else:
+        login_account = ""
+
+    if not login_account:
+        print(f"❌ 账号 {account_name} 未设置备注中的游戏账号，跳过")
         return False
 
-    # 等待 QQ 窗口出现（含降级方案）
-    qq_ready = False
-    qq_activate_fail_count = 0
-    for _ in range(30):
+    max_retries = 3
+    for attempt in range(max_retries):
         if app._stop_event.is_set():
             return False
-        if utils.activate_window_by_title("QQ", partial_match=True, exclude_titles=["WeGame"]):
-            qq_ready = True
-            break
-        qq_activate_fail_count += 1
-        if qq_activate_fail_count >= 5:
-            print("⚠️ QQ 窗口激活连续失败5次，启动降级方案：尝试图像识别...")
-            for img_retry in range(3):
-                if app._stop_event.is_set():
-                    return False
-                if utils.find_multiscale(config.QQ_ACCOUNT_SELECT, timeout=5):
-                    qq_ready = True
-                    print(f"✅ 降级方案成功：检测到 QQ_ACCOUNT_SELECT（第 {img_retry+1} 次）")
-                    break
-                print(f"⚠️ 降级方案重试 ({img_retry+1}/3)...")
-                time.sleep(1)
-            if qq_ready:
-                break
-            account_name = os.path.basename(img_path)
-            print(f"❌ 降级方案失败，账号 {account_name} 登录失败，跳过")
-            if not app._user_stopped_cooldown:
-                email_notifier.send_account_failure_email(app, account_name, "未启用", processed_accounts)
-            return False
-        time.sleep(0.5)
 
-    if not qq_ready:
-        print("⚠️ 未检测到 QQ 窗口，继续尝试登录...")
-    if qq_ready:
+        # 步骤1：清理进程并启动 WeGame
+        print(f"🧹 清理进程并启动 WeGame (尝试 {attempt+1}/{max_retries})...")
+        utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=5)
+        utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
         time.sleep(1)
 
-    if app._stop_event.is_set():
-        return False
+        if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
+            print("❌ WeGame 启动失败，跳过此账号")
+            return False
+        time.sleep(2)
 
-    set_operation(app, "QQ 快捷登录")
-    print("开始 QQ 快捷登录...")
-    if not utils.qq_quick_login(img_path):
-        print("❌ QQ 快捷登录失败，跳过此账号")
-        utils.kill_process(config.QQ_PROCESS)
-        return False
+        if app._stop_event.is_set():
+            return False
 
-    time.sleep(2)
-    utils.close_window_by_title("QQ", partial_match=True)
-    time.sleep(1)
-    return True
+        # 步骤2：识别 QQAccount_Sign-in 或 Sign-in
+        set_operation(app, "识别登录界面")
+        print("🔍 识别登录界面...")
 
+        # 先尝试找 QQAccount_Sign-in
+        if utils.find_and_click(config.QQ_ACCOUNT_SIGN_IN, timeout=10):
+            print("✅ 找到 QQAccount_Sign-in，已点击")
+            time.sleep(2)
+        else:
+            # 没找到 QQAccount_Sign-in，尝试找 Sign-in（不点击）
+            if utils.find_multiscale(config.SIGN_IN, timeout=5):
+                print("✅ 找到 Sign-in，已在登录界面")
+            else:
+                print(f"⚠️ 未找到 Sign-in，重试 ({attempt+1}/{max_retries})...")
+                utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
+                time.sleep(2)
+                continue
 
-def _login_wegame(app):
-    """WeGame 启动并快捷登录。返回 True=成功"""
-    set_operation(app, "启动 WeGame")
-    print("启动 WeGame...")
-    if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
-        print("❌ WeGame 启动失败，跳过此账号")
-        return False
-    time.sleep(3)
+        if app._stop_event.is_set():
+            return False
 
-    if app._stop_event.is_set():
-        return False
+        # 步骤3：双击 account_select，清空并输入账号
+        set_operation(app, "输入账号")
+        print("🔍 查找账号输入框...")
 
-    set_operation(app, "快捷登录 WeGame")
-    print("开始快捷登录 WeGame ...")
-    if not utils.wegame_quick_login():
-        print("❌ WeGame 快捷登录失败，跳过此账号")
-        utils.kill_process(config.WEGAME_PROCESS)
-        return False
-    time.sleep(3)
-    return True
+        if not utils.find_and_click(config.ACCOUNT_SELECT, timeout=10, clicks=2, x_offset=-15):
+            print(f"⚠️ 未找到账号输入框，重试 ({attempt+1}/{max_retries})...")
+            utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
+            time.sleep(2)
+            continue
+
+        print("✅ 找到账号输入框，已双击")
+        time.sleep(0.5)
+
+        # 长按 Delete 清空已有账号
+        print("🗑️ 清空已有账号...")
+        driver_keyboard.hold_key(driver_keyboard.VK_DELETE, duration=2.0)
+        time.sleep(0.3)
+
+        if app._stop_event.is_set():
+            return False
+
+        # 使用驱动级键盘输入账号
+        print(f"⌨️ 输入账号: {login_account}")
+        hwnd = utils.find_window_by_title("WeGame")
+        if hwnd:
+            driver_keyboard.send_string(hwnd, login_account)
+        else:
+            # 回退：直接使用 pyautogui
+            import pyautogui
+            pyautogui.typewrite(login_account, interval=0.02)
+        time.sleep(0.5)
+
+        if app._stop_event.is_set():
+            return False
+
+        # 点击 Sign-in
+        print("🔍 查找并点击 Sign-in...")
+        if utils.find_and_click(config.SIGN_IN, timeout=10):
+            print("✅ 已点击 Sign-in")
+            time.sleep(3)
+            return True
+        else:
+            print(f"⚠️ 未找到 Sign-in 按钮，重试 ({attempt+1}/{max_retries})...")
+            utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
+            time.sleep(2)
+            continue
+
+    print(f"❌ 账号 {account_name} 登录失败，已重试 {max_retries} 次")
+    return False
 
 
 def _launch_game(app):
@@ -456,7 +495,7 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
             # 找到对应图片路径
             img_path = None
             for p in app.qq_account_images:
-                if os.path.basename(p) == name:
+                if _account_key(p) == name:
                     img_path = p
                     break
             if not img_path:
@@ -467,23 +506,17 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
 
 def _run_single_account(app, img_path, total, processed_accounts):
     """运行单个账号（从冷却等待中调用）"""
-    file_name = os.path.basename(img_path)
+    file_name = _account_key(img_path)
     app._current_account_name = file_name
     server_client.update_account_status(app, file_name, "running")
     app.run_stats["total"] += 1
     account_failed = False
     account_interrupted = False
 
-    qq_path = app.settings.get("qq_path", "")
     if app._stop_event.is_set():
         account_interrupted = True
     if not account_interrupted:
-        if not _login_qq(app, img_path, qq_path, 0, 1, processed_accounts):
-            account_failed = True
-    if not account_failed and app._stop_event.is_set():
-        account_interrupted = True
-    if not account_failed and not account_interrupted:
-        if not _login_wegame(app):
+        if not _login_wegame_account(app, file_name, 0, total, processed_accounts):
             account_failed = True
     if not account_failed and app._stop_event.is_set():
         account_interrupted = True
@@ -548,7 +581,7 @@ def run_script_main(app):
             if app._stop_event.is_set():
                 break
 
-            file_name = os.path.basename(img_path)
+            file_name = _account_key(img_path)
             app._current_account_name = file_name
 
             if cooldown_manager.is_account_paused(file_name):
@@ -577,21 +610,14 @@ def run_script_main(app):
             account_interrupted = False
             server_client.update_account_status(app, file_name, "running")
 
-            # 步骤1：QQ 登录
+            # 步骤1：WeGame QQ 账号登录（新模式）
             if app._stop_event.is_set():
                 account_interrupted = True
             if not account_interrupted:
-                if not _login_qq(app, img_path, qq_path, i, total, processed_accounts):
+                if not _login_wegame_account(app, file_name, i, total, processed_accounts):
                     account_failed = True
 
-            # 步骤2：WeGame 登录
-            if not account_failed and app._stop_event.is_set():
-                account_interrupted = True
-            if not account_failed and not account_interrupted:
-                if not _login_wegame(app):
-                    account_failed = True
-
-            # 步骤3：启动游戏并执行操作
+            # 步骤2：启动游戏并执行操作
             if not account_failed and app._stop_event.is_set():
                 account_interrupted = True
             if not account_failed and not account_interrupted:
@@ -601,7 +627,7 @@ def run_script_main(app):
                     else:
                         account_failed = True
 
-            # 步骤4：清理进程
+            # 步骤3：清理进程
             if not account_interrupted:
                 if not account_failed:
                     _close_game(app)

@@ -212,6 +212,10 @@ APP_SETTINGS = {}
 IMAGE_LOGIN_BTN      = resource_path("picture/wegame_login/login_btn.png")
 DELTA_GAME_ICON     = resource_path("picture/wegame_login/delta_game_icon.png")
 DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
+# WeGame QQ 账号登录（新模式）
+QQ_ACCOUNT_SIGN_IN  = resource_path("picture/wegame_login/QQAccount_Sign-in.png")
+ACCOUNT_SELECT      = resource_path("picture/wegame_login/account_select.png")
+SIGN_IN             = resource_path("picture/wegame_login/Sign-in.png")
 
 # 游戏内导航
 Hazard_Operations   = resource_path("picture/Navigation/hazard_operations.png")

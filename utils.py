@@ -93,6 +93,32 @@ def activate_window_by_title(title_contains, partial_match=True, exclude_titles=
         print(f"❌ 激活失败: {e}")
         return False
 
+def find_window_by_title(title_contains, partial_match=True, exclude_titles=None):
+    """按标题查找窗口，返回窗口句柄(hwnd)，未找到返回 None"""
+    if exclude_titles is None:
+        exclude_titles = []
+
+    def enum_callback(hwnd, windows):
+        if win32gui.IsWindowVisible(hwnd):
+            window_title = win32gui.GetWindowText(hwnd)
+            if partial_match and title_contains.lower() in window_title.lower():
+                for ex in exclude_titles:
+                    if ex.lower() in window_title.lower():
+                        return True
+                windows.append((hwnd, window_title))
+            elif not partial_match and window_title == title_contains:
+                for ex in exclude_titles:
+                    if ex.lower() in window_title.lower():
+                        return True
+                windows.append((hwnd, window_title))
+        return True
+
+    windows = []
+    win32gui.EnumWindows(enum_callback, windows)
+    if not windows:
+        return None
+    return windows[0][0]
+
 def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titles=None):
     """循环等待直到窗口出现并激活成功"""
     cond = "包含" if partial_match else "完全等于"
@@ -121,11 +147,14 @@ def clear_template_cache():
     global _template_cache
     _template_cache.clear()
 
-def find_and_click(img_path, timeout=20, region=None, confidence=None):
+def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1, x_offset=0, y_offset=0):
     """
     在当前屏幕中查找图片并点击中心点
     返回是否成功找到并点击
     confidence: 可选，覆盖全局置信度阈值
+    clicks: 点击次数，1=单击，2=双击
+    x_offset: 点击位置相对中心的X偏移（负值向左）
+    y_offset: 点击位置相对中心的Y偏移（负值向上）
     """
     threshold = confidence if confidence is not None else CONFIDENCE
     # 先解析路径（优先用户自定义模板），再查缓存
@@ -153,8 +182,8 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None):
 
         if max_val >= threshold:
             h, w = template.shape
-            x = max_loc[0] + w // 2 + (region[0] if region else 0)
-            y = max_loc[1] + h // 2 + (region[1] if region else 0)
+            x = max_loc[0] + w // 2 + (region[0] if region else 0) + x_offset
+            y = max_loc[1] + h // 2 + (region[1] if region else 0) + y_offset
 
             # 忽略屏幕边缘可疑坐标
             screen_w, screen_h = pyautogui.size()
@@ -166,7 +195,7 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None):
 
             try:
                 smooth_move_to(x, y, duration=0.2)
-                pyautogui.click()
+                pyautogui.click(clicks=clicks)
             except pyautogui.FailSafeException:
                 print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
                 time.sleep(0.5)
