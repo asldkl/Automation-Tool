@@ -37,6 +37,7 @@ class SettingsWindow:
 
         # 全局设置变量
         self.wegame_var = tk.StringVar(value=app.settings.get("wegame_path", ""))
+        self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
         self.delta_var = tk.StringVar(value=app.settings.get("delta_path", ""))
         self.confidence_var = tk.DoubleVar(value=float(app.settings.get("confidence", 0.7)))
         self.log_var = tk.StringVar(value=app.settings.get("log_save_path", ""))
@@ -53,8 +54,6 @@ class SettingsWindow:
         self.op_armor = tk.BooleanVar(value="armor_station" in selected)
         self.op_pharmacy = tk.BooleanVar(value="pharmacy_station" in selected)
 
-        # QQ 路径
-        self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
 
         # 邮件通知变量
         self.email_enable_var = tk.BooleanVar(value=app.settings.get("email_enabled", False))
@@ -64,12 +63,7 @@ class SettingsWindow:
         self.cooldown_email_enabled_var = tk.BooleanVar(value=app.settings.get("cooldown_email_enabled", False))
 
         # 账号列表滚动查找变量
-        self.qq_mouse_move_distance_var = tk.IntVar(value=app.settings.get("qq_mouse_move_distance", 100))
         self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
-        self.qq_scroll_down_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_down_amount", 300))
-        self.qq_scroll_up_amount_var = tk.IntVar(value=app.settings.get("qq_scroll_up_amount", 200))
-        self.qq_scroll_down_times_var = tk.IntVar(value=app.settings.get("qq_scroll_down_times", 3))
-        self.qq_scroll_up_times_var = tk.IntVar(value=app.settings.get("qq_scroll_up_times", 3))
         self.game_launch_wait_var = tk.IntVar(value=app.settings.get("game_launch_wait", 0))
 
         # 一键出售变量
@@ -220,16 +214,6 @@ class SettingsWindow:
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ----- 三角洲路径 -----
-        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=8)
-        frame2.pack(fill=tk.X, pady=(0, 8))
-
-        f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
-        f2.pack(fill=tk.X)
-        ttk.Label(f2, text="启动程序：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        delta_entry = ttk.Entry(f2, textvariable=self.delta_var, width=45)
-        delta_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
         # ----- QQ 路径 -----
         frame_qq = ttk.LabelFrame(parent, text="  QQ 路径  ", style='SettingsCard.TLabelframe', padding=8)
         frame_qq.pack(fill=tk.X, pady=(0, 8))
@@ -239,6 +223,16 @@ class SettingsWindow:
         ttk.Label(f_qq, text="QQ.exe：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         qq_entry = ttk.Entry(f_qq, textvariable=self.qq_path_var, width=45)
         qq_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # ----- 三角洲路径 -----
+        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=8)
+        frame2.pack(fill=tk.X, pady=(0, 8))
+
+        f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
+        f2.pack(fill=tk.X)
+        ttk.Label(f2, text="启动程序：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        delta_entry = ttk.Entry(f2, textvariable=self.delta_var, width=45)
+        delta_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ----- 日志保存目录 -----
         frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
@@ -517,44 +511,6 @@ class SettingsWindow:
         ttk.Label(frame_post, text="所有账号处理完毕后，按设定延迟时间自动关机（0表示不关机）",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
 
-        # ----- 账号列表鼠标下移距离设置 -----
-        frame2 = ttk.LabelFrame(parent, text="  账号列表鼠标下移距离  ", style='SettingsCard.TLabelframe', padding=12)
-        frame2.pack(fill=tk.X, pady=(0, 8))
-
-        f2a = ttk.Frame(frame2, style='SettingsInner.TFrame')
-        f2a.pack(fill=tk.X, pady=(0, 6))
-        ttk.Label(f2a, text="QQ 账号列表鼠标下移距离：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f2a, from_=30, to=300, increment=10,
-                    textvariable=self.qq_mouse_move_distance_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
-
-        # ----- 滚动幅度设置 -----
-        frame3 = ttk.LabelFrame(parent, text="  滚动幅度设置  ", style='SettingsCard.TLabelframe', padding=12)
-        frame3.pack(fill=tk.X, pady=(0, 8))
-
-        f3 = ttk.Frame(frame3, style='SettingsInner.TFrame')
-        f3.pack(fill=tk.X)
-        ttk.Label(f3, text="向下滚动幅度（滚到底部）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3, from_=0, to=800, increment=10,
-                    textvariable=self.qq_scroll_down_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
-
-        f3up = ttk.Frame(frame3, style='SettingsInner.TFrame')
-        f3up.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(f3up, text="向上滚动幅度（查找账号）：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3up, from_=0, to=800, increment=10,
-                    textvariable=self.qq_scroll_up_amount_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
-
-        f3b = ttk.Frame(frame3, style='SettingsInner.TFrame')
-        f3b.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(f3b, text="向下滚动到底部次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3b, from_=1, to=10, increment=1,
-                    textvariable=self.qq_scroll_down_times_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
-
-        f3c = ttk.Frame(frame3, style='SettingsInner.TFrame')
-        f3c.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(f3c, text="向上查找账号次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Spinbox(f3c, from_=1, to=20, increment=1,
-                    textvariable=self.qq_scroll_up_times_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
-
         # ----- 游戏启动等待时间 -----
         frame4 = ttk.LabelFrame(parent, text="  游戏启动等待时间  ", style='SettingsCard.TLabelframe', padding=12)
         frame4.pack(fill=tk.X, pady=(0, 8))
@@ -650,12 +606,12 @@ class SettingsWindow:
         img_btn_frame = ttk.Frame(frame_img, style='SettingsInner.TFrame')
         img_btn_frame.pack(fill=tk.X)
 
-        ttk.Button(img_btn_frame, text="测试 QQAccount_Sign-in", style='TButton',
-                   command=lambda: self._test_image_recognition("QQ_ACCOUNT_SIGN_IN"), width=22).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(img_btn_frame, text="测试 Account Sign-in", style='TButton',
+                   command=lambda: self._test_image_recognition("QQ_ACCOUNT_LOGIN"), width=20).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(img_btn_frame, text="测试 account_select", style='TButton',
-                   command=lambda: self._test_image_recognition("ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(img_btn_frame, text="测试 Sign-in", style='TButton',
-                   command=lambda: self._test_image_recognition("SIGN_IN"), width=12).pack(side=tk.LEFT)
+                   command=lambda: self._test_image_recognition("QQ_ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(img_btn_frame, text="测试 Input", style='TButton',
+                   command=lambda: self._test_image_recognition("QQ_INPUT_FIELD"), width=12).pack(side=tk.LEFT)
 
         self._dev_img_status = ttk.Label(frame_img, text="", style='SettingsSmall.TLabel')
         self._dev_img_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
@@ -1372,6 +1328,7 @@ class SettingsWindow:
     def _save(self):
         # 全局设置
         self.app.settings["wegame_path"] = self.wegame_var.get()
+        self.app.settings["qq_path"] = self.qq_path_var.get()
         self.app.settings["delta_path"] = self.delta_var.get()
         self.app.settings["confidence"] = round(self.confidence_var.get(), 2)
         self.app.settings["log_save_path"] = self.log_var.get()
@@ -1394,9 +1351,6 @@ class SettingsWindow:
         self.app.settings["auto_shutdown_time"] = self.shutdown_time_var.get()
         self.app.settings["post_run_shutdown_delay"] = self.post_run_shutdown_delay_var.get()
 
-        # QQ 设置
-        self.app.settings["qq_path"] = self.qq_path_var.get()
-
         # 邮件通知设置
         self.app.settings["email_enabled"] = self.email_enable_var.get()
         self.app.settings["smtp_code"] = self.smtp_code_var.get()
@@ -1404,13 +1358,7 @@ class SettingsWindow:
         self.app.settings["receiver_email"] = self.receiver_email_var.get()
         self.app.settings["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
 
-        # 账号列表滚动查找设置
-        self.app.settings["qq_mouse_move_distance"] = self.qq_mouse_move_distance_var.get()
-        self.app.settings["scroll_amount"] = self.scroll_amount_var.get()
-        self.app.settings["qq_scroll_down_amount"] = self.qq_scroll_down_amount_var.get()
-        self.app.settings["qq_scroll_up_amount"] = self.qq_scroll_up_amount_var.get()
-        self.app.settings["qq_scroll_down_times"] = self.qq_scroll_down_times_var.get()
-        self.app.settings["qq_scroll_up_times"] = self.qq_scroll_up_times_var.get()
+        # 游戏启动等待
         self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
 
         # 一键出售设置
@@ -1447,6 +1395,7 @@ class SettingsWindow:
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)
         config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
+        config.QQ_PATH = config.APP_SETTINGS.get("qq_path", "")
         config.CONFIDENCE = config.APP_SETTINGS["confidence"]
         self.app.update_confidence_display()
 

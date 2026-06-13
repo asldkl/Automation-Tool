@@ -81,8 +81,8 @@
 │   ├── Navigation/          # 导航图标
 │   ├── One_Click_Sell/      # 一键出售模板
 │   ├── email/               # 邮箱货币模板
-│   ├── wegame_login/        # WeGame 登录模板
-│   ├── qq_login/            # QQ 登录模板
+│   ├── wegame_login/        # WeGame 登录模板（login_btn 快捷安全登录）
+│   ├── qq_login/            # QQ 登录模板（Account Sign-in、QQ_account_select、Remove、Input、Accept、QQ_login_btn）
 │   └── produce/             # 生产设施模板
 ├── build/                   # PyInstaller 构建临时目录
 ├── dist/                    # PyInstaller 打包输出目录
@@ -134,6 +134,8 @@ gui_app.py（入口层，约 900 行）
 automation_runner.py（约 596 行）
     - start_run / stop_run：启动/停止自动化任务
     - run_script_main：主自动化循环
+    - _login_account：QQ 账号密码登录 + WeGame 快捷安全登录（图像识别+typewrite 输入）
+    - _launch_game：查找三角洲图标、资产识别、启动游戏
     - game_operations_wrapper / sell_operations_wrapper
     - on_finish：任务完成后处理（延迟关机等）
 
@@ -597,12 +599,32 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
-v1.1.5 (2026-06-12)
+v1.1.5 (2026-06-13)
 ----------------------------------------
 
-- 登录方式重构：删除 QQ 图片识别登录，改为 WeGame 账号密码登录（使用备注中的游戏账号+驱动级键盘输入 PyDirectInput）
-- 删除 OLA SDK 依赖，全部改用 PyDirectInput（driver_keyboard.py 重写）
-- 新增账号信息设置窗口：点击「添加账号」直接弹出窗口填写游戏账号（必填）、密码、备注，无需添加图片
+- 登录方式重构：从 WeGame 内部登录改为 QQ 账号密码登录 + WeGame 快捷安全登录，绕开 WeGame 10 账号限制
+- 登录流程（全部使用图像识别，无 OCR）：
+  1. 杀掉 QQ/WeGame/三角洲进程
+  2. 打开 QQ
+  3. 图像识别点击 Account Sign-in「账号登录」
+  4. 图像识别点击 QQ_account_select，鼠标下移 60px
+  5. 图像识别点击 Remove（左偏 20px）删除旧账号
+  6. pyautogui.typewrite 输入账号
+  7. 图像识别点击 Input「输入QQ密码」
+  8. pyautogui.typewrite 输入密码（不调用 SetForegroundWindow，防止焦点丢失）
+  9. 图像识别点击 Accept（左偏 5px）
+  10. 图像识别点击 QQ_login_btn 登录
+  11. 关闭 QQ 窗口（保留后台）
+  12. 打开 WeGame
+  13. 图像识别点击 login_btn「快捷安全登录」
+- 登录输入改用 pyautogui.typewrite 逐键输入（替代 driver_keyboard.send_string 剪贴板粘贴），兼容 QQ 自定义密码框
+- QQ 登录模板：QQ_ACCOUNT_LOGIN / QQ_ACCOUNT_SELECT / QQ_REMOVE_BTN / QQ_INPUT_FIELD / QQ_ACCEPT_BTN / QQ_LOGIN_BTN
+- 删除登录流程中所有 OCR 识别代码（ocr_find_and_click_offset）
+- 密码改为必填（红色星号标记，保存时校验）
+- 账号信息设置窗口「游戏名称」改名为「备注」
+- 新建账号时备注信息自动填入添加时间
+- 开发者测试按钮更新：测试 Account Sign-in / 测试 account_select / 测试 Input
+- 缩短 QQ 登录各步骤等待时间（总等待从约 40s 缩短到约 24s）
 - 主界面 Treeview 改为四列：账号名称 | 现有资产 | 下次运行时间 | 备注
   - 冷却剩余和下次运行合并为一列：格式如 `6h12m(23:00)`
   - 新增备注列，显示账号信息中填写的备注内容
@@ -612,15 +634,10 @@ v1.1.5 (2026-06-12)
 - 资产监测窗口账号名称与主界面统一（相同顺序+序号+显示名称）
 - 右键菜单精简：移除「机器指纹」和「测试截图识别」选项
 - 右键菜单「备注」改名为「账号信息设置」
-- 账号信息设置窗口「游戏名称」改名为「备注」
-- 新建账号时备注信息自动填入添加时间
 - 主界面标题「截图顺序即运行顺序」改为「添加顺序即运行顺序」
-- WeGame 启动等待时间缩短
-- account_select 识别点击时向左偏移15个单位
-- 开发者测试从设置 Tab 页改为使用说明下方的按钮，点击打开独立窗口
 - .png 后缀名不再显示在账号名称中
-- 修复 OLA DLL 无法加载的问题（改用 PyDirectInput）
-- 修复 Unicode 编码错误（driver_keyboard.py 中 emoji 字符）
+- 冷却重置按钮不再重置暂停中的账号
+- 修复邮箱 SMTP "Connection unexpectedly closed" 错误（重试机制+超时延长）
 
 ----------------------------------------
 v1.1.4 (2026-06-10)
@@ -926,4 +943,4 @@ A:
 
 如有问题，请联系开发团队。
 
-最后更新: 2026-06-10
+最后更新: 2026-06-13

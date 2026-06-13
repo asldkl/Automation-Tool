@@ -14,7 +14,7 @@ v1.1.1 新增：资产监测（SQLite 持久化 + 时间段统计）、账号备
 v1.1.2 新增：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞尔曲线移动、运行完成后清空残余状态。
 v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中。
 v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试（35项）。UI简化：删除电源管理页签和定时执行功能，全部改用冷却执行，设置页签从6个精简为5个。
-v1.1.5 新增：WeGame 账号密码登录（PyDirectInput 驱动级键盘）、账号信息设置窗口、主界面四列显示（账号名称/现有资产/下次运行时间/备注）、账号序号、资产监测自定义天数。删除 OLA SDK 依赖、QQ 图片识别登录、右键菜单机器指纹和测试截图识别。
+v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 账号限制）、图像识别登录界面按钮（无 OCR）、pyautogui.typewrite 逐键输入、密码必填校验、账号信息设置窗口、主界面四列显示（账号名称/现有资产/下次运行时间/备注）、账号序号、资产监测自定义天数。删除 OLA SDK 依赖、登录流程 OCR 代码。
 
 【核心文件】
 
@@ -40,9 +40,12 @@ v1.1.5 新增：WeGame 账号密码登录（PyDirectInput 驱动级键盘）、�
 ├── automation_runner.py        # 自动化运行模块（v1.1.0 拆分，约 596 行）
 │   - start_run() / stop_run()：启动/停止自动化任务
 │   - run_script_main()：主自动化循环（v1.1.4 重构为 ~80 行，调用 8 个子函数）
-│   - _validate_daily() / _cleanup_processes() / _login_wegame_account()
+│   - _validate_daily() / _cleanup_processes() / _login_account()
 │   - _launch_game() / _recognize_and_store_asset() / _close_game() / _cleanup_account_processes()
-│   - _login_wegame_account()：WeGame 账号登录（v1.1.5，使用备注中的游戏账号+PyDirectInput 驱动级键盘输入）
+│   - _login_account()：QQ 账号密码登录 + WeGame 快捷安全登录（v1.1.5）
+│     - 图像识别点击登录界面按钮（QQ_ACCOUNT_LOGIN / QQ_ACCOUNT_SELECT / QQ_REMOVE_BTN / QQ_INPUT_FIELD / QQ_ACCEPT_BTN / QQ_LOGIN_BTN / IMAGE_LOGIN_BTN）
+│     - pyautogui.typewrite 逐键输入账号密码（不调用 SetForegroundWindow，防止焦点丢失）
+│     - 点击 account_select 后鼠标下移 60px
 │   - _recognize_asset()：资产识别（RapidOCR 缓存引擎，直接 numpy 数组，无 BGR 转换）
 │   - 资产识别后自动调用 asset_db.record_asset() 写入 SQLite
 │   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作（含 asset_db 钩子）
@@ -107,10 +110,11 @@ v1.1.5 新增：WeGame 账号密码登录（PyDirectInput 驱动级键盘）、�
 │
 ├── driver_keyboard.py          # 驱动级键盘输入模块（v1.1.5 新增）
 │   - 使用 PyDirectInput，回退到 pyautogui
-│   - send_string()：发送字符串到指定窗口（支持中文，使用剪贴板方式）
+│   - send_string()：发送字符串到指定窗口（剪贴板粘贴方式，QQ 密码框不兼容）
 │   - key_press() / key_down() / key_up()：按键操作
 │   - hold_key()：长按指定键（用于清空输入框）
 │   - get_backend()：获取当前使用的后端名称
+│   - 注：登录流程已改用 pyautogui.typewrite 逐键输入，此模块保留供其他场景使用
 
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
@@ -127,7 +131,8 @@ v1.1.5 新增：WeGame 账号密码登录（PyDirectInput 驱动级键盘）、�
 │   - TEMPLATE_CAPTURE_LIST：所有模板图片定义（变量名、路径、中文描述）
 │   - WeGame 路径自动检测（Windows 注册表）
 │   - 屏幕分辨率检测与模板分辨率记录
-│   - WeGame QQ 账号登录模板（v1.1.5 新增）：QQ_ACCOUNT_SIGN_IN / ACCOUNT_SELECT / SIGN_IN
+│   - QQ 登录模板路径（v1.1.5）：QQ_ACCOUNT_LOGIN / QQ_ACCOUNT_SELECT / QQ_REMOVE_BTN / QQ_INPUT_FIELD / QQ_ACCEPT_BTN / QQ_LOGIN_BTN
+│   - WeGame 登录模板路径：IMAGE_LOGIN_BTN（快捷安全登录按钮）
 │
 ├── machine_fingerprint.py      # 机器指纹模块（v1.0.3 新增）
 │   - get_machine_id()：获取本机 SHA256 指纹（32位十六进制）
@@ -180,11 +185,12 @@ v1.1.5 新增：WeGame 账号密码登录（PyDirectInput 驱动级键盘）、�
 │
 ├── settings_window.py          # 设置对话框（v1.1.4 精简，约 1100 行）
 │   - SettingsWindow 类：5个选项卡
-│     - Tab 1: 全局设置（路径、置信度、资产识别、日志目录、机器指纹、使用说明）
+│     - Tab 1: 全局设置（WeGame/QQ 路径、置信度、资产识别、日志目录、机器指纹、使用说明）
 │     - Tab 2: 售卖物品（物品列表、出售参数、一键出售开关）
 │     - Tab 3: 自动任务（冷却执行、操作选择）
 │     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
-│     - Tab 5: 其他设置（开机自启、自动关机、运行完成后关机、滚动设置）
+│     - Tab 5: 其他设置（开机自启、自动关机、运行完成后关机）
+│   - 开发者测试窗口：测试 Account Sign-in / account_select / Input 图像识别
 │   - 资产识别：区域框选（全屏 overlay）、测试识别（直接 RapidOCR，无 BGR 转换）
 │   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
 │   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
@@ -251,7 +257,8 @@ v1.1.5 新增：WeGame 账号密码登录（PyDirectInput 驱动级键盘）、�
 │   ├── Navigation/             # 导航图标（烽火地带、特勤处）
 │   ├── One_Click_Sell/         # 出售流程模板（仓库、出售、上架、降价、确认上架）
 │   ├── email/                  # 邮箱货币模板（邮箱、交易中心、全部领取、领取完成）
-│   ├── wegame_login/           # WeGame 登录模板（QQAccount_Sign-in、account_select、Sign-in）
+│   ├── wegame_login/           # WeGame 登录模板（login_btn 快捷安全登录按钮）
+│   ├── qq_login/               # QQ 登录模板（Account Sign-in、QQ_account_select、Remove、Input、Accept、QQ_login_btn）
 │   └── produce/                # 生产设施模板（各设施产出项截图）
 
 【用户数据目录】(~/.delta_auto_*)
@@ -325,13 +332,13 @@ gui_app.py (入口层)
 2. 用户点击"开始运行"或冷却到期自动触发
 3. 每天首次运行时再次验证服务器（防长期不退出绕过）
 4. 启动心跳线程（每30秒同步账号状态）
-5. 清理进程（QQ/WeGame）
+5. 清理进程（QQ/WeGame/三角洲）
 6. 逐个账号：
    a. 暂停检查（跳过已暂停的账号，状态标记为 "已暂停"）
    b. 冷却检查（跳过冷却中的账号，状态标记为 "cooling"）
-   c. 启动 QQ → 快捷登录
-   d. 启动 WeGame → 快捷登录
-   e. 找到三角洲图标 → 启动游戏
+   c. QQ 账号密码登录（图像识别+typewrite 输入）→ 关闭 QQ 窗口
+   d. 启动 WeGame → 图像识别点击「快捷安全登录」
+   e. 找到三角洲图标 → 资产识别 → 启动游戏
    f. 可选：资产识别（等待 4 秒后截图指定区域，RapidOCR 识别，过滤"现有资产"等文字）
    g. 进入烽火地带 → 特勤处
    h. 可选：领取邮箱货币

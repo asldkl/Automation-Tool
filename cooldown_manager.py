@@ -110,8 +110,11 @@ def reset_cooldown(account_name):
 
 
 def reset_all_cooldowns():
-    """重置所有账号的冷却"""
-    _save_data({})
+    """重置所有账号的冷却（保留暂停状态的账号）"""
+    data = _load_data()
+    # 仅保留暂停状态的账号
+    paused_data = {k: v for k, v in data.items() if v.get("account_paused")}
+    _save_data(paused_data)
 
 
 def get_all_cooldowns():

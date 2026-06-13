@@ -254,8 +254,12 @@ Produce_ArmorStation = resource_path("picture/produce/produce_armor_station.png"
 Produce_PharmacyStation = resource_path("picture/produce/produce_pharmacy_station.png")
 
 # ==================== QQ 自动登录图片 ====================
-QQ_ACCOUNT_SELECT = resource_path("picture/qq_login/QQ_account_select.png")
-QQ_LOGIN_BTN      = resource_path("picture/qq_login/QQ_login_btn.png")
+QQ_ACCOUNT_LOGIN   = resource_path("picture/qq_login/Account Sign-in.png")
+QQ_ACCOUNT_SELECT  = resource_path("picture/qq_login/QQ_account_select.png")
+QQ_REMOVE_BTN      = resource_path("picture/qq_login/Remove.png")
+QQ_INPUT_FIELD     = resource_path("picture/qq_login/Input.png")
+QQ_ACCEPT_BTN      = resource_path("picture/qq_login/Accept.png")
+QQ_LOGIN_BTN       = resource_path("picture/qq_login/QQ_login_btn.png")
 
 # ==================== 进程名称 ====================
 WEGAME_PROCESS = "wegame.exe"
@@ -264,6 +268,7 @@ QQ_PROCESS = "QQ.exe"
 
 # ==================== 全局变量（在 main 中设置） ====================
 WEGAME_PATH = ""
+QQ_PATH = ""
 DELTA_PATH = ""
 CONFIDENCE = 0.7
 WAIT_TIME = 0.5
@@ -334,6 +339,10 @@ TEMPLATE_CAPTURE_LIST = [
 
 # QQ 登录相关模板
 QQ_TEMPLATE_CAPTURE_LIST = [
+    ("QQ_ACCOUNT_LOGIN",  "picture/qq_login/Account Sign-in.png",   "QQ 账密登录按钮", "在 QQ 登录界面，截取「Account Sign-in」按钮"),
     ("QQ_ACCOUNT_SELECT", "picture/qq_login/QQ_account_select.png", "QQ 账号选择按钮", "在 QQ 登录界面，截取账号选择按钮"),
+    ("QQ_REMOVE_BTN",     "picture/qq_login/Remove.png",            "QQ 删除按钮",     "在 QQ 登录界面，截取 Remove 图标按钮"),
+    ("QQ_INPUT_FIELD",    "picture/qq_login/Input.png",             "QQ 密码输入框",   "在 QQ 登录界面，截取「Input」密码输入框"),
+    ("QQ_ACCEPT_BTN",     "picture/qq_login/Accept.png",            "QQ 接受按钮",     "在 QQ 登录界面，截取 Accept 图标按钮"),
     ("QQ_LOGIN_BTN",      "picture/qq_login/QQ_login_btn.png",      "QQ 登录按钮",     "在 QQ 登录界面，截取「登录」按钮"),
 ]

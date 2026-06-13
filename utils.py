@@ -820,7 +820,7 @@ def remove_startup_task():
 # ==================== 邮件通知 ====================
 def send_email_notification(smtp_code, sender_email, receiver_email, subject, body):
     """
-    使用 QQ 邮箱 SMTP 发送邮件通知。
+    使用 QQ 邮箱 SMTP 发送邮件通知（含重试）。
     smtp_code: SMTP 授权码
     sender_email: 发送者邮箱
     receiver_email: 接收者邮箱
@@ -832,25 +832,34 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
 
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['From'] = sender_email
-        msg['To'] = receiver_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html', 'utf-8'))
+    msg = MIMEMultipart('alternative')
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'html', 'utf-8'))
 
-        with smtplib.SMTP_SSL('smtp.qq.com', 465, timeout=30) as server:
-            server.login(sender_email, smtp_code)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
-        return True, "邮件发送成功"
-    except smtplib.SMTPAuthenticationError:
-        return False, "SMTP 认证失败，请检查授权码是否正确"
-    except smtplib.SMTPConnectError:
-        return False, "无法连接到 SMTP 服务器，请检查网络"
-    except smtplib.SMTPException as e:
-        return False, f"SMTP 错误：{e}"
-    except Exception as e:
-        return False, f"发送失败：{e}"
+    max_retries = 3
+    last_error = ""
+    for attempt in range(max_retries):
+        try:
+            with smtplib.SMTP_SSL('smtp.qq.com', 465, timeout=60) as server:
+                server.login(sender_email, smtp_code)
+                server.sendmail(sender_email, receiver_email, msg.as_string())
+            return True, "邮件发送成功"
+        except smtplib.SMTPAuthenticationError:
+            return False, "SMTP 认证失败，请检查授权码是否正确"
+        except smtplib.SMTPConnectError:
+            last_error = "无法连接到 SMTP 服务器，请检查网络"
+        except smtplib.SMTPServerDisconnected:
+            last_error = "SMTP 服务器意外断开连接"
+        except smtplib.SMTPException as e:
+            last_error = f"SMTP 错误：{e}"
+        except Exception as e:
+            last_error = f"发送失败：{e}"
+        if attempt < max_retries - 1:
+            import time
+            time.sleep(3)
+    return False, last_error
 
 
 # ==================== OCR 识别功能 ====================
@@ -957,6 +966,30 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
             if conf >= confidence and text in recognized_text:
                 cx = int((bbox[0] + bbox[2]) / 2)
                 cy = int((bbox[1] + bbox[3]) / 2)
+                try:
+                    smooth_move_to(cx, cy, duration=0.2)
+                    pyautogui.click()
+                except pyautogui.FailSafeException:
+                    print("⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
+                    time.sleep(0.5)
+                    continue
+                return True
+        time.sleep(1)
+    return False
+
+
+def ocr_find_and_click_offset(text, region=None, timeout=20, confidence=0.8, x_offset=0, y_offset=0):
+    """
+    在屏幕指定区域查找包含指定文本的内容并点击（支持偏移）。
+    返回: True（找到并点击）/ False（超时未找到）
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        results = ocr_recognize(region)
+        for recognized_text, conf, bbox in results:
+            if conf >= confidence and text in recognized_text:
+                cx = int((bbox[0] + bbox[2]) / 2) + x_offset
+                cy = int((bbox[1] + bbox[3]) / 2) + y_offset
                 try:
                     smooth_move_to(cx, cy, duration=0.2)
                     pyautogui.click()

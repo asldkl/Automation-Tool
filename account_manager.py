@@ -128,7 +128,7 @@ def _open_account_info_window(app, account_key=None):
 
     row_pass = ttk.Frame(input_frame)
     row_pass.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_pass, text="游戏密码：", width=10, anchor='e').pack(side=tk.LEFT)
+    ttk.Label(row_pass, text="游戏密码：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
     pass_var = tk.StringVar(value=saved_pass)
     pass_entry = ttk.Entry(row_pass, textvariable=pass_var, width=30, show="*")
     pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -172,9 +172,12 @@ def _open_account_info_window(app, account_key=None):
         pass_text = pass_var.get().strip()
         note_text = text_widget.get("1.0", tk.END).strip()
 
-        # 游戏账号为必填
+        # 游戏账号和密码为必填
         if not user_text:
             messagebox.showwarning("提示", "游戏账号为必填项目！", parent=win)
+            return
+        if not pass_text:
+            messagebox.showwarning("提示", "游戏密码为必填项目！", parent=win)
             return
 
         nonlocal account_key

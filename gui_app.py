@@ -98,6 +98,7 @@ class App:
         # 加载设置
         self.settings = config.APP_SETTINGS
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
+        config.QQ_PATH = self.settings.get("qq_path", "")
         config.CONFIDENCE = self.settings["confidence"]
 
         # 服务器验证（异步，不阻塞 UI 线程）
