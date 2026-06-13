@@ -55,21 +55,53 @@ def get_sell_items():
 ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
 
 def load_sell_items_meta():
-    """加载物品元数据，无文件时自动为已有图片生成默认配置"""
+    """加载物品元数据，自动同步目录中新增/删除的图片"""
+    # 加载已有元数据
+    meta = {}
     if os.path.exists(ITEMS_META_PATH):
-        with open(ITEMS_META_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    items = []
-    if os.path.exists(SELL_ITEMS_DIR):
-        for filename in sorted(os.listdir(SELL_ITEMS_DIR)):
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-                items.append({
-                    "filename": filename,
-                    "name": os.path.splitext(filename)[0],
-                    "discount_times": 0,
-                    "quantity": 1
-                })
-    return {"items": items}
+        try:
+            with open(ITEMS_META_PATH, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+
+    existing_items = meta.get("items", [])
+    existing_filenames = {i["filename"] for i in existing_items}
+
+    # 扫描目录中的实际图片
+    if not os.path.exists(SELL_ITEMS_DIR):
+        meta.setdefault("items", [])
+        return meta
+
+    disk_filenames = sorted([f for f in os.listdir(SELL_ITEMS_DIR)
+                             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))])
+
+    # 添加目录中存在但元数据中没有的图片
+    changed = False
+    for filename in disk_filenames:
+        if filename not in existing_filenames:
+            existing_items.append({
+                "filename": filename,
+                "name": os.path.splitext(filename)[0],
+                "discount_times": 0,
+                "quantity": 1
+            })
+            changed = True
+
+    # 移除元数据中存在但目录中已删除的图片
+    disk_set = set(disk_filenames)
+    before_count = len(existing_items)
+    existing_items = [i for i in existing_items if i["filename"] in disk_set]
+    if len(existing_items) != before_count:
+        changed = True
+
+    meta["items"] = existing_items
+
+    # 有变更时自动保存
+    if changed:
+        save_sell_items_meta(meta)
+
+    return meta
 
 def save_sell_items_meta(data):
     """保存物品元数据"""

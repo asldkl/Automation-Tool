@@ -220,6 +220,10 @@ def _open_account_info_window(app, account_key=None):
             "note": note_text,
         }
 
+        # 新建账号默认暂停
+        if is_new:
+            cooldown_manager.set_account_paused(account_key, True)
+
         refresh_account_tree(app)
         update_account_count(app)
         save_accounts(app)

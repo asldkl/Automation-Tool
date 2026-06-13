@@ -287,14 +287,23 @@ class TestConfigSettings(unittest.TestCase):
         self.assertGreater(h, 0)
 
     def test_sell_items_meta(self):
-        """售卖物品元数据读写"""
+        """售卖物品元数据读写（自动同步目录图片）"""
         from config import load_sell_items_meta, save_sell_items_meta, SELL_ITEMS_DIR
         os.makedirs(SELL_ITEMS_DIR, exist_ok=True)
-        meta = {"items": [{"filename": "test.png", "name": "test", "discount_times": 0, "quantity": 1}]}
-        save_sell_items_meta(meta)
-        loaded = load_sell_items_meta()
-        self.assertEqual(len(loaded["items"]), 1)
-        self.assertEqual(loaded["items"][0]["name"], "test")
+        # 创建临时测试图片
+        test_file = os.path.join(SELL_ITEMS_DIR, "_test_meta_sync.png")
+        with open(test_file, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        try:
+            meta = {"items": [{"filename": "_test_meta_sync.png", "name": "_test_meta_sync", "discount_times": 0, "quantity": 1}]}
+            save_sell_items_meta(meta)
+            loaded = load_sell_items_meta()
+            names = [i["name"] for i in loaded["items"]]
+            self.assertIn("_test_meta_sync", names)
+            # 验证同步：目录中已有图片也被加入
+            self.assertGreater(len(loaded["items"]), 1)
+        finally:
+            os.remove(test_file)
 
 
 # ==================== utils ====================
