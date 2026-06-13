@@ -120,12 +120,14 @@ def find_window_by_title(title_contains, partial_match=True, exclude_titles=None
     return windows[0][0]
 
 def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titles=None):
-    """循环等待直到窗口出现并激活成功"""
+    """循环等待直到窗口出现（不依赖激活，仅检查窗口是否存在）"""
     cond = "包含" if partial_match else "完全等于"
     print(f"⏳ 等待窗口标题 {cond} '{title_contains}'...")
     start = time.time()
     while time.time() - start < timeout:
-        if activate_window_by_title(title_contains, partial_match, exclude_titles):
+        hwnd = find_window_by_title(title_contains, partial_match, exclude_titles)
+        if hwnd:
+            print(f"✅ 找到窗口: {title_contains}")
             return True
         time.sleep(1)
     print(f"❌ 超时未找到窗口 '{title_contains}'")
