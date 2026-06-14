@@ -1,6 +1,6 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.1.5
+版本: v1.2.0
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
@@ -15,6 +15,7 @@ v1.1.2 新增：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞
 v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中。
 v1.1.4 新增：凭据加密（Fernet+PBKDF2）、eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试（35项）。UI简化：删除电源管理页签和定时执行功能，全部改用冷却执行，设置页签从6个精简为5个。
 v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 账号限制）、图像识别登录界面按钮（无 OCR）、pyautogui.typewrite 逐键输入、密码必填校验、账号信息设置窗口、主界面四列显示（账号名称/现有资产/下次运行时间/备注）、账号序号、资产监测自定义天数。删除 OLA SDK 依赖、登录流程 OCR 代码。
+v1.2.0 新增：WeGame 直接登录（Interception 驱动级键盘输入）、代码重构（合并 find_and_click、缓存 settings、消除冗余颜色转换）、SMTP 可配置、截图对象关闭、prevent_sleep 线程安全。新增 interception_keyboard.py 模块。
 
 【核心文件】
 
@@ -42,10 +43,11 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 │   - run_script_main()：主自动化循环（v1.1.4 重构为 ~80 行，调用 8 个子函数）
 │   - _validate_daily() / _cleanup_processes() / _login_account()
 │   - _launch_game() / _recognize_and_store_asset() / _close_game() / _cleanup_account_processes()
-│   - _login_account()：QQ 账号密码登录 + WeGame 快捷安全登录（v1.1.5）
-│     - 图像识别点击登录界面按钮（QQ_ACCOUNT_LOGIN / QQ_ACCOUNT_SELECT / QQ_REMOVE_BTN / QQ_INPUT_FIELD / QQ_ACCEPT_BTN / QQ_LOGIN_BTN / IMAGE_LOGIN_BTN）
-│     - pyautogui.typewrite 逐键输入账号密码（不调用 SetForegroundWindow，防止焦点丢失）
-│     - 点击 account_select 后鼠标下移 60px
+│   - _login_account()：WeGame 直接登录（v1.2.0，Interception 驱动级键盘输入）
+│     - 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空
+│     - Interception 驱动级键盘输入账号和密码（绕开 QQ 同 IP 验证码）
+│     - 图像识别点击 Sign-in 登录
+│     - 删除所有 QQ 登录相关代码
 │   - _recognize_asset()：资产识别（RapidOCR 缓存引擎，直接 numpy 数组，无 BGR 转换）
 │   - 资产识别后自动调用 asset_db.record_asset() 写入 SQLite
 │   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作（含 asset_db 钩子）
@@ -114,7 +116,17 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 │   - key_press() / key_down() / key_up()：按键操作
 │   - hold_key()：长按指定键（用于清空输入框）
 │   - get_backend()：获取当前使用的后端名称
-│   - 注：登录流程已改用 pyautogui.typewrite 逐键输入，此模块保留供其他场景使用
+│   - 注：登录流程已改用 Interception 驱动级键盘输入，此模块保留供其他场景使用
+│
+├── interception_keyboard.py    # Interception 驱动级键盘输入模块（v1.2.0 新增）
+│   - 通过 ctypes 调用 interception.dll 实现驱动级键盘模拟
+│   - is_available()：检查 Interception 驱动和 DLL 是否可用
+│   - send_string(text, interval)：逐字符发送按键（扫描码方式）
+│   - send_key(char, interval)：发送单个按键事件
+│   - get_backend()：返回后端名称 "Interception"
+│   - 字符→扫描码映射表（支持字母、数字、常用符号、Shift 组合）
+│   - DLL 搜索路径：项目目录、Interception-master/library/、System32、sys._MEIPASS
+│   - 无降级方案：Interception 不可用时返回 False
 
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
@@ -123,7 +135,7 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 │
 ├── config.py                   # 配置管理
 │   - DEFAULT_SETTINGS：所有默认配置项（含 server_url、client_key、post_run_shutdown_delay）
-│   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json（v1.1.4 自动加解密敏感字段）
+│   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json（v1.1.4 自动加解密，v1.2.0 mtime 缓存）
 │   - resource_path()：PyInstaller/Nuitka 资源路径处理
 │   - resolve_template_path()：用户自定义模板优先
 │   - get_sell_items()：获取售卖物品图片列表
@@ -143,10 +155,13 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 │
 ├── utils.py                    # 工具函数
 │   - 图像识别：
-│     - find_and_click()：单尺度模板匹配+点击（v1.1.5 支持 clicks 参数，1=单击，2=双击）
-│     - find_and_click_multiscale()：多尺度复合匹配（灰度+边缘，0.7x-1.3x）
+│     - _find_and_click_core()：统一的图像识别+点击核心函数（v1.2.0，支持 multiscale/return_pos 参数）
+│     - _screenshot_gray()：截屏直接转灰度（跳过 RGB→BGR 中间步骤）
+│     - _match_template()：标准灰度模板匹配
+│     - find_and_click()：单尺度模板匹配+点击（薄包装，兼容旧调用）
+│     - find_and_click_multiscale()：多尺度复合匹配（薄包装）
 │     - find_and_click_smart()：智能匹配（OCR 优先，超时自动回退图像匹配）
-│     - _match_template_multiscale()：核心多尺度匹配算法
+│     - _match_template_multiscale()：核心多尺度匹配算法（灰度+边缘）
 │   - 鼠标移动：
 │     - smooth_move_to()：贝塞尔曲线+Smoothstep平滑鼠标移动（v1.1.2 新增）
 │     - 调用 relative_mouse_move.perform_timed_relative_move() 实现
@@ -257,8 +272,8 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 │   ├── Navigation/             # 导航图标（烽火地带、特勤处）
 │   ├── One_Click_Sell/         # 出售流程模板（仓库、出售、上架、降价、确认上架）
 │   ├── email/                  # 邮箱货币模板（邮箱、交易中心、全部领取、领取完成）
-│   ├── wegame_login/           # WeGame 登录模板（login_btn 快捷安全登录按钮）
-│   ├── qq_login/               # QQ 登录模板（Account Sign-in、QQ_account_select、Remove、Input、Accept、QQ_login_btn）
+│   ├── wegame_login/           # WeGame 登录模板（login_btn、account_select、Input、Sign-in、delta_game_icon、delta_launch_btn）
+│   ├── qq_login/               # QQ 登录模板（已弃用，v1.2.0 改用 WeGame 直接登录）
 │   └── produce/                # 生产设施模板（各设施产出项截图）
 
 【用户数据目录】(~/.delta_auto_*)
@@ -336,15 +351,14 @@ gui_app.py (入口层)
 6. 逐个账号：
    a. 暂停检查（跳过已暂停的账号，状态标记为 "已暂停"）
    b. 冷却检查（跳过冷却中的账号，状态标记为 "cooling"）
-   c. QQ 账号密码登录（图像识别+typewrite 输入）→ 关闭 QQ 窗口
-   d. 启动 WeGame → 图像识别点击「快捷安全登录」
-   e. 找到三角洲图标 → 资产识别 → 启动游戏
-   f. 可选：资产识别（等待 4 秒后截图指定区域，RapidOCR 识别，过滤"现有资产"等文字）
-   g. 进入烽火地带 → 特勤处
-   h. 可选：领取邮箱货币
-   i. 执行选中的设施操作（制造/收取/产出）
-   j. 可选：一键出售
-   k. 关闭游戏/WeGame/QQ
+   c. 启动 WeGame → 双击账号选择框 → Interception 输入账号 → 点击密码框 → 输入密码 → 点击登录
+   d. 找到三角洲图标 → 资产识别 → 启动游戏
+   e. 可选：资产识别（等待 4 秒后截图指定区域，RapidOCR 识别，过滤"现有资产"等文字）
+   f. 进入烽火地带 → 特勤处
+   g. 可选：领取邮箱货币
+   h. 执行选中的设施操作（制造/收取/产出）
+   i. 可选：一键出售
+   j. 关闭游戏/WeGame
    l. 记录冷却时间
    m. 等待账号间隔
 7. 所有账号完成 → 停止心跳线程 → 发送邮件报告 → 恢复睡眠设置

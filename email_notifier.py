@@ -14,7 +14,7 @@ import cooldown_manager
 
 
 def _get_email_config(app):
-    """获取邮箱配置，返回 (smtp_code, sender, receiver) 或 None（未配置）"""
+    """获取邮箱配置，返回 (smtp_code, sender, receiver, smtp_server, smtp_port) 或 None（未配置）"""
     if not app.settings.get("email_enabled", False):
         return None
     smtp_code = app.settings.get("smtp_code", "").strip()
@@ -22,7 +22,9 @@ def _get_email_config(app):
     receiver = app.settings.get("receiver_email", "").strip()
     if not smtp_code or not sender or not receiver:
         return None
-    return smtp_code, sender, receiver
+    smtp_server = app.settings.get("smtp_server", "smtp.qq.com").strip()
+    smtp_port = app.settings.get("smtp_port", 465)
+    return smtp_code, sender, receiver, smtp_server, smtp_port
 
 
 def send_account_failure_email(app, account_name, next_run_str, processed_accounts=None):
@@ -30,7 +32,7 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
     cfg = _get_email_config(app)
     if not cfg:
         return
-    smtp_code, sender, receiver = cfg
+    smtp_code, sender, receiver, smtp_server, smtp_port = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     safe_name = html.escape(account_name)
@@ -50,7 +52,8 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            f"三角洲自动化 - 账号失败通知 ({account_name})", body
+            f"三角洲自动化 - 账号失败通知 ({account_name})", body,
+            smtp_server, smtp_port
         )
         if success:
             print(f"📧 账号 {account_name} 失败通知邮件已发送")
@@ -67,7 +70,7 @@ def send_cooldown_ready_email(app, ready_accounts):
     cfg = _get_email_config(app)
     if not cfg:
         return
-    smtp_code, sender, receiver = cfg
+    smtp_code, sender, receiver, smtp_server, smtp_port = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     account_items = "".join(f"<li style='padding:3px 0;'>{html.escape(name)}</li>" for name in ready_accounts)
@@ -90,7 +93,8 @@ def send_cooldown_ready_email(app, ready_accounts):
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            f"三角洲自动化 - 冷却到期提醒 ({count}个账号)", body
+            f"三角洲自动化 - 冷却到期提醒 ({count}个账号)", body,
+            smtp_server, smtp_port
         )
         if success:
             print(f"📧 冷却到期提醒邮件已发送（{count}个账号）")
@@ -105,7 +109,7 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     cfg = _get_email_config(app)
     if not cfg:
         return
-    smtp_code, sender, receiver = cfg
+    smtp_code, sender, receiver, smtp_server, smtp_port = cfg
 
     m, s = divmod(int(elapsed), 60)
     h, m = divmod(m, 60)
@@ -157,7 +161,8 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            f"三角洲自动化 - 运行报告 ({status_text})", body
+            f"三角洲自动化 - 运行报告 ({status_text})", body,
+            smtp_server, smtp_port
         )
         if success:
             print("📧 邮件通知已发送")
@@ -172,7 +177,7 @@ def send_failure_email(app, error, processed_accounts=None):
     cfg = _get_email_config(app)
     if not cfg:
         return
-    smtp_code, sender, receiver = cfg
+    smtp_code, sender, receiver, smtp_server, smtp_port = cfg
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     stats = app.run_stats
@@ -215,7 +220,8 @@ def send_failure_email(app, error, processed_accounts=None):
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            "三角洲自动化 - 运行失败通知", body
+            "三角洲自动化 - 运行失败通知", body,
+            smtp_server, smtp_port
         )
         if success:
             print("📧 失败通知邮件已发送")

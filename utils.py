@@ -3,6 +3,7 @@
 包含启动应用程序、窗口激活、图像识别点击、WeGame 快捷登录、进程强制结束等
 """
 import time
+import threading
 import cv2
 import numpy as np
 import pyautogui
@@ -149,45 +150,61 @@ def clear_template_cache():
     global _template_cache
     _template_cache.clear()
 
-def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1, x_offset=0, y_offset=0):
+def _match_template(gray_screen, template, threshold):
+    """标准灰度模板匹配，返回 (matched, max_val, max_loc, (h, w))"""
+    res = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    h, w = template.shape
+    return max_val >= threshold, max_val, max_loc, (h, w)
+
+
+def _screenshot_gray(region=None):
+    """截屏并直接转灰度（跳过 RGB→BGR 中间步骤）"""
+    try:
+        screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+    except Exception:
+        return None
+    arr = np.array(screen)
+    screen.close()
+    return cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+
+def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
+                         clicks=1, x_offset=0, y_offset=0,
+                         multiscale=False, return_pos=False):
     """
-    在当前屏幕中查找图片并点击中心点
-    返回是否成功找到并点击
-    confidence: 可选，覆盖全局置信度阈值
-    clicks: 点击次数，1=单击，2=双击
-    x_offset: 点击位置相对中心的X偏移（负值向左）
-    y_offset: 点击位置相对中心的Y偏移（负值向上）
+    统一的图像识别+点击函数。
+    multiscale: True 使用多尺度边缘+灰度匹配，False 使用标准灰度匹配
+    return_pos: True 返回 (success, (x,y)), False 返回 success
     """
     threshold = confidence if confidence is not None else CONFIDENCE
-    # 先解析路径（优先用户自定义模板），再查缓存
     resolved = config.resolve_template_path(img_path)
     template = _template_cache.get(resolved)
     if template is None:
         template = _imread_unicode(resolved)
         if template is None:
             print(f"❌ 图片文件不存在或无法读取：{resolved}")
-            return False
+            return (False, None) if return_pos else False
         _template_cache[resolved] = template
 
     start = time.time()
     while time.time() - start < timeout:
-        try:
-            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
-        except Exception:
+        gray = _screenshot_gray(region)
+        if gray is None:
             time.sleep(0.5)
             continue
-        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
-        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
-        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+        if multiscale:
+            matched, max_val, max_loc, (h, w) = _match_template_multiscale(
+                gray, template, threshold)
+        else:
+            matched, max_val, max_loc, (h, w) = _match_template(
+                gray, template, threshold)
 
-        if max_val >= threshold:
-            h, w = template.shape
+        if matched:
             x = max_loc[0] + w // 2 + (region[0] if region else 0) + x_offset
             y = max_loc[1] + h // 2 + (region[1] if region else 0) + y_offset
 
-            # 忽略屏幕边缘可疑坐标
             screen_w, screen_h = pyautogui.size()
             margin = 10
             if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
@@ -195,6 +212,8 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1,
                 time.sleep(0.3)
                 continue
 
+            if multiscale and max_val >= threshold:
+                print(f"🔍 复合匹配成功：置信度 {max_val:.3f}")
             try:
                 smooth_move_to(x, y, duration=0.2)
                 pyautogui.click(clicks=clicks)
@@ -203,59 +222,22 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1,
                 time.sleep(0.5)
                 continue
             time.sleep(WAIT_TIME)
-            return True
+            return (True, (x, y)) if return_pos else True
         time.sleep(0.3)
     print(f"⏳ 超时未找到：{img_path}")
-    return False
+    return (False, None) if return_pos else False
+
+
+def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1, x_offset=0, y_offset=0):
+    """在当前屏幕中查找图片并点击中心点，返回是否成功"""
+    return _find_and_click_core(img_path, timeout, region, confidence,
+                                clicks, x_offset, y_offset, multiscale=False, return_pos=False)
+
 
 def find_and_click_pos(img_path, timeout=20, region=None, confidence=None):
-    """
-    在当前屏幕中查找图片并点击中心点
-    返回 (是否成功, 坐标元组(x,y)) 或 (False, None)
-    confidence: 可选，覆盖全局置信度阈值
-    """
-    threshold = confidence if confidence is not None else CONFIDENCE
-    resolved = config.resolve_template_path(img_path)
-    template = _template_cache.get(resolved)
-    if template is None:
-        template = _imread_unicode(resolved)
-        if template is None:
-            print(f"❌ 图片文件不存在或无法读取：{resolved}")
-            return False, None
-        _template_cache[resolved] = template
-
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
-        except Exception:
-            time.sleep(0.5)
-            continue
-        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-
-        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
-        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-
-        if max_val >= threshold:
-            h, w = template.shape
-            x = max_loc[0] + w // 2 + (region[0] if region else 0)
-            y = max_loc[1] + h // 2 + (region[1] if region else 0)
-
-            screen_w, screen_h = pyautogui.size()
-            margin = 10
-            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
-                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
-                time.sleep(0.3)
-                continue
-
-            smooth_move_to(x, y, duration=0.2)
-            pyautogui.click()
-            time.sleep(WAIT_TIME)
-            return True, (x, y)
-        time.sleep(0.3)
-    print(f"⏳ 超时未找到：{img_path}")
-    return False, None
+    """在当前屏幕中查找图片并点击中心点，返回 (是否成功, (x,y))"""
+    return _find_and_click_core(img_path, timeout, region, confidence,
+                                multiscale=False, return_pos=True)
 
 def _match_template_multiscale(gray_screen, template, threshold, scales=None):
     """
@@ -323,66 +305,13 @@ def _match_template_multiscale(gray_screen, template, threshold, scales=None):
 
 
 def find_and_click_multiscale(img_path, timeout=20, region=None, confidence=None):
-    """
-    多尺度复合图像识别：结合灰度匹配和边缘匹配，自动尝试多个缩放比例。
-    边缘匹配对头像轮廓、名称文字、QQ号码等结构特征敏感，能更好地区分不同账号。
-    返回是否成功找到并点击。
-    """
-    threshold = confidence if confidence is not None else CONFIDENCE
-    resolved = config.resolve_template_path(img_path)
-    template = _template_cache.get(resolved)
-    if template is None:
-        template = _imread_unicode(resolved)
-        if template is None:
-            print(f"❌ 图片文件不存在或无法读取：{resolved}")
-            return False
-        _template_cache[resolved] = template
-
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
-        except Exception:
-            time.sleep(0.5)
-            continue
-        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
-
-        matched, max_val, max_loc, scale, (h, w) = _match_template_multiscale(
-            gray, template, threshold)
-
-        if matched:
-            x = max_loc[0] + w // 2 + (region[0] if region else 0)
-            y = max_loc[1] + h // 2 + (region[1] if region else 0)
-
-            screen_w, screen_h = pyautogui.size()
-            margin = 10
-            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
-                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
-                time.sleep(0.3)
-                continue
-
-            if scale != 1.0:
-                print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
-            try:
-                smooth_move_to(x, y, duration=0.2)
-                pyautogui.click()
-            except pyautogui.FailSafeException:
-                print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
-                time.sleep(0.5)
-                continue
-            time.sleep(WAIT_TIME)
-            return True
-        time.sleep(0.3)
-    print(f"⏳ 超时未找到（复合匹配）：{img_path}")
-    return False
+    """多尺度复合图像识别 + 点击，返回是否成功"""
+    return _find_and_click_core(img_path, timeout, region, confidence,
+                                multiscale=True, return_pos=False)
 
 
 def find_multiscale(img_path, timeout=20, region=None, confidence=None):
-    """
-    多尺度复合图像识别，仅检测不点击。
-    返回 True 表示找到，False 表示超时未找到。
-    """
+    """多尺度复合图像识别，仅检测不点击，返回 True/False"""
     threshold = confidence if confidence is not None else CONFIDENCE
     resolved = config.resolve_template_path(img_path)
     template = _template_cache.get(resolved)
@@ -395,17 +324,12 @@ def find_multiscale(img_path, timeout=20, region=None, confidence=None):
 
     start = time.time()
     while time.time() - start < timeout:
-        try:
-            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
-        except Exception:
+        gray = _screenshot_gray(region)
+        if gray is None:
             time.sleep(0.5)
             continue
-        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
-
-        matched, max_val, max_loc, scale, (h, w) = _match_template_multiscale(
+        matched, max_val, _, scale, _ = _match_template_multiscale(
             gray, template, threshold)
-
         if matched:
             if scale != 1.0:
                 print(f"🔍 复合匹配成功（仅检测）：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
@@ -415,52 +339,9 @@ def find_multiscale(img_path, timeout=20, region=None, confidence=None):
 
 
 def find_and_click_pos_multiscale(img_path, timeout=20, region=None, confidence=None):
-    """
-    多尺度复合图像识别，返回 (是否成功, 坐标元组(x,y)) 或 (False, None)
-    """
-    threshold = confidence if confidence is not None else CONFIDENCE
-    resolved = config.resolve_template_path(img_path)
-    template = _template_cache.get(resolved)
-    if template is None:
-        template = _imread_unicode(resolved)
-        if template is None:
-            print(f"❌ 图片文件不存在或无法读取：{resolved}")
-            return False, None
-        _template_cache[resolved] = template
-
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
-        except Exception:
-            time.sleep(0.5)
-            continue
-        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
-
-        matched, max_val, max_loc, scale, (h, w) = _match_template_multiscale(
-            gray, template, threshold)
-
-        if matched:
-            x = max_loc[0] + w // 2 + (region[0] if region else 0)
-            y = max_loc[1] + h // 2 + (region[1] if region else 0)
-
-            screen_w, screen_h = pyautogui.size()
-            margin = 10
-            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
-                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
-                time.sleep(0.3)
-                continue
-
-            if scale != 1.0:
-                print(f"🔍 复合匹配成功：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
-            smooth_move_to(x, y, duration=0.2)
-            pyautogui.click()
-            time.sleep(WAIT_TIME)
-            return True, (x, y)
-        time.sleep(0.3)
-    print(f"⏳ 超时未找到（复合匹配）：{img_path}")
-    return False, None
+    """多尺度复合图像识别 + 点击，返回 (是否成功, (x,y))"""
+    return _find_and_click_core(img_path, timeout, region, confidence,
+                                multiscale=True, return_pos=True)
 
 
 def wegame_quick_login():
@@ -542,25 +423,28 @@ ES_DISPLAY_REQUIRED = 0x00000002
 
 _prev_sleep_state = None
 _sleep_prevent_count = 0
+_sleep_lock = threading.Lock()
 
 
 def prevent_sleep():
     """阻止系统进入睡眠/休眠状态，并保持显示器开启（运行关键操作时调用）"""
     global _sleep_prevent_count, _prev_sleep_state
-    _sleep_prevent_count += 1
-    if _sleep_prevent_count == 1:
-        _kernel32.SetThreadExecutionState(
-            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED | ES_DISPLAY_REQUIRED
-        )
+    with _sleep_lock:
+        _sleep_prevent_count += 1
+        if _sleep_prevent_count == 1:
+            _kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED | ES_DISPLAY_REQUIRED
+            )
 
 
 def allow_sleep():
     """恢复系统自动睡眠（与 prevent_sleep 配对调用）"""
     global _sleep_prevent_count
-    if _sleep_prevent_count > 0:
-        _sleep_prevent_count -= 1
-    if _sleep_prevent_count == 0:
-        _kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+    with _sleep_lock:
+        if _sleep_prevent_count > 0:
+            _sleep_prevent_count -= 1
+        if _sleep_prevent_count == 0:
+            _kernel32.SetThreadExecutionState(ES_CONTINUOUS)
 
 
 def _local_to_filetime(local_dt):
@@ -820,14 +704,17 @@ def remove_startup_task():
 
 
 # ==================== 邮件通知 ====================
-def send_email_notification(smtp_code, sender_email, receiver_email, subject, body):
+def send_email_notification(smtp_code, sender_email, receiver_email, subject, body,
+                            smtp_server="smtp.qq.com", smtp_port=465):
     """
-    使用 QQ 邮箱 SMTP 发送邮件通知（含重试）。
+    使用 SMTP 发送邮件通知（含重试）。
     smtp_code: SMTP 授权码
     sender_email: 发送者邮箱
     receiver_email: 接收者邮箱
     subject: 邮件主题
     body: 邮件正文（HTML 格式）
+    smtp_server: SMTP 服务器地址（默认 smtp.qq.com）
+    smtp_port: SMTP 端口（默认 465=SSL）
     返回 (success: bool, message: str)
     """
     import smtplib
@@ -844,7 +731,7 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
     last_error = ""
     for attempt in range(max_retries):
         try:
-            with smtplib.SMTP_SSL('smtp.qq.com', 465, timeout=60) as server:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=60) as server:
                 server.login(sender_email, smtp_code)
                 server.sendmail(sender_email, receiver_email, msg.as_string())
             return True, "邮件发送成功"
@@ -916,9 +803,9 @@ def ocr_recognize(region=None):
             screenshot = pyautogui.screenshot()
 
         img_np = np.array(screenshot)
-        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        screenshot.close()
 
-        result, _ = engine(img_bgr)
+        result, _ = engine(img_np)
         if result is None:
             return []
 

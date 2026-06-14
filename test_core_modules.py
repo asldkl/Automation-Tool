@@ -368,7 +368,7 @@ class TestEmailNotifier(unittest.TestCase):
         }
         result = _get_email_config(app)
         self.assertIsNotNone(result)
-        self.assertEqual(result, ("test_code", "sender@test.com", "receiver@test.com"))
+        self.assertEqual(result, ("test_code", "sender@test.com", "receiver@test.com", "smtp.qq.com", 465))
 
     def test_get_email_config_disabled(self):
         """邮箱未启用时应返回 None"""

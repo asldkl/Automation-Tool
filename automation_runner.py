@@ -26,6 +26,9 @@ import asset_db
 import driver_keyboard
 import interception_keyboard
 
+# 三角洲行动窗口标题关键词
+DELTA_TITLES = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+
 
 def _account_key(path):
     """从账号路径提取账号标识（去掉 account: 前缀和 .png 后缀）"""
@@ -57,6 +60,7 @@ def _recognize_asset(app, asset_region):
         import re
         screenshot = pyautogui.screenshot(region=(x, y, w, h))
         img_array = np.array(screenshot)
+        screenshot.close()
 
         if _ocr_engine is None:
             _ocr_engine = RapidOCR()
@@ -347,7 +351,6 @@ def _launch_game(app):
     # 资产识别
     _recognize_and_store_asset(app)
     time.sleep(2)  # 资产识别缓冲
-    time.sleep(2)
 
     launch_found = False
     for retry in range(3):
@@ -365,11 +368,10 @@ def _launch_game(app):
 
     print("✅ 三角洲正在启动，等待游戏窗口出现...")
     game_loaded = False
-    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
     for _ in range(45):
         if app._stop_event.is_set():
             break
-        for title in delta_titles:
+        for title in DELTA_TITLES:
             if utils.activate_window_by_title(title, partial_match=True,
                                                exclude_titles=["WeGame", "腾讯"]):
                 game_loaded = True
@@ -431,8 +433,7 @@ def _close_game(app):
         pyautogui.hotkey('alt', 'f4')
         time.sleep(0.5)
     time.sleep(1)
-    delta_titles = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
-    for title in delta_titles:
+    for title in DELTA_TITLES:
         if app._stop_event.is_set():
             break
         utils.close_window_by_title(title, partial_match=True)

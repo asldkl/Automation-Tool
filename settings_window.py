@@ -60,6 +60,8 @@ class SettingsWindow:
         self.smtp_code_var = tk.StringVar(value=app.settings.get("smtp_code", ""))
         self.sender_email_var = tk.StringVar(value=app.settings.get("sender_email", ""))
         self.receiver_email_var = tk.StringVar(value=app.settings.get("receiver_email", ""))
+        self.smtp_server_var = tk.StringVar(value=app.settings.get("smtp_server", "smtp.qq.com"))
+        self.smtp_port_var = tk.StringVar(value=str(app.settings.get("smtp_port", 465)))
         self.cooldown_email_enabled_var = tk.BooleanVar(value=app.settings.get("cooldown_email_enabled", False))
 
         # 账号列表滚动查找变量
@@ -89,9 +91,24 @@ class SettingsWindow:
         self.post_run_shutdown_delay_var = tk.IntVar(value=app.settings.get("post_run_shutdown_delay", 0))
 
         self._active_canvas = None
+        self._trace_ids = []  # 存储 trace 回调 ID，关闭时移除
         self._setup_styles()
         self._build_ui()
         self.win.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.win.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        """窗口关闭时清理资源，防止内存泄漏"""
+        # 移除全局滚轮绑定
+        self.win.unbind_all("<MouseWheel>")
+        # 移除所有 trace 回调
+        for var, trace_id in self._trace_ids:
+            try:
+                var.trace_remove('write', trace_id)
+            except Exception:
+                pass
+        self._trace_ids.clear()
+        self.win.destroy()
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -267,7 +284,7 @@ class SettingsWindow:
 
         def on_scale_change(*args):
             self._update_conf_display()
-        self.confidence_var.trace_add('write', on_scale_change)
+        self._trace_ids.append((self.confidence_var, self.confidence_var.trace_add('write', on_scale_change)))
 
         # 分辨率信息
         res_frame = ttk.Frame(frame3, style='SettingsInner.TFrame')
@@ -387,6 +404,14 @@ class SettingsWindow:
         ttk.Label(row3, text="接收者邮箱：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Entry(row3, textvariable=self.receiver_email_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # SMTP 服务器和端口
+        row3b = ttk.Frame(config_frame, style='SettingsInner.TFrame')
+        row3b.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(row3b, text="SMTP 服务器：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(row3b, textvariable=self.smtp_server_var, width=25).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(row3b, text="端口：", style='Settings.TLabel', width=6).pack(side=tk.LEFT, padx=(10, 8))
+        ttk.Entry(row3b, textvariable=self.smtp_port_var, width=8).pack(side=tk.LEFT)
+
         # 测试发送按钮
         row4 = ttk.Frame(config_frame, style='SettingsInner.TFrame')
         row4.pack(fill=tk.X, pady=(4, 0))
@@ -429,10 +454,13 @@ class SettingsWindow:
 
         def _send():
             import utils
+            smtp_server = self.smtp_server_var.get().strip() if hasattr(self, 'smtp_server_var') else "smtp.qq.com"
+            smtp_port = int(self.smtp_port_var.get()) if hasattr(self, 'smtp_port_var') else 465
             success, msg = utils.send_email_notification(
                 code, sender, receiver,
                 "三角洲自动化工具 - 测试邮件",
-                "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>"
+                "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>",
+                smtp_server, smtp_port
             )
             self.win.after(0, lambda: self._on_test_email_result(success, msg))
 
@@ -826,9 +854,6 @@ class SettingsWindow:
 
     def _test_kill_process(self, process_name):
         """测试清理指定进程"""
-        import utils
-        import config
-
         process_map = {
             "QQ": config.QQ_PROCESS,
             "WeGame": config.WEGAME_PROCESS,
@@ -841,29 +866,36 @@ class SettingsWindow:
             return
 
         self._dev_proc_status.config(text=f"正在清理 {process_name}...", foreground="#3498db")
-        self.win.update()
 
-        try:
-            utils.kill_process(proc, wait_exit=True, max_wait=5)
-            self._dev_proc_status.config(text=f"✓ {process_name} 已清理", foreground="#27ae60")
-        except Exception as e:
-            self._dev_proc_status.config(text=f"✗ 清理失败: {e}", foreground="#e74c3c")
+        import threading
+        def _run():
+            try:
+                utils.kill_process(proc, wait_exit=True, max_wait=5)
+                self.win.after(0, lambda: self._dev_proc_status.config(
+                    text=f"✓ {process_name} 已清理", foreground="#27ae60"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_proc_status.config(
+                    text=f"✗ 清理失败: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _test_kill_all(self):
         """测试清理所有进程"""
-        import utils
-        import config
-
         self._dev_proc_status.config(text="正在清理所有进程...", foreground="#3498db")
-        self.win.update()
 
-        try:
-            utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=5)
-            utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=5)
-            utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
-            self._dev_proc_status.config(text="✓ 所有进程已清理", foreground="#27ae60")
-        except Exception as e:
-            self._dev_proc_status.config(text=f"✗ 清理失败: {e}", foreground="#e74c3c")
+        import threading
+        def _run():
+            try:
+                utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=5)
+                utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=5)
+                utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=5)
+                self.win.after(0, lambda: self._dev_proc_status.config(
+                    text="✓ 所有进程已清理", foreground="#27ae60"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_proc_status.config(
+                    text=f"✗ 清理失败: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _test_find_window(self, window_name):
         """测试窗口查找"""
@@ -975,7 +1007,7 @@ class SettingsWindow:
 
         def on_sell_conf_change(*args):
             self._update_sell_conf_display()
-        self.sell_confidence_var.trace_add('write', on_sell_conf_change)
+        self._trace_ids.append((self.sell_confidence_var, self.sell_confidence_var.trace_add('write', on_sell_conf_change)))
 
         sell_row3 = ttk.Frame(sell_frame, style='SettingsInner.TFrame')
         sell_row3.pack(fill=tk.X, pady=(8, 0))
@@ -1191,9 +1223,10 @@ class SettingsWindow:
     def _set_asset_region(self):
         """让用户在屏幕上拖动框选资产识别区域"""
         self.win.withdraw()
-        import time
-        time.sleep(0.3)
+        self.win.after(300, self._show_asset_overlay)
 
+    def _show_asset_overlay(self):
+        """显示资产区域选择覆盖层（在 withdraw 后异步调用）"""
         import tkinter as tk_overlay
 
         overlay = tk_overlay.Toplevel(self.win)
@@ -1269,19 +1302,31 @@ class SettingsWindow:
                     parent=self.win)
                 return
 
-            # 最小化设置窗口
+            # 最小化设置窗口，异步执行截图和 OCR
             self.win.withdraw()
-            import time
-            time.sleep(0.5)
+            self.win.after(500, lambda: self._do_asset_ocr(region))
 
+        except SyntaxError:
+            messagebox.showerror("错误", "区域格式不正确，应为 [x, y, w, h]", parent=self.win)
+        except Exception as e:
+            self.win.deiconify()
+            messagebox.showerror("测试失败", f"识别出错：{e}", parent=self.win)
+
+    def _do_asset_ocr(self, region):
+        """执行资产 OCR 识别（在 withdraw 后异步调用）"""
+        try:
             import pyautogui
             import numpy as np
+            from rapidocr_onnxruntime import RapidOCR
+
             x, y, w, h = region
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_array = np.array(screenshot)
+            screenshot.close()
 
-            ocr = RapidOCR()
-            result, _ = ocr(img_array)
+            if not hasattr(self, '_ocr_instance'):
+                self._ocr_instance = RapidOCR()
+            result, _ = self._ocr_instance(img_array)
 
             self.win.deiconify()
 
@@ -1318,6 +1363,7 @@ class SettingsWindow:
                 parent=self.win)
 
         except SyntaxError:
+            self.win.deiconify()
             messagebox.showerror("错误", "区域格式不正确，应为 [x, y, w, h]", parent=self.win)
         except Exception as e:
             self.win.deiconify()
@@ -1406,6 +1452,11 @@ class SettingsWindow:
         self.app.settings["sender_email"] = self.sender_email_var.get()
         self.app.settings["receiver_email"] = self.receiver_email_var.get()
         self.app.settings["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
+        self.app.settings["smtp_server"] = self.smtp_server_var.get().strip() or "smtp.qq.com"
+        try:
+            self.app.settings["smtp_port"] = int(self.smtp_port_var.get())
+        except ValueError:
+            self.app.settings["smtp_port"] = 465
 
         # 游戏启动等待
         self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()

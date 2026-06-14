@@ -575,12 +575,12 @@ def test_recognition(app):
         import cv2
         import numpy as np
         screen = pyautogui.screenshot()
-        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2GRAY)
+        screen.close()
         template = cv2.imread(img_path, 0)
         if template is None:
             messagebox.showerror("错误", "无法读取截图文件")
             return
-        gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
 
         # 标准灰度匹配
         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)

@@ -2,8 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.1.5
-日期: 2026-06-12
+版本: v1.2.0
+日期: 2026-06-14
 作者: 开发团队
 
 ================================================================================
@@ -63,6 +63,7 @@
 ├── relative_mouse_move.py   # 贝塞尔曲线鼠标移动模块（v1.1.2 新增）
 ├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
 ├── credential_crypto.py     # 凭据加密模块（v1.1.4 新增，Fernet + PBKDF2）
+├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
 ├── test_all_features.py     # 全功能测试套件（52 项）
 ├── test_core_modules.py     # 核心模块单元测试（v1.1.4 新增，35 项）
 ├── README.md                # 用户说明文档
@@ -597,6 +598,29 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 12. 更新日志
 ================================================================================
+
+----------------------------------------
+v1.2.0 (2026-06-14)
+----------------------------------------
+
+- 登录方式重构：WeGame 直接登录，使用 Interception 驱动级键盘输入（绕开 QQ 同 IP 验证码）
+  - 新登录流程：杀进程 → 打开 WeGame → 双击账号选择框 → Interception 输入账号 → 点击密码框 → 输入密码 → 点击登录
+  - 新增 interception_keyboard.py 模块：通过 ctypes 调用 interception.dll 实现驱动级键盘模拟
+  - 删除所有 QQ 登录相关代码和图片模板
+  - 删除 pyautogui 降级方案（Interception 不可用时直接报错）
+- 代码重构优化：
+  - 合并 4 个重复的 find_and_click 函数为统一的 _find_and_click_core，旧函数名保留为薄包装
+  - 新增 _screenshot_gray 直接 RGB→GRAY，跳过中间 BGR 转换（每帧节省一次颜色空间转换）
+  - config.load_settings() 添加文件修改时间缓存，避免热循环中反复读磁盘
+  - 提取 DELTA_TITLES 模块级常量，消除 _launch_game 和 _close_game 中的重复定义
+  - 消除 _launch_game 中连续两次 time.sleep(2) 浪费的 2 秒
+  - ocr_recognize 去掉多余的 RGB→BGR 转换
+- SMTP 邮箱配置可自定义：新增 smtp_server 和 smtp_port 配置项（默认 smtp.qq.com:465），支持非 QQ 邮箱
+- 截图对象内存泄漏修复：所有 pyautogui.screenshot() 调用后添加 .close() 释放资源
+- prevent_sleep 计数器线程安全：添加 threading.Lock 保护共享计数器
+- 配置说明优化：server_url 和 client_key 添加注释说明可覆盖
+- 新增 Interception 驱动安装支持：interception.dll 放入项目目录，spec 文件自动打包
+- 重新打包 PyInstaller（~100MB）
 
 ----------------------------------------
 v1.1.5 (2026-06-13)

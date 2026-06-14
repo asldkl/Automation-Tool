@@ -126,6 +126,8 @@ DEFAULT_SETTINGS = {
     "smtp_code": "",                  # SMTP 授权码
     "sender_email": "",               # 发送者邮箱
     "receiver_email": "",             # 接收者邮箱
+    "smtp_server": "smtp.qq.com",     # SMTP 服务器地址
+    "smtp_port": 465,                 # SMTP 端口（465=SSL, 587=STARTTLS）
     # 账号列表滚动查找设置
     "qq_mouse_move_distance": 100,    # QQ 账号列表鼠标下移距离（像素）
     "scroll_amount": 100,             # 滚动幅度（旧字段，兼容）
@@ -157,9 +159,9 @@ DEFAULT_SETTINGS = {
     "template_upload_status": {},     # var_name -> "pending" | "done"
     # 运行完成后关机
     "post_run_shutdown_delay": 0,     # 运行完成后延迟关机（0-5分钟，0=不关机）
-    # 服务器配置
-    "server_url": "http://112.74.106.69:8000",  # 服务器地址
-    "client_key": "Client_Normal_Key_2026",      # 客户端密钥
+    # 服务器配置（可通过 ~/.delta_auto_settings.json 覆盖）
+    "server_url": "http://112.74.106.69:8000",  # 服务器地址（建议生产环境使用 HTTPS）
+    "client_key": "Client_Normal_Key_2026",      # 客户端认证令牌（非加密密钥，仅用于请求校验）
     # OCR 识别配置
     "ocr_configs": {},                           # var_name -> {"region": [x,y,w,h], "text": "制造", "confidence": 0.8}
     "global_ocr_enabled": False,                 # 是否启用全局 OCR（模板无需单独配置区域）
@@ -173,30 +175,48 @@ DEFAULT_SETTINGS = {
     "asset_ocr_confidence": 0.7,                 # 资产识别置信度
 }
 
+_settings_cache = None
+_settings_cache_mtime = 0
+
 def load_settings():
-    """加载用户设置（敏感字段自动解密），若文件不存在则返回默认设置"""
+    """加载用户设置（敏感字段自动解密），带文件修改时间缓存"""
+    global _settings_cache, _settings_cache_mtime
+    try:
+        mtime = os.path.getmtime(SETTINGS_JSON_PATH) if os.path.exists(SETTINGS_JSON_PATH) else 0
+    except Exception:
+        mtime = 0
+    if _settings_cache is not None and mtime == _settings_cache_mtime:
+        return dict(_settings_cache)
     if not os.path.exists(SETTINGS_JSON_PATH):
-        return dict(DEFAULT_SETTINGS)
+        _settings_cache = dict(DEFAULT_SETTINGS)
+        _settings_cache_mtime = 0
+        return dict(_settings_cache)
     try:
         with open(SETTINGS_JSON_PATH, "r", encoding="utf-8") as f:
             saved = json.load(f)
-        # 合并默认值，防止新版本字段缺失
         settings = dict(DEFAULT_SETTINGS)
         settings.update(saved)
-        # 解密敏感字段
         from credential_crypto import decrypt_settings
         settings = decrypt_settings(settings)
-        return settings
+        _settings_cache = settings
+        _settings_cache_mtime = mtime
+        return dict(settings)
     except Exception:
-        return dict(DEFAULT_SETTINGS)
+        _settings_cache = dict(DEFAULT_SETTINGS)
+        _settings_cache_mtime = 0
+        return dict(_settings_cache)
 
 def save_settings(settings):
     """保存用户设置到 JSON 文件（敏感字段加密存储）"""
+    global _settings_cache, _settings_cache_mtime
     try:
         from credential_crypto import encrypt_settings
         to_save = encrypt_settings(settings)
         with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(to_save, f, ensure_ascii=False, indent=2)
+        # 保存后立即更新缓存
+        _settings_cache = dict(settings)
+        _settings_cache_mtime = os.path.getmtime(SETTINGS_JSON_PATH)
     except Exception as e:
         print(f"⚠️ 保存设置失败：{e}")
 
