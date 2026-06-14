@@ -1068,6 +1068,7 @@ class SettingsWindow:
                 items[item_idx]["name"] = entry.get()
                 entry.destroy()
                 self._refresh_sell_treeview()
+                self._save_sell_items_meta()
 
             entry.bind("<Return>", _confirm_name)
             entry.bind("<FocusOut>", _confirm_name)
@@ -1091,6 +1092,7 @@ class SettingsWindow:
                     pass
                 spin.destroy()
                 self._refresh_sell_treeview()
+                self._save_sell_items_meta()
 
             spin.bind("<Return>", _confirm_spin)
             spin.bind("<FocusOut>", _confirm_spin)
