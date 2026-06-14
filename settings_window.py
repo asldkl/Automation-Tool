@@ -99,6 +99,9 @@ class SettingsWindow:
 
     def _on_close(self):
         """窗口关闭时清理资源，防止内存泄漏"""
+        # 保存售卖物品元数据（防止未点保存按钮就关闭窗口）
+        if hasattr(self, '_sell_items_meta'):
+            self._save_sell_items_meta()
         # 移除全局滚轮绑定
         self.win.unbind_all("<MouseWheel>")
         # 移除所有 trace 回调
@@ -1064,6 +1067,8 @@ class SettingsWindow:
             except Exception:
                 pass
         self._refresh_sell_treeview()
+        if added > 0:
+            self._save_sell_items_meta()
         msg = f"成功添加 {added} 个物品。"
         if skipped:
             msg += f"\n跳过 {skipped} 个重复物品。"
@@ -1090,6 +1095,7 @@ class SettingsWindow:
             i for i in self._sell_items_meta["items"] if i["filename"] != filename
         ]
         self._refresh_sell_treeview()
+        self._save_sell_items_meta()
 
     def _move_sell_item(self, direction):
         """上移/下移物品 (-1=上移, 1=下移)"""
@@ -1103,6 +1109,7 @@ class SettingsWindow:
             return
         items[idx], items[new_idx] = items[new_idx], items[idx]
         self._refresh_sell_treeview()
+        self._save_sell_items_meta()
         # 重新选中移动后的项
         children = self.sell_tree.get_children()
         if new_idx < len(children):
