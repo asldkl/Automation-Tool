@@ -248,6 +248,7 @@ DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
 QQ_ACCOUNT_SIGN_IN  = resource_path("picture/wegame_login/QQAccount_Sign-in.png")
 ACCOUNT_SELECT      = resource_path("picture/wegame_login/account_select.png")
 SIGN_IN             = resource_path("picture/wegame_login/Sign-in.png")
+IMAGE_INPUT_FIELD   = resource_path("picture/wegame_login/Input.png")
 
 # 游戏内导航
 Hazard_Operations   = resource_path("picture/Navigation/hazard_operations.png")
@@ -344,6 +345,9 @@ TEMPLATE_CAPTURE_LIST = [
     ("IMAGE_LOGIN_BTN",      "picture/wegame_login/login_btn.png",      "WeGame 登录按钮",     "在 WeGame 登录界面，截取「登录」按钮"),
     ("DELTA_GAME_ICON",      "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",     "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
+    ("ACCOUNT_SELECT",       "picture/wegame_login/account_select.png", "WeGame 账号选择框",   "在 WeGame 登录界面，截取账号选择框"),
+    ("IMAGE_INPUT_FIELD",    "picture/wegame_login/Input.png",          "WeGame 密码输入框",   "在 WeGame 登录界面，截取密码输入框"),
+    ("SIGN_IN",              "picture/wegame_login/Sign-in.png",        "WeGame 登录确认按钮", "在 WeGame 登录界面，截取「登录」确认按钮"),
     ("Hazard_Operations",    "picture/Navigation/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
     ("Special_Ops",          "picture/Navigation/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),
     ("Tech_Center",          "picture/Facility_Controls/tech_center.png",     "技术中心",           "在特勤处界面，截取「技术中心」设施图标"),

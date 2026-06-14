@@ -581,7 +581,7 @@ class SettingsWindow:
         frame_login = ttk.LabelFrame(parent, text="  账号登录测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_login.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_login, text="测试 WeGame QQ 账号登录流程（输入游戏账号名称）",
+        ttk.Label(frame_login, text="测试 WeGame 直接登录流程（输入游戏账号名称）",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         login_btn_frame = ttk.Frame(frame_login, style='SettingsInner.TFrame')
@@ -606,12 +606,12 @@ class SettingsWindow:
         img_btn_frame = ttk.Frame(frame_img, style='SettingsInner.TFrame')
         img_btn_frame.pack(fill=tk.X)
 
-        ttk.Button(img_btn_frame, text="测试 Account Sign-in", style='TButton',
-                   command=lambda: self._test_image_recognition("QQ_ACCOUNT_LOGIN"), width=20).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(img_btn_frame, text="测试 account_select", style='TButton',
-                   command=lambda: self._test_image_recognition("QQ_ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
+                   command=lambda: self._test_image_recognition("ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(img_btn_frame, text="测试 Input", style='TButton',
-                   command=lambda: self._test_image_recognition("QQ_INPUT_FIELD"), width=12).pack(side=tk.LEFT)
+                   command=lambda: self._test_image_recognition("IMAGE_INPUT_FIELD"), width=12).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(img_btn_frame, text="测试 Sign-in", style='TButton',
+                   command=lambda: self._test_image_recognition("SIGN_IN"), width=14).pack(side=tk.LEFT)
 
         self._dev_img_status = ttk.Label(frame_img, text="", style='SettingsSmall.TLabel')
         self._dev_img_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
@@ -620,14 +620,16 @@ class SettingsWindow:
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_kb, text="测试 PyDirectInput 驱动级键盘是否可用",
+        ttk.Label(frame_kb, text="测试 Interception / PyDirectInput 驱动级键盘",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         kb_btn_frame = ttk.Frame(frame_kb, style='SettingsInner.TFrame')
         kb_btn_frame.pack(fill=tk.X)
 
-        ttk.Button(kb_btn_frame, text="检测驱动键盘状态", style='TButton',
-                   command=self._test_ola_status, width=16).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(kb_btn_frame, text="检测键盘状态", style='TButton',
+                   command=self._test_ola_status, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(kb_btn_frame, text="测试 Interception", style='TButton',
+                   command=self._test_interception_input, width=16).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(kb_btn_frame, text="测试输入", style='TButton',
                    command=self._test_keyboard_input, width=10).pack(side=tk.LEFT)
 
@@ -675,7 +677,7 @@ class SettingsWindow:
         self._dev_win_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
     def _test_account_login(self):
-        """测试账号登录流程"""
+        """测试账号登录流程（WeGame 直接登录）"""
         game_account = self._dev_login_account_var.get().strip()
         if not game_account:
             self._dev_login_status.config(text="请输入游戏账号名称", foreground="#e74c3c")
@@ -692,7 +694,7 @@ class SettingsWindow:
             self._dev_login_status.config(text=f"游戏账号 {game_account} 未找到或未设置", foreground="#e74c3c")
             return
 
-        self._dev_login_status.config(text=f"正在测试登录 {game_account}...", foreground="#3498db")
+        self._dev_login_status.config(text=f"正在测试 WeGame 登录 {game_account}...", foreground="#3498db")
         self.win.update()
 
         # 在新线程中执行测试
@@ -700,13 +702,13 @@ class SettingsWindow:
         def _run_test():
             try:
                 import automation_runner
-                result = automation_runner._login_wegame_account(self.app, game_account, 0, 1, [])
+                result = automation_runner._login_account(self.app, game_account, 0, 1, [])
                 if result:
                     self.win.after(0, lambda: self._dev_login_status.config(
-                        text=f"✓ 登录测试成功！", foreground="#27ae60"))
+                        text=f"✓ WeGame 登录测试成功！", foreground="#27ae60"))
                 else:
                     self.win.after(0, lambda: self._dev_login_status.config(
-                        text=f"✗ 登录测试失败", foreground="#e74c3c"))
+                        text=f"✗ WeGame 登录测试失败", foreground="#e74c3c"))
             except Exception as e:
                 self.win.after(0, lambda: self._dev_login_status.config(
                     text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
@@ -744,13 +746,26 @@ class SettingsWindow:
     def _test_ola_status(self):
         """测试驱动键盘状态"""
         try:
+            import interception_keyboard
             import driver_keyboard
-            available = driver_keyboard.is_available()
-            backend = driver_keyboard.get_backend()
-            if available:
-                self._dev_kb_status.config(text=f"✓ 驱动级键盘可用 (后端: {backend})", foreground="#27ae60")
+            inter_ok = interception_keyboard.is_available()
+            inter_backend = interception_keyboard.get_backend()
+            di_ok = driver_keyboard.is_available()
+            di_backend = driver_keyboard.get_backend()
+            parts = []
+            if inter_ok:
+                parts.append(f"Interception ✓")
             else:
-                self._dev_kb_status.config(text="✗ 驱动级键盘不可用，将使用 pyautogui 回退", foreground="#f39c12")
+                parts.append(f"Interception ✗")
+            if di_ok:
+                parts.append(f"PyDirectInput ✓")
+            else:
+                parts.append(f"PyDirectInput ✗")
+            status = " | ".join(parts)
+            login_kb = inter_backend if inter_ok else di_backend
+            self._dev_kb_status.config(
+                text=f"{status}  |  登录使用: {login_kb}",
+                foreground="#27ae60" if (inter_ok or di_ok) else "#f39c12")
         except Exception as e:
             self._dev_kb_status.config(text=f"✗ 检测异常: {e}", foreground="#e74c3c")
 
@@ -771,6 +786,38 @@ class SettingsWindow:
                 pyautogui.typewrite("test123", interval=0.05)
                 self.win.after(0, lambda: self._dev_kb_status.config(
                     text="✓ 键盘输入测试完成", foreground="#27ae60"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_kb_status.config(
+                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run_test, daemon=True).start()
+
+    def _test_interception_input(self):
+        """测试 Interception 驱动级键盘输入"""
+        self._dev_kb_status.config(text="正在测试 Interception 输入...", foreground="#3498db")
+        self.win.update()
+
+        import threading
+        def _run_test():
+            try:
+                import interception_keyboard
+                if not interception_keyboard.is_available():
+                    self.win.after(0, lambda: self._dev_kb_status.config(
+                        text="✗ Interception 不可用，请安装驱动并放置 interception.dll", foreground="#e74c3c"))
+                    return
+
+                self.win.after(0, lambda: self._dev_kb_status.config(
+                    text="3秒后开始 Interception 输入测试，请将焦点放到目标窗口...", foreground="#3498db"))
+                time.sleep(3)
+
+                test_text = "test123abc"
+                result = interception_keyboard.send_string(test_text, interval=0.03)
+                if result:
+                    self.win.after(0, lambda: self._dev_kb_status.config(
+                        text=f"✓ Interception 输入完成: '{test_text}'", foreground="#27ae60"))
+                else:
+                    self.win.after(0, lambda: self._dev_kb_status.config(
+                        text="✗ Interception 输入失败", foreground="#e74c3c"))
             except Exception as e:
                 self.win.after(0, lambda: self._dev_kb_status.config(
                     text=f"✗ 测试异常: {e}", foreground="#e74c3c"))

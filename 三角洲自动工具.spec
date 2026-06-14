@@ -9,7 +9,7 @@ _crypt_datas, _crypt_binaries, _crypt_hiddenimports = collect_all('cryptography'
 a = Analysis(
     ['main.py'],
     pathex=[r'C:\Users\Administrator\Desktop\mian\Automation-Tool-main\Automation-Tool-main'],
-    binaries=_rapidocr_binaries + _onnxrt_binaries + _crypt_binaries,
+    binaries=_rapidocr_binaries + _onnxrt_binaries + _crypt_binaries + [('interception.dll', '.')],
     datas=[('picture', 'picture'), ('picture\\produce', 'picture\\produce'),
            ('picture\\qq_login', 'picture\\qq_login'), ('picture\\One_Click_Sell', 'picture\\One_Click_Sell'),
            ('picture\\email', 'picture\\email'),
@@ -20,7 +20,7 @@ a = Analysis(
            ('picture\\icon', 'picture\\icon')] + _rapidocr_datas + _onnxrt_datas + _crypt_datas,
     hiddenimports=[
         'config', 'utils', 'settings_window', 'template_capture', 'crypto_utils', 'cooldown_manager', 'automation', 'machine_fingerprint', 'relative_mouse_move',
-        'email_notifier', 'account_manager', 'scheduler', 'cooldown_watcher', 'server_client', 'automation_runner', 'asset_db', 'credential_crypto',
+        'email_notifier', 'account_manager', 'scheduler', 'cooldown_watcher', 'server_client', 'automation_runner', 'asset_db', 'credential_crypto', 'interception_keyboard',
         'cryptography', 'cryptography.fernet', 'cryptography.hazmat.primitives.kdf.pbkdf2',
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',

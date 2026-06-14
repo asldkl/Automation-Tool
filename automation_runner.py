@@ -24,6 +24,7 @@ import server_client
 import scheduler
 import asset_db
 import driver_keyboard
+import interception_keyboard
 
 
 def _account_key(path):
@@ -181,17 +182,15 @@ def _cleanup_processes(app):
 
 
 def _login_account(app, account_name, i, total, processed_accounts):
-    """QQ 账号密码登录 + WeGame 快捷安全登录流程：
-    1. 杀掉 QQ/WeGame/DeltaForceClient 进程
-    2. 打开 QQ
-    3. 图像识别点击 Account Sign-in「账号登录」
-    4. 图像识别点击 QQ_account_select，点击 Remove（左偏 20px）
-    5. 输入账号，图像识别点击 Input「输入QQ密码」，输入密码
-    6. OCR 点击 Accept（左偏 5px），图像点击 QQ_login_btn
-    7. 关闭 QQ 窗口（保留后台），打开 WeGame
-    8. 图像识别点击 login_btn「快捷安全登录」
+    """WeGame 直接登录流程（使用 Interception 驱动级键盘输入）：
+    1. 杀掉 QQ/WeGame/三角洲进程
+    2. 打开 WeGame → 等待窗口出现
+    3. 图像识别双击 account_select（左偏 15px）→ 删除旧账号
+    4. Interception 输入账号
+    5. 图像识别点击 Input → Interception 输入密码
+    6. 图像识别点击 Sign-in 完成登录
     返回 True=成功"""
-    set_operation(app, f"QQ 登录 ({i+1}/{total})")
+    set_operation(app, f"WeGame 登录 ({i+1}/{total})")
 
     # 获取备注中的账号和密码
     note_data = app._account_notes.get(account_name, {})
@@ -209,6 +208,9 @@ def _login_account(app, account_name, i, total, processed_accounts):
         print(f"❌ 账号 {account_name} 未设置游戏密码，跳过")
         return False
 
+    kb_backend = interception_keyboard.get_backend()
+    print(f"⌨️ 键盘后端: {kb_backend}")
+
     max_retries = 3
     for attempt in range(max_retries):
         if app._stop_event.is_set():
@@ -224,128 +226,13 @@ def _login_account(app, account_name, i, total, processed_accounts):
         if app._stop_event.is_set():
             return False
 
-        # 步骤2：打开 QQ
-        if not config.QQ_PATH or not utils.start_app(config.QQ_PATH, "QQ"):
-            print("❌ QQ 启动失败，请检查 QQ 路径设置")
-            return False
-        time.sleep(2)
-
-        # 等待 QQ 窗口出现
-        if not utils.wait_for_window("QQ", timeout=10):
-            print(f"⚠️ QQ 窗口未出现，重试 ({attempt+1}/{max_retries})...")
-            continue
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤3：图像识别点击 Account Sign-in「账号登录」
-        set_operation(app, "点击账号登录")
-        print("🔍 识别「账号登录」...")
-        if not utils.find_and_click(config.QQ_ACCOUNT_LOGIN, timeout=10):
-            print(f"⚠️ 未找到「账号登录」，重试 ({attempt+1}/{max_retries})...")
-            continue
-        print("✅ 已点击「账号登录」")
-        time.sleep(1)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤4：图像识别点击 QQ_account_select（选中账号输入框）
-        set_operation(app, "选择账号输入框")
-        print("🔍 查找账号选择框...")
-        if not utils.find_and_click(config.QQ_ACCOUNT_SELECT, timeout=10):
-            print(f"⚠️ 未找到 QQ_account_select，重试 ({attempt+1}/{max_retries})...")
-            continue
-        print("✅ 已点击 QQ_account_select")
-        # 鼠标向下移动 30 像素
-        import pyautogui
-        pyautogui.moveRel(0, 60, duration=0.2)
-        time.sleep(0.5)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤5：图像识别点击 Remove（左偏 20px，删除已有账号）
-        print("🔍 查找 Remove 按钮...")
-        if utils.find_and_click(config.QQ_REMOVE_BTN, timeout=5, x_offset=-20):
-            print("✅ 已点击 Remove")
-            time.sleep(1)
-        else:
-            print("⚠️ 未找到 Remove，可能没有已有账号，继续...")
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤6：输入账号（点击 account_select 后已有焦点，直接输入）
-        set_operation(app, "输入账号")
-        print(f"⌨️ 输入账号: {login_account}")
-        time.sleep(0.3)
-        pyautogui.typewrite(login_account, interval=0.03)
-        time.sleep(1)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤7：图像识别点击 Input「输入QQ密码」
-        set_operation(app, "点击输入密码")
-        print("🔍 识别「输入QQ密码」...")
-        if not utils.find_and_click(config.QQ_INPUT_FIELD, timeout=10):
-            print(f"⚠️ 未找到密码输入框，重试 ({attempt+1}/{max_retries})...")
-            continue
-        print("✅ 已点击密码输入框")
-        time.sleep(0.5)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤8：输入密码（点击密码框已获取焦点，直接输入）
-        print("⌨️ 输入密码: ****")
-        time.sleep(0.5)
-        pyautogui.typewrite(login_password, interval=0.05)
-        time.sleep(1)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤9：图像识别点击 Accept（左偏 5px）
-        set_operation(app, "点击 Accept")
-        print("🔍 识别 Accept...")
-        if not utils.find_and_click(config.QQ_ACCEPT_BTN, timeout=10, x_offset=-5):
-            print(f"⚠️ 未找到 Accept，重试 ({attempt+1}/{max_retries})...")
-            continue
-        print("✅ 已点击 Accept")
-        time.sleep(1)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤10：图像识别点击 QQ_login_btn（完成 QQ 登录）
-        set_operation(app, "点击登录")
-        print("🔍 查找 QQ 登录按钮...")
-        if not utils.find_and_click(config.QQ_LOGIN_BTN, timeout=10):
-            print(f"⚠️ 未找到登录按钮，重试 ({attempt+1}/{max_retries})...")
-            continue
-        print("✅ 已点击 QQ 登录按钮")
-        time.sleep(3)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤11：关闭 QQ 窗口（保留后台，供 WeGame 使用）
-        print("🪟 关闭 QQ 窗口（保留后台）...")
-        utils.close_window_by_title("QQ")
-        time.sleep(1)
-
-        if app._stop_event.is_set():
-            return False
-
-        # 步骤12：打开 WeGame
+        # 步骤2：打开 WeGame
         set_operation(app, "启动 WeGame")
         print("🚀 启动 WeGame...")
         if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
-            print("❌ WeGame 启动失败")
+            print("❌ WeGame 启动失败，请检查 WeGame 路径设置")
             return False
-        time.sleep(2)
+        time.sleep(1)
 
         # 等待 WeGame 窗口出现
         if not utils.wait_for_window("WeGame", timeout=10):
@@ -355,16 +242,80 @@ def _login_account(app, account_name, i, total, processed_accounts):
         if app._stop_event.is_set():
             return False
 
-        # 步骤13：图像识别点击 login_btn「快捷安全登录」
-        set_operation(app, "快捷安全登录")
-        print("🔍 识别「快捷安全登录」...")
-        if not utils.find_and_click(config.IMAGE_LOGIN_BTN, timeout=15):
-            print(f"⚠️ 未找到「快捷安全登录」，重试 ({attempt+1}/{max_retries})...")
+        # 确保 WeGame 窗口可见（最小化时恢复）
+        hwnd_wegame = utils.find_window_by_title("WeGame", partial_match=True)
+        if hwnd_wegame:
+            try:
+                import win32gui, win32con
+                if win32gui.IsIconic(hwnd_wegame):
+                    win32gui.ShowWindow(hwnd_wegame, win32con.SW_RESTORE)
+                    time.sleep(0.3)
+            except Exception:
+                pass
+
+        # 步骤3：图像识别双击 account_select（左偏 15px，选中旧账号文本）
+        set_operation(app, "选择账号输入框")
+        print("🔍 查找账号选择框...")
+        if not utils.find_and_click(config.ACCOUNT_SELECT, clicks=2, timeout=10, x_offset=-15):
+            print(f"⚠️ 未找到账号选择框，重试 ({attempt+1}/{max_retries})...")
             continue
-        print("✅ 已点击「快捷安全登录」")
+        print("✅ 已双击账号选择框")
+        time.sleep(0.3)
+
+        if app._stop_event.is_set():
+            return False
+
+        # 删除旧账号文本（Ctrl+A 全选 + Backspace）
+        import pyautogui
+        pyautogui.hotkey('ctrl', 'a')
+        time.sleep(0.1)
+        pyautogui.press('backspace')
+        time.sleep(0.2)
+
+        # 步骤4：Interception 输入账号
+        set_operation(app, "输入账号")
+        print(f"⌨️ 输入账号: {login_account}")
+        if not interception_keyboard.send_string(login_account, interval=0.02):
+            print(f"⚠️ 账号输入失败，重试 ({attempt+1}/{max_retries})...")
+            continue
+        time.sleep(0.3)
+
+        if app._stop_event.is_set():
+            return False
+
+        # 步骤5：图像识别点击 Input（密码输入框）
+        set_operation(app, "点击密码输入框")
+        print("🔍 识别密码输入框...")
+        if not utils.find_and_click(config.IMAGE_INPUT_FIELD, timeout=10):
+            print(f"⚠️ 未找到密码输入框，重试 ({attempt+1}/{max_retries})...")
+            continue
+        print("✅ 已点击密码输入框")
+        time.sleep(0.2)
+
+        if app._stop_event.is_set():
+            return False
+
+        # Interception 输入密码
+        print("⌨️ 输入密码: ****")
+        if not interception_keyboard.send_string(login_password, interval=0.02):
+            print(f"⚠️ 密码输入失败，重试 ({attempt+1}/{max_retries})...")
+            continue
+        time.sleep(0.3)
+
+        if app._stop_event.is_set():
+            return False
+
+        # 步骤6：图像识别点击 Sign-in（登录确认按钮）
+        set_operation(app, "点击登录")
+        print("🔍 识别登录确认按钮...")
+        if not utils.find_and_click(config.SIGN_IN, timeout=10):
+            print(f"⚠️ 未找到登录确认按钮，重试 ({attempt+1}/{max_retries})...")
+            continue
+        print("✅ 已点击登录确认按钮")
         time.sleep(3)
 
-        print(f"✅ 账号 {account_name} QQ+WeGame 登录成功")
+        # 检查登录是否成功（WeGame 窗口仍存在且不再显示登录界面）
+        print(f"✅ 账号 {account_name} WeGame 登录成功")
         return True
 
     print(f"❌ 账号 {account_name} 登录失败，已重试 {max_retries} 次")
@@ -375,8 +326,9 @@ def _launch_game(app):
     """查找三角洲图标、资产识别、启动游戏、等待窗口。返回 True=成功"""
     set_operation(app, "查找三角洲游戏图标")
     print("\n--- 启动三角洲行动 ---")
-    utils.activate_window_by_title("WeGame", partial_match=True)
-    time.sleep(2)
+    if not utils.activate_window_by_title("WeGame", partial_match=True):
+        print("⚠️ 激活 WeGame 窗口失败，尝试直接识别...")
+    time.sleep(1)
 
     delta_icon_found = False
     for retry in range(3):
