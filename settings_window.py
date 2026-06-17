@@ -37,7 +37,6 @@ class SettingsWindow:
 
         # 全局设置变量
         self.wegame_var = tk.StringVar(value=app.settings.get("wegame_path", ""))
-        self.qq_path_var = tk.StringVar(value=app.settings.get("qq_path", ""))
         self.delta_var = tk.StringVar(value=app.settings.get("delta_path", ""))
         self.confidence_var = tk.DoubleVar(value=float(app.settings.get("confidence", 0.7)))
         self.log_var = tk.StringVar(value=app.settings.get("log_save_path", ""))
@@ -60,8 +59,6 @@ class SettingsWindow:
         self.smtp_code_var = tk.StringVar(value=app.settings.get("smtp_code", ""))
         self.sender_email_var = tk.StringVar(value=app.settings.get("sender_email", ""))
         self.receiver_email_var = tk.StringVar(value=app.settings.get("receiver_email", ""))
-        self.smtp_server_var = tk.StringVar(value=app.settings.get("smtp_server", "smtp.qq.com"))
-        self.smtp_port_var = tk.StringVar(value=str(app.settings.get("smtp_port", 465)))
         self.cooldown_email_enabled_var = tk.BooleanVar(value=app.settings.get("cooldown_email_enabled", False))
 
         # 账号列表滚动查找变量
@@ -234,16 +231,6 @@ class SettingsWindow:
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ----- QQ 路径 -----
-        frame_qq = ttk.LabelFrame(parent, text="  QQ 路径  ", style='SettingsCard.TLabelframe', padding=8)
-        frame_qq.pack(fill=tk.X, pady=(0, 8))
-
-        f_qq = ttk.Frame(frame_qq, style='SettingsInner.TFrame')
-        f_qq.pack(fill=tk.X)
-        ttk.Label(f_qq, text="QQ.exe：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        qq_entry = ttk.Entry(f_qq, textvariable=self.qq_path_var, width=45)
-        qq_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
         # ----- 三角洲路径 -----
         frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=8)
         frame2.pack(fill=tk.X, pady=(0, 8))
@@ -407,14 +394,6 @@ class SettingsWindow:
         ttk.Label(row3, text="接收者邮箱：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Entry(row3, textvariable=self.receiver_email_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # SMTP 服务器和端口
-        row3b = ttk.Frame(config_frame, style='SettingsInner.TFrame')
-        row3b.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(row3b, text="SMTP 服务器：", style='Settings.TLabel', width=14).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Entry(row3b, textvariable=self.smtp_server_var, width=25).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(row3b, text="端口：", style='Settings.TLabel', width=6).pack(side=tk.LEFT, padx=(10, 8))
-        ttk.Entry(row3b, textvariable=self.smtp_port_var, width=8).pack(side=tk.LEFT)
-
         # 测试发送按钮
         row4 = ttk.Frame(config_frame, style='SettingsInner.TFrame')
         row4.pack(fill=tk.X, pady=(4, 0))
@@ -457,13 +436,10 @@ class SettingsWindow:
 
         def _send():
             import utils
-            smtp_server = self.smtp_server_var.get().strip() if hasattr(self, 'smtp_server_var') else "smtp.qq.com"
-            smtp_port = int(self.smtp_port_var.get()) if hasattr(self, 'smtp_port_var') else 465
             success, msg = utils.send_email_notification(
                 code, sender, receiver,
                 "三角洲自动化工具 - 测试邮件",
-                "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>",
-                smtp_server, smtp_port
+                "<h3>测试邮件</h3><p>如果您收到此邮件，说明邮件通知功能配置成功！</p>"
             )
             self.win.after(0, lambda: self._on_test_email_result(success, msg))
 
@@ -1430,7 +1406,6 @@ class SettingsWindow:
     def _save(self):
         # 全局设置
         self.app.settings["wegame_path"] = self.wegame_var.get()
-        self.app.settings["qq_path"] = self.qq_path_var.get()
         self.app.settings["delta_path"] = self.delta_var.get()
         self.app.settings["confidence"] = round(self.confidence_var.get(), 2)
         self.app.settings["log_save_path"] = self.log_var.get()
@@ -1459,11 +1434,6 @@ class SettingsWindow:
         self.app.settings["sender_email"] = self.sender_email_var.get()
         self.app.settings["receiver_email"] = self.receiver_email_var.get()
         self.app.settings["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
-        self.app.settings["smtp_server"] = self.smtp_server_var.get().strip() or "smtp.qq.com"
-        try:
-            self.app.settings["smtp_port"] = int(self.smtp_port_var.get())
-        except ValueError:
-            self.app.settings["smtp_port"] = 465
 
         # 游戏启动等待
         self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
@@ -1502,7 +1472,6 @@ class SettingsWindow:
         config.APP_SETTINGS.update(self.app.settings)
         config.save_settings(config.APP_SETTINGS)
         config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
-        config.QQ_PATH = config.APP_SETTINGS.get("qq_path", "")
         config.CONFIDENCE = config.APP_SETTINGS["confidence"]
         self.app.update_confidence_display()
 

@@ -47,6 +47,17 @@ def record_asset(account, value_str):
     conn.commit()
 
 
+def update_asset_record(account, timestamp, new_value_str):
+    """更新指定账号在指定时间的资产记录"""
+    num = parse_asset_value(new_value_str)
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE asset_records SET value = ?, value_num = ? WHERE account = ? AND timestamp = ?",
+        (new_value_str, num, account, timestamp),
+    )
+    conn.commit()
+
+
 def query_total_change(days):
     """查询最近 N 天所有账号的资产变化总和。
     返回 (total_change_num, detail_list)

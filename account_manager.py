@@ -1060,6 +1060,8 @@ def show_asset_history(app):
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
 
     # 填充数据（从新到旧）
+    # 建立 tree item -> history index 的映射
+    item_to_history_idx = {}
     for i in range(len(history) - 1, -1, -1):
         entry = history[i]
         time_str = _strip_year(entry.get("time", ""))
@@ -1076,7 +1078,78 @@ def show_asset_history(app):
                 diff_str = "—"
         else:
             diff_str = "—"
-        tree.insert("", tk.END, values=(time_str, value, diff_str))
+        item_id = tree.insert("", tk.END, values=(time_str, value, diff_str))
+        item_to_history_idx[item_id] = i
+
+    # 双击编辑资产值
+    def _on_double_click(event):
+        region = tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+        column = tree.identify_column(event.x)
+        row_id = tree.identify_row(event.y)
+        if not row_id or column != "#2":  # 只允许编辑第2列（资产）
+            return
+
+        hist_idx = item_to_history_idx.get(row_id)
+        if hist_idx is None:
+            return
+
+        bbox = tree.bbox(row_id, column)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        current_val = tree.item(row_id, "values")[1]
+
+        entry_widget = ttk.Entry(tree, width=10)
+        entry_widget.insert(0, current_val)
+        entry_widget.select_range(0, tk.END)
+        entry_widget.place(x=x, y=y, width=w, height=h)
+        entry_widget.focus_set()
+
+        def _confirm(e=None):
+            new_val = entry_widget.get().strip()
+            entry_widget.destroy()
+            if not new_val or new_val == current_val:
+                return
+            # 更新内存中的历史记录
+            history[hist_idx]["value"] = new_val
+            # 更新 SQLite
+            raw_time = history[hist_idx].get("time", "")
+            asset_db.update_asset_record(account_name, raw_time, new_val)
+            # 更新当前资产为最新值（history 末尾）
+            app._account_assets[account_name] = history[-1].get("value", "0")
+            # 刷新弹窗列表
+            _refresh_tree()
+            # 刷新主界面账号列表
+            refresh_account_tree(app)
+
+        def _refresh_tree():
+            tree.delete(*tree.get_children())
+            item_to_history_idx.clear()
+            for i in range(len(history) - 1, -1, -1):
+                entry = history[i]
+                t = _strip_year(entry.get("time", ""))
+                v = entry.get("value", "0")
+                if i > 0:
+                    pv = _parse_asset_value(history[i - 1].get("value", "0"))
+                    cv = _parse_asset_value(v)
+                    d = cv - pv
+                    if d > 0:
+                        ds = f"+{_format_asset_num(d)}"
+                    elif d < 0:
+                        ds = f"{_format_asset_num(d)}"
+                    else:
+                        ds = "—"
+                else:
+                    ds = "—"
+                iid = tree.insert("", tk.END, values=(t, v, ds))
+                item_to_history_idx[iid] = i
+
+        entry_widget.bind("<Return>", _confirm)
+        entry_widget.bind("<FocusOut>", _confirm)
+
+    tree.bind("<Double-1>", _on_double_click)
 
     # 底部统计
     if len(history) >= 2:

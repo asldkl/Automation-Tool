@@ -216,11 +216,12 @@ class TestCredentialCrypto(unittest.TestCase):
         self.assertTrue(is_encrypted(encrypted))
 
     def test_encrypt_settings(self):
-        """加密设置中的敏感字段"""
+        """加密设置中的敏感字段（smtp_code 不加密）"""
         from credential_crypto import encrypt_settings, is_encrypted
         settings = {"smtp_code": "my_code", "confidence": 0.7}
         enc = encrypt_settings(settings)
-        self.assertTrue(is_encrypted(enc["smtp_code"]))
+        self.assertFalse(is_encrypted(enc["smtp_code"]))  # smtp_code 不再加密
+        self.assertEqual(enc["smtp_code"], "my_code")
         self.assertEqual(enc["confidence"], 0.7)
 
     def test_decrypt_settings(self):
@@ -368,7 +369,7 @@ class TestEmailNotifier(unittest.TestCase):
         }
         result = _get_email_config(app)
         self.assertIsNotNone(result)
-        self.assertEqual(result, ("test_code", "sender@test.com", "receiver@test.com", "smtp.qq.com", 465))
+        self.assertEqual(result, ("test_code", "sender@test.com", "receiver@test.com"))
 
     def test_get_email_config_disabled(self):
         """邮箱未启用时应返回 None"""

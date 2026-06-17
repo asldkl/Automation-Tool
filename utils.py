@@ -14,8 +14,7 @@ import win32gui
 import win32con
 import config
 from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS,
-                    IMAGE_LOGIN_BTN,
-                    QQ_ACCOUNT_SELECT, QQ_LOGIN_BTN)
+                    IMAGE_LOGIN_BTN)
 import relative_mouse_move
 
 
@@ -568,79 +567,6 @@ def wake_display():
     print("🖥️ 已尝试唤醒显示器")
 
 
-def qq_quick_login(qq_number_img):
-    """
-    使用图像识别完成 QQ 自动登录：
-    点击账号选择 → 滚动到底部 → 向上查找目标 QQ 号 → 点击登录按钮
-    使用多尺度匹配，解决模板与屏幕分辨率不一致的问题
-    """
-    print("🔍 点击 QQ 账号选择按钮...")
-    success, btn_pos = find_and_click_pos(QQ_ACCOUNT_SELECT, timeout=15)
-    if not success:
-        print("❌ 未找到 QQ 账号选择按钮")
-        return False
-    time.sleep(1)
-
-    # 读取滚动设置
-    scroll_distance = config.APP_SETTINGS.get("qq_mouse_move_distance", 100)
-    scroll_down_amount = config.APP_SETTINGS.get("qq_scroll_down_amount", config.APP_SETTINGS.get("scroll_amount", 100))
-    scroll_up_amount = config.APP_SETTINGS.get("qq_scroll_up_amount", config.APP_SETTINGS.get("scroll_amount", 100))
-    scroll_down_times = config.APP_SETTINGS.get("qq_scroll_down_times", 1)
-    scroll_up_times = config.APP_SETTINGS.get("qq_scroll_up_times", 3)
-
-    # 先尝试直接匹配（不滚动）
-    print("🔍 选择 QQ 号（多尺度匹配）...")
-    if find_and_click_multiscale(qq_number_img, timeout=3):
-        time.sleep(0.5)
-        print("🔍 点击 QQ 登录按钮...")
-        if not find_and_click(QQ_LOGIN_BTN, timeout=10):
-            print("❌ 未找到 QQ 登录按钮")
-            return False
-        print("✅ QQ 自动登录完成")
-        return True
-
-    # 未直接找到，先连续快速滚动到列表底部
-    if btn_pos:
-        scroll_x, scroll_y = btn_pos
-        print(f"🔍 目标 QQ 号未直接找到，快速滚动到列表底部（{scroll_down_times} 次）...")
-        smooth_move_to(scroll_x, scroll_y + scroll_distance, duration=0.1)
-        time.sleep(0.2)
-        for _ in range(scroll_down_times):
-            pyautogui.scroll(-scroll_down_amount)  # 向下滚动，无间隔连续到底
-
-        # 到底后尝试匹配
-        time.sleep(0.5)
-        print("🔍 到达底部，尝试匹配...")
-        if find_and_click_multiscale(qq_number_img, timeout=3):
-            time.sleep(0.5)
-            print("🔍 点击 QQ 登录按钮...")
-            if not find_and_click(QQ_LOGIN_BTN, timeout=10):
-                print("❌ 未找到 QQ 登录按钮")
-                return False
-            print("✅ QQ 自动登录完成")
-            return True
-
-        # 底部未找到，从底部向上逐次查找
-        print(f"🔍 底部未找到，从底部向上查找目标 QQ 号（最多 {scroll_up_times} 次）...")
-        for up_attempt in range(scroll_up_times):
-            smooth_move_to(scroll_x, scroll_y + scroll_distance, duration=0.1)
-            time.sleep(0.2)
-            pyautogui.scroll(scroll_up_amount)  # 向上滚动
-            time.sleep(0.8)
-            if find_and_click_multiscale(qq_number_img, timeout=3):
-                time.sleep(0.5)
-                print("🔍 点击 QQ 登录按钮...")
-                if not find_and_click(QQ_LOGIN_BTN, timeout=10):
-                    print("❌ 未找到 QQ 登录按钮")
-                    return False
-                print("✅ QQ 自动登录完成")
-                return True
-        print("❌ 向上查找后仍未找到目标 QQ 号")
-        return False
-    else:
-        print("❌ 未找到目标 QQ 号")
-        return False
-
 def schedule_startup_task(time_str):
     """
     使用 Windows Task Scheduler 创建每日定时任务。
@@ -704,17 +630,14 @@ def remove_startup_task():
 
 
 # ==================== 邮件通知 ====================
-def send_email_notification(smtp_code, sender_email, receiver_email, subject, body,
-                            smtp_server="smtp.qq.com", smtp_port=465):
+def send_email_notification(smtp_code, sender_email, receiver_email, subject, body):
     """
-    使用 SMTP 发送邮件通知（含重试）。
+    使用 QQ 邮箱 SMTP 发送邮件通知（含重试）。
     smtp_code: SMTP 授权码
     sender_email: 发送者邮箱
     receiver_email: 接收者邮箱
     subject: 邮件主题
     body: 邮件正文（HTML 格式）
-    smtp_server: SMTP 服务器地址（默认 smtp.qq.com）
-    smtp_port: SMTP 端口（默认 465=SSL）
     返回 (success: bool, message: str)
     """
     import smtplib
@@ -731,7 +654,7 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
     last_error = ""
     for attempt in range(max_retries):
         try:
-            with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=60) as server:
+            with smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=60) as server:
                 server.login(sender_email, smtp_code)
                 server.sendmail(sender_email, receiver_email, msg.as_string())
             return True, "邮件发送成功"

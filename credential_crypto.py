@@ -66,22 +66,25 @@ def is_encrypted(value):
 
 
 def encrypt_settings(settings):
-    """加密设置中的敏感字段，返回新字典"""
+    """加密设置中的敏感字段，返回新字典（smtp_code 不加密）"""
     encrypted = dict(settings)
-    sensitive_keys = ["smtp_code"]
+    sensitive_keys = []  # smtp_code 不再加密
     for key in sensitive_keys:
         val = encrypted.get(key, "")
         if val and not is_encrypted(val):
             encrypted[key] = encrypt_value(val)
+    # 如果已有的 smtp_code 被加密过，解密回明文
+    smtp_val = encrypted.get("smtp_code", "")
+    if smtp_val and is_encrypted(smtp_val):
+        encrypted["smtp_code"] = decrypt_value(smtp_val)
     return encrypted
 
 
 def decrypt_settings(settings):
-    """解密设置中的敏感字段，返回新字典"""
+    """解密设置中的敏感字段，返回新字典（smtp_code 不加密）"""
     decrypted = dict(settings)
-    sensitive_keys = ["smtp_code"]
-    for key in sensitive_keys:
-        val = decrypted.get(key, "")
-        if val:
-            decrypted[key] = decrypt_value(val)
+    # smtp_code 不再加密，但如果旧版本已加密过，解密回明文
+    smtp_val = decrypted.get("smtp_code", "")
+    if smtp_val and is_encrypted(smtp_val):
+        decrypted["smtp_code"] = decrypt_value(smtp_val)
     return decrypted

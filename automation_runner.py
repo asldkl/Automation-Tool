@@ -38,6 +38,26 @@ def _account_key(path):
     return os.path.splitext(name)[0]
 
 
+def _ensure_wegame_focused():
+    """确保 WeGame 窗口在前台，失去焦点时自动重新激活。返回 True=已聚焦"""
+    import win32gui
+    hwnd = utils.find_window_by_title("WeGame", partial_match=True)
+    if not hwnd:
+        return False
+    try:
+        if win32gui.IsIconic(hwnd):
+            import win32con
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.3)
+        foreground = win32gui.GetForegroundWindow()
+        if foreground != hwnd:
+            utils.activate_window_by_title("WeGame", partial_match=True)
+            time.sleep(0.3)
+        return True
+    except Exception:
+        return utils.activate_window_by_title("WeGame", partial_match=True)
+
+
 # 缓存 OCR 引擎实例（首次约2-3秒，后续毫秒级）
 _ocr_engine = None
 
@@ -106,6 +126,7 @@ def start_run(app):
     app.progress['value'] = 0
     app.stats_label.config(text="")
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
+    app._last_account_error = ""
     app.start_btn.config(state='disabled')
     app.stop_btn.config(state='normal')
     app.log_area.configure(state='normal')
@@ -206,10 +227,14 @@ def _login_account(app, account_name, i, total, processed_accounts):
         login_password = ""
 
     if not login_account:
-        print(f"❌ 账号 {account_name} 未设置游戏账号，跳过")
+        msg = "未设置游戏账号"
+        print(f"❌ 账号 {account_name} {msg}，跳过")
+        app._last_account_error = msg
         return False
     if not login_password:
-        print(f"❌ 账号 {account_name} 未设置游戏密码，跳过")
+        msg = "未设置游戏密码"
+        print(f"❌ 账号 {account_name} {msg}，跳过")
+        app._last_account_error = msg
         return False
 
     kb_backend = interception_keyboard.get_backend()
@@ -234,7 +259,9 @@ def _login_account(app, account_name, i, total, processed_accounts):
         set_operation(app, "启动 WeGame")
         print("🚀 启动 WeGame...")
         if not config.WEGAME_PATH or not utils.start_app(config.WEGAME_PATH, "WeGame"):
-            print("❌ WeGame 启动失败，请检查 WeGame 路径设置")
+            msg = "WeGame 启动失败，请检查路径设置"
+            print(f"❌ {msg}")
+            app._last_account_error = msg
             return False
         time.sleep(1)
 
@@ -276,9 +303,12 @@ def _login_account(app, account_name, i, total, processed_accounts):
         pyautogui.press('backspace')
         time.sleep(0.2)
 
-        # 步骤4：Interception 输入账号
+        # 步骤4：Interception 输入账号（确保 WeGame 窗口聚焦）
         set_operation(app, "输入账号")
         print(f"⌨️ 输入账号: {login_account}")
+        if not _ensure_wegame_focused():
+            print(f"⚠️ WeGame 窗口失去焦点，重试 ({attempt+1}/{max_retries})...")
+            continue
         if not interception_keyboard.send_string(login_account, interval=0.02):
             print(f"⚠️ 账号输入失败，重试 ({attempt+1}/{max_retries})...")
             continue
@@ -299,8 +329,11 @@ def _login_account(app, account_name, i, total, processed_accounts):
         if app._stop_event.is_set():
             return False
 
-        # Interception 输入密码
+        # Interception 输入密码（确保 WeGame 窗口聚焦）
         print("⌨️ 输入密码: ****")
+        if not _ensure_wegame_focused():
+            print(f"⚠️ WeGame 窗口失去焦点，重试 ({attempt+1}/{max_retries})...")
+            continue
         if not interception_keyboard.send_string(login_password, interval=0.02):
             print(f"⚠️ 密码输入失败，重试 ({attempt+1}/{max_retries})...")
             continue
@@ -322,7 +355,8 @@ def _login_account(app, account_name, i, total, processed_accounts):
         print(f"✅ 账号 {account_name} WeGame 登录成功")
         return True
 
-    print(f"❌ 账号 {account_name} 登录失败，已重试 {max_retries} 次")
+    app._last_account_error = f"登录失败，已重试 {max_retries} 次"
+    print(f"❌ 账号 {account_name} {app._last_account_error}")
     return False
 
 
@@ -344,7 +378,9 @@ def _launch_game(app):
         print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
         time.sleep(3)
     if not delta_icon_found:
-        print("❌ 多次重试后仍未找到三角洲游戏图标，跳过此账号")
+        msg = "未找到三角洲游戏图标"
+        print(f"❌ 多次重试后仍{msg}，跳过此账号")
+        app._last_account_error = msg
         utils.kill_process(config.WEGAME_PROCESS)
         return False
 
@@ -362,7 +398,9 @@ def _launch_game(app):
         print(f"⚠️ 未找到启动按钮，3秒后重试 ({retry+1}/3)...")
         time.sleep(3)
     if not launch_found:
-        print("❌ 多次重试后仍未找到启动按钮，跳过此账号")
+        msg = "未找到游戏启动按钮"
+        print(f"❌ 多次重试后仍{msg}，跳过此账号")
+        app._last_account_error = msg
         utils.kill_process(config.WEGAME_PROCESS)
         return False
 
@@ -392,7 +430,9 @@ def _launch_game(app):
     if not game_operations_wrapper(app):
         if app._stop_event.is_set():
             return False
-        print("❌ 游戏内操作失败，跳过此账号")
+        msg = "游戏内操作失败"
+        print(f"❌ {msg}，跳过此账号")
+        app._last_account_error = msg
         return False
     return not app._stop_event.is_set()
 
@@ -470,7 +510,8 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         processed_accounts.append(f"{account_name} (失败)")
         server_client.update_account_status(app, account_name, "failed")
         if not app._user_stopped_cooldown:
-            email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts)
+            error_msg = getattr(app, '_last_account_error', '未知错误')
+            email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts, error_msg)
     else:
         if app.settings.get("enable_cooldown", False):
             cd_hours = app.settings.get("cooldown_hours", 8)
@@ -481,7 +522,40 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
 
 
 def _wait_and_run_nearby_cooldowns(app, processed_accounts):
-    """检查冷却列表，如果有 5 分钟内到期的账号则等待并运行"""
+    """检查冷却列表：先运行已到期账号，再等待 10 分钟内到期的账号"""
+    # 第一步：检查是否有已到期的账号，直接运行
+    all_cooldowns = cooldown_manager.get_all_cooldowns()
+    now = datetime.datetime.now()
+    expired = []
+    for name, entry in all_cooldowns.items():
+        if entry.get("account_paused") or entry.get("paused"):
+            continue
+        next_run_str = entry.get("next_run_time", "")
+        if not next_run_str:
+            continue
+        try:
+            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+            remaining = (next_run - now).total_seconds()
+            if remaining <= 0:
+                expired.append(name)
+        except Exception:
+            continue
+
+    if expired:
+        print(f"🔔 检测到 {len(expired)} 个已到期账号，立即执行：{', '.join(expired)}")
+        for name in expired:
+            if app._stop_event.is_set():
+                break
+            img_path = None
+            for p in app.qq_account_images:
+                if _account_key(p) == name:
+                    img_path = p
+                    break
+            if img_path:
+                print(f"\n🔔 账号 {name} 冷却已到期，开始执行...")
+                _run_single_account(app, img_path, len(app.qq_account_images), processed_accounts)
+
+    # 第二步：检查 10 分钟内到期的账号，等待执行
     while not app._stop_event.is_set():
         all_cooldowns = cooldown_manager.get_all_cooldowns()
         now = datetime.datetime.now()
@@ -495,7 +569,7 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
             try:
                 next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
                 remaining = (next_run - now).total_seconds()
-                if 0 < remaining <= 300:  # 5 分钟内
+                if 0 < remaining <= 600:  # 10 分钟内
                     nearby.append((remaining, name))
             except Exception:
                 continue
@@ -506,7 +580,7 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
         nearby.sort(key=lambda x: x[0])
         wait_seconds = int(nearby[0][0])
         names = [n for _, n in nearby]
-        print(f"⏳ 检测到 {len(names)} 个账号将在 5 分钟内冷却结束：{', '.join(names)}")
+        print(f"⏳ 检测到 {len(names)} 个账号将在 10 分钟内冷却结束：{', '.join(names)}")
         print(f"⏳ 等待 {wait_seconds} 秒后执行...")
         set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
 
@@ -594,7 +668,6 @@ def run_script_main(app):
     try:
         print(f"🟢 run_script_main() 已启动，ignore_cooldown={app._ignore_cooldown_this_run}")
         total = len(app.qq_account_images)
-        qq_path = app.settings.get("qq_path", "")
 
         if not _validate_daily(app):
             return

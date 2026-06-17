@@ -54,7 +54,7 @@ class TemplateCaptureWizard:
         self.parent = parent
         self.resolution_key = resolution_key
         self.app = app  # 可选，传入时显示出售测试按钮
-        self.capture_list = config.TEMPLATE_CAPTURE_LIST + config.QQ_TEMPLATE_CAPTURE_LIST
+        self.capture_list = config.TEMPLATE_CAPTURE_LIST
         self.status = {}  # var_name -> "pending" | "done"
 
         # 从设置中加载上次的上传状态

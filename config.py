@@ -53,17 +53,30 @@ def get_sell_items():
 
 # ==================== 售卖物品元数据 ====================
 ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
+ITEMS_META_BACKUP = os.path.join(SELL_ITEMS_DIR, "items_meta.backup.json")
 
 def load_sell_items_meta():
     """加载物品元数据，自动同步目录中新增/删除的图片"""
-    # 加载已有元数据
+    import shutil
+    # 加载已有元数据（含备份恢复机制）
     meta = {}
     if os.path.exists(ITEMS_META_PATH):
         try:
             with open(ITEMS_META_PATH, "r", encoding="utf-8") as f:
                 meta = json.load(f)
         except Exception:
-            meta = {}
+            # 主文件损坏，尝试从备份恢复
+            if os.path.exists(ITEMS_META_BACKUP):
+                try:
+                    with open(ITEMS_META_BACKUP, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    # 恢复主文件
+                    shutil.copy2(ITEMS_META_BACKUP, ITEMS_META_PATH)
+                    print("⚠️ items_meta.json 损坏，已从备份恢复")
+                except Exception:
+                    meta = {}
+            else:
+                meta = {}
 
     existing_items = meta.get("items", [])
     existing_filenames = {i["filename"] for i in existing_items}
@@ -104,10 +117,21 @@ def load_sell_items_meta():
     return meta
 
 def save_sell_items_meta(data):
-    """保存物品元数据"""
+    """保存物品元数据（原子写入+备份保护）"""
+    import shutil
     os.makedirs(SELL_ITEMS_DIR, exist_ok=True)
-    with open(ITEMS_META_PATH, "w", encoding="utf-8") as f:
+    # 先写入临时文件，再原子替换（防止写入中途崩溃导致文件损坏）
+    tmp_path = ITEMS_META_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    # 保存前先备份旧文件
+    if os.path.exists(ITEMS_META_PATH):
+        try:
+            shutil.copy2(ITEMS_META_PATH, ITEMS_META_BACKUP)
+        except Exception:
+            pass
+    # 原子替换
+    shutil.move(tmp_path, ITEMS_META_PATH)
 
 # ==================== 默认设置 ====================
 DEFAULT_SETTINGS = {
@@ -119,22 +143,12 @@ DEFAULT_SETTINGS = {
     # 自动关机
     "auto_shutdown_enabled": False,   # 是否启用自动关机
     "auto_shutdown_time": "22:00",    # 关机时间 (HH:MM)
-    # QQ 路径
-    "qq_path": "",                    # QQ 程序路径
     # 邮件通知
     "email_enabled": False,           # 是否启用邮件通知
     "smtp_code": "",                  # SMTP 授权码
     "sender_email": "",               # 发送者邮箱
     "receiver_email": "",             # 接收者邮箱
-    "smtp_server": "smtp.qq.com",     # SMTP 服务器地址
-    "smtp_port": 465,                 # SMTP 端口（465=SSL, 587=STARTTLS）
-    # 账号列表滚动查找设置
-    "qq_mouse_move_distance": 100,    # QQ 账号列表鼠标下移距离（像素）
-    "scroll_amount": 100,             # 滚动幅度（旧字段，兼容）
-    "qq_scroll_down_amount": 300,     # 向下滚动幅度
-    "qq_scroll_up_amount": 200,       # 向上滚动幅度
-    "qq_scroll_down_times": 3,        # 向下滚动到底部的次数（适配不同账号列表长度）
-    "qq_scroll_up_times": 3,          # 向上查找账号的次数（防止错漏账号）
+    # 游戏启动等待
     "game_launch_wait": 0,            # 启动游戏后额外等待时间（秒，0-120）
     "run_on_startup": False,          # 开机立即运行一次程序
     # 一键出售
@@ -306,14 +320,6 @@ Produce_ToolBench   = resource_path("picture/produce/produce_tool_bench.png")
 Produce_ArmorStation = resource_path("picture/produce/produce_armor_station.png")
 Produce_PharmacyStation = resource_path("picture/produce/produce_pharmacy_station.png")
 
-# ==================== QQ 自动登录图片 ====================
-QQ_ACCOUNT_LOGIN   = resource_path("picture/qq_login/Account Sign-in.png")
-QQ_ACCOUNT_SELECT  = resource_path("picture/qq_login/QQ_account_select.png")
-QQ_REMOVE_BTN      = resource_path("picture/qq_login/Remove.png")
-QQ_INPUT_FIELD     = resource_path("picture/qq_login/Input.png")
-QQ_ACCEPT_BTN      = resource_path("picture/qq_login/Accept.png")
-QQ_LOGIN_BTN       = resource_path("picture/qq_login/QQ_login_btn.png")
-
 # ==================== 进程名称 ====================
 WEGAME_PROCESS = "wegame.exe"
 DELTA_PROCESS = "DeltaForce.exe"
@@ -321,7 +327,6 @@ QQ_PROCESS = "QQ.exe"
 
 # ==================== 全局变量（在 main 中设置） ====================
 WEGAME_PATH = ""
-QQ_PATH = ""
 DELTA_PATH = ""
 CONFIDENCE = 0.7
 WAIT_TIME = 0.5
@@ -391,14 +396,4 @@ TEMPLATE_CAPTURE_LIST = [
     ("EMAIL_TRADE_HOUSE",       "picture/email/Trade_House.png",       "交易中心入口",     "在邮箱界面，截取「交易中心」图标"),
     ("EMAIL_CLAIM_ALL",         "picture/email/Claim_All.png",         "全部领取按钮",     "在交易中心界面，截取「全部领取」按钮"),
     ("EMAIL_RECEIVE_COMPLETED", "picture/email/Receive_Completed.png", "领取完成确认按钮", "在领取界面，截取「领取完成」按钮"),
-]
-
-# QQ 登录相关模板
-QQ_TEMPLATE_CAPTURE_LIST = [
-    ("QQ_ACCOUNT_LOGIN",  "picture/qq_login/Account Sign-in.png",   "QQ 账密登录按钮", "在 QQ 登录界面，截取「Account Sign-in」按钮"),
-    ("QQ_ACCOUNT_SELECT", "picture/qq_login/QQ_account_select.png", "QQ 账号选择按钮", "在 QQ 登录界面，截取账号选择按钮"),
-    ("QQ_REMOVE_BTN",     "picture/qq_login/Remove.png",            "QQ 删除按钮",     "在 QQ 登录界面，截取 Remove 图标按钮"),
-    ("QQ_INPUT_FIELD",    "picture/qq_login/Input.png",             "QQ 密码输入框",   "在 QQ 登录界面，截取「Input」密码输入框"),
-    ("QQ_ACCEPT_BTN",     "picture/qq_login/Accept.png",            "QQ 接受按钮",     "在 QQ 登录界面，截取 Accept 图标按钮"),
-    ("QQ_LOGIN_BTN",      "picture/qq_login/QQ_login_btn.png",      "QQ 登录按钮",     "在 QQ 登录界面，截取「登录」按钮"),
 ]

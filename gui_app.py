@@ -98,7 +98,6 @@ class App:
         # 加载设置
         self.settings = config.APP_SETTINGS
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
-        config.QQ_PATH = self.settings.get("qq_path", "")
         config.CONFIDENCE = self.settings["confidence"]
 
         # 服务器验证（异步，不阻塞 UI 线程）
@@ -714,7 +713,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.2.0  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.2.1  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')

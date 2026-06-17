@@ -612,18 +612,18 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.1.4"""
+        """gui_app.py 中版本号应为 v1.2.1"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.1.4", content)
+        self.assertIn("v1.2.1", content)
 
     def test_readme_has_v190_section(self):
-        """README.md 应包含 v1.0.2 更新日志"""
+        """README.md 应包含更新日志"""
         readme_path = os.path.join(os.path.dirname(__file__), "README.md")
         with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.0.1", content)
+        self.assertIn("v1.2.0", content)
         self.assertIn("cooldown_run_immediately", content)
 
     def test_readme_has_cooldown_config(self):
@@ -640,14 +640,14 @@ class TestCodeConsistency(unittest.TestCase):
             content = f.read()
         self.assertIn('"cooldown_run_immediately"', content)
 
-    def test_gui_app_has_degradation_logic(self):
-        """automation_runner.py 应包含QQ降级逻辑"""
+    def test_gui_app_has_wegame_login(self):
+        """automation_runner.py 应包含 WeGame 直接登录逻辑"""
         runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("qq_activate_fail_count", content)
-        self.assertIn("降级方案", content)
-        self.assertIn("QQ_ACCOUNT_SELECT", content)
+        self.assertIn("_login_account", content)
+        self.assertIn("interception_keyboard", content)
+        self.assertIn("ACCOUNT_SELECT", content)
 
 
 # ==================== Test 12: Bug修复验证 ====================

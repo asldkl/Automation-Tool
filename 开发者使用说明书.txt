@@ -2,8 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.2.0
-日期: 2026-06-14
+版本: v1.2.1
+日期: 2026-06-15
 作者: 开发团队
 
 ================================================================================
@@ -600,6 +600,19 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
+v1.2.1 (2026-06-17)
+----------------------------------------
+
+- 资产记录双击编辑：show_asset_history() 中双击「资产」列可手动修改数值，同步更新内存、SQLite 和主界面
+- 失败邮件含错误日志：send_account_failure_email 新增 error_msg 参数，邮件显示具体错误原因
+- WeGame 登录窗口聚焦保护：新增 _ensure_wegame_focused()，输入账号密码前检查窗口焦点，失去聚焦自动激活
+- SMTP 不加密：从 encrypt_settings/decrypt_settings 中移除 smtp_code，已加密的旧值自动解密回明文
+- 冷却到期优先运行：全部运行完后先检测已到期账号直接运行，再检测 10 分钟内到期的账号等待执行
+- 删除 QQ 无效设置：移除 qq_path、qq_scroll_* 等配置，移除 QQ 路径 UI、QQ_TEMPLATE_CAPTURE_LIST、qq_quick_login()
+- 售卖物品元数据保护：save_sell_items_meta 改为原子写入（临时文件+shutil.move），保存前自动备份旧文件
+- 测试更新：修复 test_gui_version_updated、test_readme_has_v190_section、test_gui_app_has_wegame_login 等断言
+
+----------------------------------------
 v1.2.0 (2026-06-14)
 ----------------------------------------
 
@@ -615,7 +628,6 @@ v1.2.0 (2026-06-14)
   - 提取 DELTA_TITLES 模块级常量，消除 _launch_game 和 _close_game 中的重复定义
   - 消除 _launch_game 中连续两次 time.sleep(2) 浪费的 2 秒
   - ocr_recognize 去掉多余的 RGB→BGR 转换
-- SMTP 邮箱配置可自定义：新增 smtp_server 和 smtp_port 配置项（默认 smtp.qq.com:465），支持非 QQ 邮箱
 - 截图对象内存泄漏修复：所有 pyautogui.screenshot() 调用后添加 .close() 释放资源
 - prevent_sleep 计数器线程安全：添加 threading.Lock 保护共享计数器
 - 配置说明优化：server_url 和 client_key 添加注释说明可覆盖
