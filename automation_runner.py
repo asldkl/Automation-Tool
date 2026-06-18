@@ -378,6 +378,12 @@ def _launch_game(app):
         print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
         time.sleep(3)
     if not delta_icon_found:
+        # 检测是否登录失败（账号密码错误导致重新登录按钮出现）
+        print("🔍 检测是否存在重新登录按钮...")
+        if utils.find_and_click(config.LOGIN_AGAIN, timeout=5):
+            print("⚠️ 检测到重新登录按钮，点击后重新登录...")
+            time.sleep(3)
+            return "relogin"
         msg = "未找到三角洲游戏图标"
         print(f"❌ 多次重试后仍{msg}，跳过此账号")
         app._last_account_error = msg
@@ -629,7 +635,19 @@ def _run_single_account(app, img_path, total, processed_accounts):
     if not account_failed and app._stop_event.is_set():
         account_interrupted = True
     if not account_failed and not account_interrupted:
-        if not _launch_game(app):
+        launch_result = _launch_game(app)
+        if launch_result == "relogin":
+            # 登录失败（账号密码错误），重新输入账号密码再试一次
+            print("🔄 重新登录...")
+            if not _login_account(app, file_name, 0, total, processed_accounts):
+                account_failed = True
+            elif app._stop_event.is_set():
+                account_interrupted = True
+            else:
+                launch_result = _launch_game(app)
+                if launch_result is False or launch_result == "relogin":
+                    account_failed = True
+        elif launch_result is False:
             if app._stop_event.is_set():
                 account_interrupted = True
             else:
@@ -637,8 +655,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
         # else: _launch_game 内部已调用 _recognize_and_store_asset、game_operations_wrapper（含一键出售）
 
     if not account_interrupted:
-        if not account_failed:
-            _close_game(app)
+        _close_game(app)
         _cleanup_account_processes(app)
 
     _process_account_result(app, file_name, account_failed, account_interrupted, processed_accounts)
@@ -723,7 +740,19 @@ def run_script_main(app):
             if not account_failed and app._stop_event.is_set():
                 account_interrupted = True
             if not account_failed and not account_interrupted:
-                if not _launch_game(app):
+                launch_result = _launch_game(app)
+                if launch_result == "relogin":
+                    # 登录失败（账号密码错误），重新输入账号密码再试一次
+                    print("🔄 重新登录...")
+                    if not _login_account(app, file_name, i, total, processed_accounts):
+                        account_failed = True
+                    elif app._stop_event.is_set():
+                        account_interrupted = True
+                    else:
+                        launch_result = _launch_game(app)
+                        if launch_result is False or launch_result == "relogin":
+                            account_failed = True
+                elif launch_result is False:
                     if app._stop_event.is_set():
                         account_interrupted = True
                     else:
@@ -731,8 +760,7 @@ def run_script_main(app):
 
             # 步骤3：清理进程
             if not account_interrupted:
-                if not account_failed:
-                    _close_game(app)
+                _close_game(app)
                 _cleanup_account_processes(app)
 
             # 记录结果

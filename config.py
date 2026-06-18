@@ -278,6 +278,7 @@ APP_SETTINGS = {}
 IMAGE_LOGIN_BTN      = resource_path("picture/wegame_login/login_btn.png")
 DELTA_GAME_ICON     = resource_path("picture/wegame_login/delta_game_icon.png")
 DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
+LOGIN_AGAIN         = resource_path("picture/wegame_login/login_again.png")
 # WeGame QQ 账号登录（新模式）
 QQ_ACCOUNT_SIGN_IN  = resource_path("picture/wegame_login/QQAccount_Sign-in.png")
 ACCOUNT_SELECT      = resource_path("picture/wegame_login/account_select.png")
@@ -370,6 +371,7 @@ TEMPLATE_CAPTURE_LIST = [
     ("IMAGE_LOGIN_BTN",      "picture/wegame_login/login_btn.png",      "WeGame 登录按钮",     "在 WeGame 登录界面，截取「登录」按钮"),
     ("DELTA_GAME_ICON",      "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",     "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
+    ("LOGIN_AGAIN",          "picture/wegame_login/login_again.png",   "重新登录按钮",       "在 WeGame 登录失败后，截取「重新登录」按钮"),
     ("ACCOUNT_SELECT",       "picture/wegame_login/account_select.png", "WeGame 账号选择框",   "在 WeGame 登录界面，截取账号选择框"),
     ("IMAGE_INPUT_FIELD",    "picture/wegame_login/Input.png",          "WeGame 密码输入框",   "在 WeGame 登录界面，截取密码输入框"),
     ("SIGN_IN",              "picture/wegame_login/Sign-in.png",        "WeGame 登录确认按钮", "在 WeGame 登录界面，截取「登录」确认按钮"),

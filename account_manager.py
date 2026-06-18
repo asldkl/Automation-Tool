@@ -1123,6 +1123,12 @@ def show_asset_history(app):
             _refresh_tree()
             # 刷新主界面账号列表
             refresh_account_tree(app)
+            # 刷新资产监测窗口（如果打开）
+            if hasattr(app, '_asset_monitor_refresh') and app._asset_monitor_refresh:
+                try:
+                    app._asset_monitor_refresh()
+                except Exception:
+                    pass
 
         def _refresh_tree():
             tree.delete(*tree.get_children())
@@ -1232,6 +1238,21 @@ def show_asset_monitor(app):
 
     _refresh_status()
 
+    # 注册刷新回调，供资产记录编辑后自动更新（上半部分+下半部分统计）
+    def _refresh_all():
+        _refresh_status()
+        if hasattr(app, '_asset_monitor_refresh_stats') and app._asset_monitor_refresh_stats:
+            try:
+                app._asset_monitor_refresh_stats()
+            except Exception:
+                pass
+    app._asset_monitor_refresh = _refresh_all
+    def _on_monitor_close():
+        app._asset_monitor_refresh = None
+        app._asset_monitor_refresh_stats = None
+        win.destroy()
+    win.protocol("WM_DELETE_WINDOW", _on_monitor_close)
+
     # ===== 下半部分：统计面板 =====
     stats_frame = ttk.LabelFrame(win, text=" 资产变化统计 ", padding=10)
     stats_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
@@ -1298,6 +1319,9 @@ def show_asset_monitor(app):
     ttk.Label(btn_row, text="天").pack(side=tk.LEFT)
     ttk.Button(btn_row, text="查询", style='Accent.TButton',
                command=lambda: _show_stats(days_var.get()), width=8).pack(side=tk.LEFT, padx=(8, 0))
+
+    # 注册统计刷新回调，供资产记录编辑后自动更新统计面板
+    app._asset_monitor_refresh_stats = lambda: _show_stats(days_var.get())
 
 
 def show_account_note(app):
