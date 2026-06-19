@@ -45,6 +45,35 @@ pip install pyinstaller
 pyinstaller 三角洲自动工具.spec
 ```
 
+## Interception 驱动级键盘输入
+
+本工具使用 [Interception](https://github.com/oblitum/Interception) 驱动实现 WeGame 登录时的账号密码输入，绕开 WeGame 10 账号限制和 QQ 同 IP 验证码。
+
+### 驱动安装状态
+
+Interception 驱动已安装在本机，可在正常模式（测试签名关闭）下工作，不需要开启 Windows 测试模式。
+- 驱动文件：`C:\Windows\System32\drivers\interception.sys`
+- 服务名称：`interception`（内核驱动，手动启动）
+- DLL 依赖：`interception.dll`（已包含在项目目录中，打包时自动嵌入）
+
+### 在新电脑上安装驱动
+
+如需在新电脑部署，有两种方式：
+
+**方式一：使用 install-interception.exe（推荐）**
+在 `Interception_pkg/Interception/command line installer/` 目录中以管理员身份运行：
+```bash
+install-interception.exe /install
+```
+注意：64 位 Windows 上需使用 64 位进程运行，或用 `SysNative` 路径绕过 WOW64 重定向。
+
+**方式二：手动安装驱动文件**
+将 `interception.sys` 复制到 `C:\Windows\System32\drivers\`，然后：
+```bash
+sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
+sc start interception
+```
+
 ## 使用说明
 
 1. 点击「添加账号」，在弹出的账号信息设置窗口中填写游戏账号（必填）、密码（必填）、备注等信息
@@ -70,8 +99,8 @@ pyinstaller 三角洲自动工具.spec
 
 ### 运行流程
 
-清理进程（QQ/WeGame/三角洲） → 逐个账号：
-1. 打开 WeGame → 图像识别双击账号选择框 → 删除旧账号 → Interception 驱动级键盘输入账号 → 点击密码框 → 输入密码 → 点击登录
+清理进程（WeGame/三角洲） → 逐个账号：
+1. 打开 WeGame → 图像识别双击账号选择框（左偏 15px）→ 删除旧账号 → Interception 驱动级键盘输入账号 → 点击密码框 → Interception 输入密码 → 点击登录
 2. 找到三角洲图标 → 资产识别 → 启动游戏 → 执行操作 → 关闭游戏和 WeGame → 完成
 
 ## 配置说明

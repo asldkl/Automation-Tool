@@ -817,35 +817,34 @@ class SettingsWindow:
 
     def _test_interception_input(self):
         """测试 Interception 驱动级键盘输入"""
-        self._dev_kb_status.config(text="正在测试 Interception 输入...", foreground="#3498db")
-        self.win.update()
+        import interception_keyboard
+        if not interception_keyboard.is_available():
+            self._dev_kb_status.config(
+                text="✗ Interception 不可用，请安装 Interception 驱动并确保驱动正常运行",
+                foreground="#e74c3c")
+            return
 
-        import threading
-        def _run_test():
+        self._dev_kb_status.config(text="请在3秒内将焦点放到目标窗口（如记事本）...", foreground="#3498db")
+
+        def _do_test():
             try:
-                import interception_keyboard
-                if not interception_keyboard.is_available():
-                    self.win.after(0, lambda: self._dev_kb_status.config(
-                        text="✗ Interception 不可用，请安装驱动并放置 interception.dll", foreground="#e74c3c"))
-                    return
-
-                self.win.after(0, lambda: self._dev_kb_status.config(
-                    text="3秒后开始 Interception 输入测试，请将焦点放到目标窗口...", foreground="#3498db"))
-                time.sleep(3)
+                self._dev_kb_status.config(text="正在发送 Interception 按键...", foreground="#3498db")
+                self.win.update()
 
                 test_text = "test123abc"
                 result = interception_keyboard.send_string(test_text, interval=0.03)
                 if result:
-                    self.win.after(0, lambda: self._dev_kb_status.config(
-                        text=f"✓ Interception 输入完成: '{test_text}'", foreground="#27ae60"))
+                    self._dev_kb_status.config(
+                        text=f"✓ Interception 输入完成: '{test_text}'", foreground="#27ae60")
                 else:
-                    self.win.after(0, lambda: self._dev_kb_status.config(
-                        text="✗ Interception 输入失败", foreground="#e74c3c"))
+                    self._dev_kb_status.config(
+                        text="✗ Interception 输入失败", foreground="#e74c3c")
             except Exception as e:
-                self.win.after(0, lambda: self._dev_kb_status.config(
-                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
+                self._dev_kb_status.config(
+                    text=f"✗ 测试异常: {e}", foreground="#e74c3c")
 
-        threading.Thread(target=_run_test, daemon=True).start()
+        # 3秒后执行测试（在主线程上，避免 threading + after 的兼容性问题）
+        self.win.after(3000, _do_test)
 
     def _test_kill_process(self, process_name):
         """测试清理指定进程"""

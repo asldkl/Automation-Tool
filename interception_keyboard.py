@@ -163,14 +163,34 @@ def _setup_functions():
     _is_keyboard.argtypes = [ctypes.c_int]
 
 
+def _check_driver():
+    """验证 Interception 驱动是否真正可用（create_context + send 验证）
+    interception.dll 在驱动未安装时有个 bug：create_context 返回非 NULL 的无效上下文。
+    必须通过 send 返回值判断驱动是否真实可用。
+    """
+    if not _load_dll():
+        return False
+    try:
+        ctx = _create_context()
+        if not ctx:
+            return False
+        # 发送一个空扫描码测试驱动是否响应（不会产生实际按键）
+        stroke = InterceptionKeyStroke(0, 0, 0)
+        result = _send(ctx, 1, stroke, 1)
+        _destroy_context(ctx)
+        return result > 0
+    except Exception:
+        return False
+
+
 def is_available():
     """检查 Interception 驱动和 DLL 是否可用"""
-    return _load_dll()
+    return _check_driver()
 
 
 def get_backend():
     """返回当前使用的键盘后端名称"""
-    if _load_dll():
+    if is_available():
         return "Interception"
     return "不可用"
 
@@ -206,28 +226,31 @@ def send_string(text, interval=0.02):
 
         for ch in text:
             if ch not in _CHAR_TO_SCANCODE:
-                print(f"[WARN] 字符 '{ch}' 无扫描码映射，跳过")
                 continue
 
             scan_code, need_shift = _CHAR_TO_SCANCODE[ch]
 
             if need_shift:
-                # 先按 Shift
                 shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
-                _send(ctx, keyboard_device, shift_down, 1)
+                if _send(ctx, keyboard_device, shift_down, 1) <= 0:
+                    _destroy_context(ctx)
+                    return False
 
-            # 按下键
             key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
-            _send(ctx, keyboard_device, key_down, 1)
+            if _send(ctx, keyboard_device, key_down, 1) <= 0:
+                _destroy_context(ctx)
+                return False
 
-            # 释放键
             key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
-            _send(ctx, keyboard_device, key_up, 1)
+            if _send(ctx, keyboard_device, key_up, 1) <= 0:
+                _destroy_context(ctx)
+                return False
 
             if need_shift:
-                # 释放 Shift
                 shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
-                _send(ctx, keyboard_device, shift_up, 1)
+                if _send(ctx, keyboard_device, shift_up, 1) <= 0:
+                    _destroy_context(ctx)
+                    return False
 
             time.sleep(interval)
 
@@ -268,17 +291,25 @@ def send_key(char, interval=0.02):
 
             if need_shift:
                 shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
-                _send(ctx, keyboard_device, shift_down, 1)
+                if _send(ctx, keyboard_device, shift_down, 1) <= 0:
+                    _destroy_context(ctx)
+                    return False
 
             key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
-            _send(ctx, keyboard_device, key_down, 1)
+            if _send(ctx, keyboard_device, key_down, 1) <= 0:
+                _destroy_context(ctx)
+                return False
 
             key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
-            _send(ctx, keyboard_device, key_up, 1)
+            if _send(ctx, keyboard_device, key_up, 1) <= 0:
+                _destroy_context(ctx)
+                return False
 
             if need_shift:
                 shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
-                _send(ctx, keyboard_device, shift_up, 1)
+                if _send(ctx, keyboard_device, shift_up, 1) <= 0:
+                    _destroy_context(ctx)
+                    return False
 
             time.sleep(interval)
 
