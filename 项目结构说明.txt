@@ -164,16 +164,19 @@ v1.2.1 新增：资产记录双击编辑、失败邮件含错误日志、WeGame 
 │     - _match_template()：标准灰度模板匹配
 │     - find_and_click()：单尺度模板匹配+点击（薄包装，兼容旧调用）
 │     - find_and_click_multiscale()：多尺度复合匹配（薄包装）
-│     - find_and_click_smart()：智能匹配（OCR 优先，超时自动回退图像匹配）
+│     - find_and_click_smart()：智能匹配（OCR 优先 → 支持降级开关 → 超时回退图像匹配，日志区分识别方式）
 │     - _match_template_multiscale()：核心多尺度匹配算法（灰度+边缘）
 │   - 鼠标移动：
 │     - smooth_move_to()：贝塞尔曲线+Smoothstep平滑鼠标移动（v1.1.2 新增）
 │     - 调用 relative_mouse_move.perform_timed_relative_move() 实现
 │   - OCR 文字识别：
-│     - init_ocr_engine()：预初始化 RapidOCR 引擎
+│     - init_ocr_engine()：预初始化 RapidOCR 引擎（程序启动时调用）
 │     - _get_ocr_engine()：获取/创建 OCR 引擎（单例）
-│     - ocr_find_by_config()：根据 OCR 配置识别文字并点击
+│     - ocr_recognize()：对指定区域进行 OCR 识别，返回文字/置信度/坐标
+│     - ocr_find_and_click()：查找指定文字并点击（支持置信度过滤、调试日志）
+│     - ocr_find_by_config()：根据 OCR 配置（ocr_configs / global_ocr_texts）识别点击
 │     - _ocr_failed / _ocr_timeout_count：OCR 级联禁用机制
+│     - ocr_downgrade_enabled：OCR 降级开关（关闭时 OCR 失败不回落图像匹配）
 │   - 进程管理：
 │     - start_app() / kill_process() / close_window_by_title()
 │     - activate_window_by_title() / wait_for_window()

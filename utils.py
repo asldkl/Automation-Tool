@@ -772,6 +772,7 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
     返回: True（找到并点击）/ False（超时未找到）
     """
     start_time = time.time()
+    first_scan = True
     while time.time() - start_time < timeout:
         results = ocr_recognize(region)
         for recognized_text, conf, bbox in results:
@@ -786,6 +787,15 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
                     time.sleep(0.5)
                     continue
                 return True
+        # 首次扫描未命中时，打印实际识别到的文字供调试
+        if first_scan and results:
+            matches = [f"'{r[0]}'(conf={r[1]:.2f})" for r in results if text in r[0]]
+            others = [f"'{r[0]}'(conf={r[1]:.2f})" for r in results if text not in r[0]]
+            if matches:
+                print(f"  ℹ️ 找到文字但置信度不足：{', '.join(matches[:5])}")
+            if others:
+                print(f"  ℹ️ 区域内识别到：{', '.join(others[:5])}")
+            first_scan = False
         time.sleep(1)
     return False
 
@@ -822,21 +832,23 @@ def ocr_find_by_config(var_name, timeout=20):
     """
     settings = config.load_settings()
     ocr_configs = settings.get("ocr_configs", {})
-    if var_name not in ocr_configs:
+    ocr_cfg = ocr_configs.get(var_name, {})
+
+    # 从 ocr_configs 获取文本，没有则回退到 global_ocr_texts
+    text = ocr_cfg.get("text", "")
+    if not text:
+        global_texts = settings.get("global_ocr_texts", {})
+        text = global_texts.get(var_name, "")
+    if not text:
         return None
 
-    ocr_cfg = ocr_configs[var_name]
     region = tuple(ocr_cfg["region"]) if ocr_cfg.get("region") else None
     # 无区域时尝试全局 OCR 区域（全局 OCR 或全局文本配置启用时均可使用）
     if not region:
         global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
         if global_region[2] > 0 and global_region[3] > 0:
             region = tuple(global_region)
-    text = ocr_cfg.get("text", "")
     conf = ocr_cfg.get("confidence") or settings.get("global_ocr_confidence", 0.8)
-
-    if not text:
-        return None
 
     return ocr_find_and_click(text, region=region, timeout=timeout, confidence=conf)
 
@@ -875,15 +887,23 @@ def _get_image_to_var():
             config.Produce_ToolBench: "Produce_ToolBench",
             config.Produce_ArmorStation: "Produce_ArmorStation",
             config.Produce_PharmacyStation: "Produce_PharmacyStation",
+            # WeGame 登录相关
+            config.DELTA_GAME_ICON: "DELTA_GAME_ICON",
+            config.LOGIN_AGAIN: "LOGIN_AGAIN",
+            config.ACCOUNT_SELECT: "ACCOUNT_SELECT",
+            config.IMAGE_INPUT_FIELD: "IMAGE_INPUT_FIELD",
+            config.SIGN_IN: "SIGN_IN",
         }
     return _IMAGE_TO_VAR
 
 
-def find_and_click_smart(img_path, timeout=20, region=None, confidence=None):
+def find_and_click_smart(img_path, timeout=20, region=None, confidence=None,
+                         clicks=1, x_offset=0, y_offset=0):
     """
     智能识别点击：优先使用 OCR（如果配置了），否则使用图像匹配。
     自动根据 img_path 查找对应的 var_name OCR 配置。
     连续 OCR 超时 2 次后自动禁用 OCR，全部降级为图像识别。
+    可通过全局 OCR 设置中的"OCR 降级"关闭降级，OCR 失败后直接返回 False。
     """
     global _ocr_timeout_count, _ocr_failed
     var_map = _get_image_to_var()
@@ -893,15 +913,30 @@ def find_and_click_smart(img_path, timeout=20, region=None, confidence=None):
         ocr_result = ocr_find_by_config(var_name, timeout=timeout)
         if ocr_result is True:
             _ocr_timeout_count = 0  # 成功则重置计数
+            print(f"✅ OCR 识别成功：{var_name}")
             return True
         if ocr_result is False:
+            # 检查是否允许降级到图片匹配
+            settings = config.load_settings()
+            downgrade_enabled = settings.get("ocr_downgrade_enabled", True)
+            if not downgrade_enabled:
+                _ocr_timeout_count = 0
+                print(f"❌ OCR 未识别到：{var_name}（降级已关闭，不使用图片匹配）")
+                return False
             _ocr_timeout_count += 1
             print(f"⚠️ OCR 超时，回退到图像匹配：{var_name}（连续超时 {_ocr_timeout_count}/2）")
             if _ocr_timeout_count >= 2:
                 _ocr_failed = True
                 print("⚠️ OCR 连续超时 2 次，已自动禁用 OCR，后续全部使用图像识别")
 
-    return find_and_click(img_path, timeout=timeout, region=region, confidence=confidence)
+    # 有 OCR 配置但初次未启用（var_name 无 text 配置）、已禁用、或无 var_name 映射，都用图像匹配
+    if var_name:
+        print(f"🔍 使用图片识别：{var_name}")
+    else:
+        print(f"🔍 使用图片识别：{os.path.basename(img_path)}")
+
+    return find_and_click(img_path, timeout=timeout, region=region, confidence=confidence,
+                          clicks=clicks, x_offset=x_offset, y_offset=y_offset)
 
 
 # ==================== 窗口图标设置 ====================

@@ -287,7 +287,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
         # 步骤3：图像识别双击 account_select（左偏 15px，选中旧账号文本）
         set_operation(app, "选择账号输入框")
         print("🔍 查找账号选择框...")
-        if not utils.find_and_click(config.ACCOUNT_SELECT, clicks=2, timeout=10, x_offset=-15):
+        if not utils.find_and_click_smart(config.ACCOUNT_SELECT, clicks=2, timeout=10, x_offset=-15):
             print(f"⚠️ 未找到账号选择框，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已双击账号选择框")
@@ -320,7 +320,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
         # 步骤5：图像识别点击 Input（密码输入框）
         set_operation(app, "点击密码输入框")
         print("🔍 识别密码输入框...")
-        if not utils.find_and_click(config.IMAGE_INPUT_FIELD, timeout=10):
+        if not utils.find_and_click_smart(config.IMAGE_INPUT_FIELD, timeout=10):
             print(f"⚠️ 未找到密码输入框，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已点击密码输入框")
@@ -345,7 +345,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
         # 步骤6：图像识别点击 Sign-in（登录确认按钮）
         set_operation(app, "点击登录")
         print("🔍 识别登录确认按钮...")
-        if not utils.find_and_click(config.SIGN_IN, timeout=10):
+        if not utils.find_and_click_smart(config.SIGN_IN, timeout=10):
             print(f"⚠️ 未找到登录确认按钮，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已点击登录确认按钮")
@@ -372,7 +372,7 @@ def _launch_game(app):
     for retry in range(3):
         if app._stop_event.is_set():
             return False
-        if utils.find_and_click(config.DELTA_GAME_ICON, timeout=15):
+        if utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=15):
             delta_icon_found = True
             break
         print(f"⚠️ 未找到三角洲游戏图标，3秒后重试 ({retry+1}/3)...")
@@ -380,7 +380,7 @@ def _launch_game(app):
     if not delta_icon_found:
         # 检测是否登录失败（账号密码错误导致重新登录按钮出现）
         print("🔍 检测是否存在重新登录按钮...")
-        if utils.find_and_click(config.LOGIN_AGAIN, timeout=5):
+        if utils.find_and_click_smart(config.LOGIN_AGAIN, timeout=5):
             print("⚠️ 检测到重新登录按钮，点击后重新登录...")
             time.sleep(3)
             return "relogin"
@@ -398,7 +398,7 @@ def _launch_game(app):
     for retry in range(3):
         if app._stop_event.is_set():
             return False
-        if utils.find_and_click(config.DELTA_LAUNCH_BTN, timeout=15):
+        if utils.find_and_click_smart(config.DELTA_LAUNCH_BTN, timeout=15):
             launch_found = True
             break
         print(f"⚠️ 未找到启动按钮，3秒后重试 ({retry+1}/3)...")

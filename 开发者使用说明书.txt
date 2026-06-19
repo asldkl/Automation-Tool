@@ -795,6 +795,24 @@ v1.1.1 (2026-06-07)
 - .spec 文件 hiddenimports 新增 asset_db 模块
 
 ----------------------------------------
+v1.1.2 (2026-06-19)
+----------------------------------------
+
+- OCR 文字识别全面增强：
+  - 全局 OCR 设置新增「OCR 降级到图片匹配」开关：启用时 OCR 超时自动回退图像匹配，关闭时 OCR 失败直接返回
+  - 全局默认置信度从 0.8 降至 0.55，适配游戏界面文字识别
+  - 程序启动时预加载 RapidOCR 引擎，避免首次使用等待
+  - ocr_find_and_click 新增调试日志：首次扫描未命中时输出实际识别到的文字和置信度
+  - find_and_click_smart 新增清晰日志区分 OCR 识别 / 图片识别 / OCR 超时降级
+- 全局文本配置完善：
+  - 新增 ACCOUNT_SELECT / IMAGE_INPUT_FIELD / SIGN_IN / LOGIN_AGAIN 四个默认文本条目
+  - 保存全局 OCR 设置时自动同步 global_ocr_texts 到 ocr_configs
+  - 模板上传向导、单个模板弹窗均同时检查 ocr_configs 和 global_ocr_texts 显示状态
+- WeGame 登录流程改用 find_and_click_smart（支持 OCR 优先 + 图片匹配回退）
+- _IMAGE_TO_VAR 新增 DELTA_GAME_ICON / LOGIN_AGAIN / ACCOUNT_SELECT / IMAGE_INPUT_FIELD / SIGN_IN 映射
+- 开发者测试窗口新增 OCR 文字识别测试功能：点击按钮 → 扫描窗口区域 → 鼠标移动点击 → 按钮变绿/红，全部测试串行执行，只扫描窗口区域降低 CPU 占用
+
+----------------------------------------
 v1.1.0 (2026-06-06)
 ----------------------------------------
 

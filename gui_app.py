@@ -936,6 +936,10 @@ def main():
     config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
     config.CONFIDENCE = config.APP_SETTINGS["confidence"]
 
+    # 预加载 OCR 引擎（在后台初始化，避免使用时等待）
+    import utils
+    utils.init_ocr_engine()
+
     root = tk.Tk()
     root.title("三角洲行动自动化工具")
     root.resizable(True, True)

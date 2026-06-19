@@ -683,6 +683,22 @@ class SettingsWindow:
         self._dev_win_status = ttk.Label(frame_win, text="", style='SettingsSmall.TLabel')
         self._dev_win_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
+        # ----- 文本识别测试 -----
+        frame_ocr = ttk.LabelFrame(parent, text="  文本识别测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_ocr.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_ocr, text="测试 OCR 能否识别屏幕上的目标文字（需先启用全局文本配置）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        ocr_btn_frame = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
+        ocr_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(ocr_btn_frame, text="打开文本识别测试", style='TButton',
+                   command=self._open_ocr_test_window, width=18).pack(side=tk.LEFT)
+
+        self._dev_ocr_status = ttk.Label(frame_ocr, text="", style='SettingsSmall.TLabel')
+        self._dev_ocr_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
     def _test_account_login(self):
         """测试账号登录流程（WeGame 直接登录）"""
         game_account = self._dev_login_account_var.get().strip()
@@ -893,6 +909,182 @@ class SettingsWindow:
                     text=f"✗ 未找到 {window_name} 窗口", foreground="#e74c3c")
         except Exception as e:
             self._dev_win_status.config(text=f"✗ 查找异常: {e}", foreground="#e74c3c")
+
+    def _open_ocr_test_window(self):
+        """打开文本识别测试窗口：显示所有可识别文字，点击测试 OCR"""
+        import threading
+        import config as cfg
+        from template_capture import GLOBAL_TEXT_DEFAULTS
+
+        # 收集可识别的文字项（default_text 不为 None）
+        items = []
+        for var_name, (display_name, default_text) in GLOBAL_TEXT_DEFAULTS.items():
+            if default_text is not None:
+                items.append((var_name, display_name, default_text))
+
+        win = tk.Toplevel(self.win)
+        win.title("文本识别测试")
+        win.geometry("700x500")
+        win.resizable(True, True)
+        win.transient(self.win)
+        win.grab_set()
+        utils.set_window_icon(win)
+
+        # 居中
+        win.update_idletasks()
+        x = (win.winfo_screenwidth() - 700) // 2
+        y = (win.winfo_screenheight() - 500) // 2
+        win.geometry(f"700x500+{x}+{y}")
+
+        # 标题说明
+        ttk.Label(win, text="点击按钮 → OCR 识别屏幕上的文字 → 鼠标移动并点击 → 按钮变绿色",
+                  font=('Microsoft YaHei UI', 10)).pack(padx=15, pady=(12, 5), anchor='w')
+        ttk.Label(win, text="识别成功变绿色（显示坐标），失败变红色。鼠标会实际移动到文字位置并点击。",
+                  font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, pady=(0, 8), anchor='w')
+
+        # 滚动区域
+        container = ttk.Frame(win)
+        container.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_mousewheel(event):
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except tk.TclError:
+                pass
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 按钮样式
+        style = ttk.Style()
+        style.configure('OCR_Default.TButton', font=('Microsoft YaHei UI', 10))
+        style.configure('OCR_Green.TButton', font=('Microsoft YaHei UI', 10), background='#4caf50')
+        style.configure('OCR_Red.TButton', font=('Microsoft YaHei UI', 10), background='#f44336')
+
+        # 使用 tk.Button 以支持 bg 颜色变化
+        buttons = {}
+        cols = 3
+        for i, (var_name, display_name, default_text) in enumerate(items):
+            row, col = divmod(i, cols)
+            btn_text = f"{display_name}\n({default_text})"
+            btn = tk.Button(scroll_frame, text=btn_text, font=('Microsoft YaHei UI', 10),
+                           width=20, height=2, relief='raised', bd=1)
+            btn.grid(row=row, column=col, padx=4, pady=4, sticky='nsew')
+            buttons[var_name] = btn
+
+        # 配置列权重
+        for c in range(cols):
+            scroll_frame.columnconfigure(c, weight=1)
+
+        # 底部状态栏
+        status_var = tk.StringVar(value="点击按钮测试文字识别")
+        status_label = ttk.Label(win, textvariable=status_var, font=('Microsoft YaHei UI', 9))
+        status_label.pack(padx=15, pady=(0, 8), anchor='w')
+
+        # 已测试计数
+        tested_count = [0]
+        total_count = len(items)
+
+        # 测试状态控制：同一时间只运行一个测试
+        _test_running = [False]
+        _test_done_event = threading.Event()
+
+        def _do_ocr_test(var_name, display_name, default_text):
+            """执行一次 OCR 测试（在调用线程中运行，完成后设置事件）"""
+            btn = buttons[var_name]
+            try:
+                time.sleep(0.1)
+                # 只扫描测试窗口区域（降低 CPU 占用）
+                wx = win.winfo_rootx()
+                wy = win.winfo_rooty()
+                ww = win.winfo_width()
+                wh = win.winfo_height()
+                results = utils.ocr_recognize(region=(wx, wy, ww, wh))
+                click_x, click_y = None, None
+                for recognized_text, recognized_conf, bbox in results:
+                    if default_text in recognized_text:
+                        click_x = int((bbox[0] + bbox[2]) / 2)
+                        click_y = int((bbox[1] + bbox[3]) / 2)
+                        break
+
+                if click_x is not None:
+                    import pyautogui
+                    utils.smooth_move_to(click_x, click_y, duration=0.2)
+                    pyautogui.click()
+                    tested_count[0] += 1
+                    win.after(0, lambda: btn.config(bg='#4caf50', fg='white'))
+                    win.after(0, lambda: status_var.set(
+                        f"[{tested_count[0]}/{total_count}] ✓ {display_name} 识别并点击成功 ({click_x},{click_y})"))
+                else:
+                    tested_count[0] += 1
+                    win.after(0, lambda: btn.config(bg='#f44336', fg='white'))
+                    win.after(0, lambda: status_var.set(
+                        f"[{tested_count[0]}/{total_count}] ✗ {display_name} 未识别到"))
+            except Exception as e:
+                tested_count[0] += 1
+                win.after(0, lambda: btn.config(bg='#ff9800', fg='white'))
+                win.after(0, lambda: status_var.set(f"✗ {display_name} 测试异常: {e}"))
+            finally:
+                _test_running[0] = False
+                _test_done_event.set()
+
+        def _test_one(var_name, display_name, default_text):
+            """点击单个按钮测试"""
+            if _test_running[0]:
+                return
+            _test_running[0] = True
+            _test_done_event.clear()
+            status_var.set(f"正在识别: {display_name} ({default_text})...")
+            win.update()
+            threading.Thread(target=_do_ocr_test, args=(var_name, display_name, default_text), daemon=True).start()
+
+        # 绑定点击事件
+        for var_name, display_name, default_text in items:
+            buttons[var_name].config(
+                command=lambda vn=var_name, dn=display_name, dt=default_text: _test_one(vn, dn, dt))
+
+        # 底部按钮栏
+        btn_bar = ttk.Frame(win)
+        btn_bar.pack(fill=tk.X, padx=15, pady=(0, 10))
+
+        def _test_all():
+            """先重置，再依次识别并点击每个文字（串行，一个完成后再启动下一个）"""
+            if _test_running[0]:
+                return
+            for btn in buttons.values():
+                btn.config(bg='SystemButtonFace', fg='black')
+            tested_count[0] = 0
+            status_var.set("开始全部测试...")
+
+            def _run():
+                for var_name, display_name, default_text in items:
+                    _test_running[0] = True
+                    _test_done_event.clear()
+                    win.after(0, lambda dn=display_name, dt=default_text: status_var.set(f"正在识别: {dn} ({dt})..."))
+                    _do_ocr_test(var_name, display_name, default_text)
+                    # _do_ocr_test 完成后会设置 _test_done_event
+                    time.sleep(0.2)  # 测试间隔
+
+            threading.Thread(target=_run, daemon=True).start()
+
+        def _reset_all():
+            """重置所有按钮颜色"""
+            tested_count[0] = 0
+            for btn in buttons.values():
+                btn.config(bg='SystemButtonFace', fg='black')
+            status_var.set("已重置")
+
+        ttk.Button(btn_bar, text="全部测试", command=_test_all, width=10).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_bar, text="重置", command=_reset_all, width=8).pack(side=tk.LEFT)
 
     def _build_sell_tab(self, parent):
         """售卖物品选项卡内容"""

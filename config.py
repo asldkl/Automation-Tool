@@ -180,9 +180,10 @@ DEFAULT_SETTINGS = {
     "ocr_configs": {},                           # var_name -> {"region": [x,y,w,h], "text": "制造", "confidence": 0.8}
     "global_ocr_enabled": False,                 # 是否启用全局 OCR（模板无需单独配置区域）
     "global_ocr_region": [0, 0, 0, 0],           # 全局 OCR 识别区域 [x, y, w, h]
-    "global_ocr_confidence": 0.8,                # 全局 OCR 默认置信度
+    "global_ocr_confidence": 0.55,               # 全局 OCR 默认置信度
     "global_ocr_texts": {},                      # 全局 OCR 文本配置 var_name -> "text"
     "global_text_enabled": False,                # 是否启用全局文本配置
+    "ocr_downgrade_enabled": True,               # OCR 超时是否降级到图片匹配
     # 资产识别
     "enable_asset_recognition": False,           # 是否启用资产识别
     "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]

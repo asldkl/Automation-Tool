@@ -42,8 +42,10 @@ GLOBAL_TEXT_DEFAULTS = {
     "EMAIL_CLAIM_ALL": ("全部领取按钮", "全部领取"),
     "EMAIL_RECEIVE_COMPLETED": ("领取完成确认按钮", "领取完成"),
     "DELTA_LAUNCH_BTN": ("启动游戏按钮", "启动"),
-    "QQ_ACCOUNT_SELECT": ("QQ账号选择按钮", None),
-    "QQ_LOGIN_BTN": ("QQ登录按钮", "登录"),
+    "ACCOUNT_SELECT": ("WeGame账号选择框", None),
+    "IMAGE_INPUT_FIELD": ("WeGame密码输入框", "请输入密码"),
+    "SIGN_IN": ("WeGame登录确认按钮", "登录"),
+    "LOGIN_AGAIN": ("重新登录按钮", "重新登录"),
 }
 
 
@@ -231,12 +233,15 @@ class TemplateCaptureWizard:
         ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
 
     def _refresh_status_from_ocr_configs(self):
-        """根据 ocr_configs 刷新所有模板的状态图标"""
+        """根据 ocr_configs 和 global_ocr_texts 刷新所有模板的状态图标"""
         settings = config.load_settings()
         ocr_configs = settings.get("ocr_configs", {})
+        global_texts = settings.get("global_ocr_texts", {})
         for item in self.capture_list:
             var_name = item[0]
-            if var_name in ocr_configs and ocr_configs[var_name].get("text"):
+            has_text = (var_name in ocr_configs and ocr_configs[var_name].get("text")) or \
+                       (var_name in global_texts and global_texts[var_name])
+            if has_text:
                 self.status[var_name] = "done"
                 if var_name in self.rows:
                     status_lbl, _ = self.rows[var_name]
@@ -411,7 +416,7 @@ class TemplateCaptureWizard:
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack()
 
         ttk.Label(dialog, text="目标识别文本：").pack(pady=(10, 2))
-        global_texts = settings.get("global_ocr_texts", {}) if settings.get("global_text_enabled", False) else {}
+        global_texts = settings.get("global_ocr_texts", {})
         default_text = existing.get("text", "") or global_texts.get(var_name, "")
         text_var = tk.StringVar(value=default_text)
         text_entry = ttk.Entry(dialog, textvariable=text_var, width=30)
@@ -577,6 +582,11 @@ class TemplateCaptureWizard:
         ttk.Button(dialog, text="全局文本配置", command=lambda: self._open_global_text_config(dialog),
                    width=18).pack(anchor='w', padx=25, pady=(0, 5))
 
+        # OCR 降级开关
+        downgrade_var = tk.BooleanVar(value=settings.get("ocr_downgrade_enabled", True))
+        ttk.Checkbutton(dialog, text="OCR 超时降级到图片匹配（关闭后 OCR 未识别到则不使用图片匹配）",
+                        variable=downgrade_var).pack(anchor='w', padx=25, pady=(5, 5))
+
         def save_global():
             # 重新加载设置，避免覆盖全局文本配置对话框的修改
             fresh = config.load_settings()
@@ -584,6 +594,7 @@ class TemplateCaptureWizard:
             fresh["global_ocr_region"] = result_region
             fresh["global_ocr_confidence"] = global_conf_var.get()
             fresh["global_text_enabled"] = global_text_enabled_var.get()
+            fresh["ocr_downgrade_enabled"] = downgrade_var.get()
 
             ocr_configs = fresh.get("ocr_configs", {})
             global_texts = fresh.get("global_ocr_texts", {})
@@ -601,6 +612,19 @@ class TemplateCaptureWizard:
                     if vn in ocr_configs:
                         del ocr_configs[vn]
                 fresh["global_ocr_texts"] = {}
+            elif global_texts:
+                # 启用时，将 global_ocr_texts 同步到 ocr_configs
+                use_global_region = global_enabled_var.get() and result_region[2] > 0 and result_region[3] > 0
+                for var_name, text_val in global_texts.items():
+                    existing = ocr_configs.get(var_name, {})
+                    region = existing.get("region")
+                    if not region and use_global_region:
+                        region = list(result_region)
+                    ocr_configs[var_name] = {
+                        "region": region or [],
+                        "text": text_val,
+                        "confidence": existing.get("confidence") or global_conf_var.get(),
+                    }
 
             fresh["ocr_configs"] = ocr_configs
             config.save_settings(fresh)
@@ -609,7 +633,8 @@ class TemplateCaptureWizard:
                                 f"启用：{'是' if global_enabled_var.get() else '否'}\n"
                                 f"区域：{tuple(result_region)}\n"
                                 f"置信度：{global_conf_var.get()}\n"
-                                f"全局文本：{'已启用' if global_text_enabled_var.get() else '未启用'}",
+                                f"全局文本：{'已启用' if global_text_enabled_var.get() else '未启用'}\n"
+                f"OCR 降级：{'已启用' if downgrade_var.get() else '已关闭'}",
                                 parent=dialog)
             dialog.destroy()
             self._refresh_status_from_ocr_configs()
@@ -855,8 +880,10 @@ class TemplateCaptureWizard:
         # 检查 OCR 配置状态
         settings = config.load_settings()
         ocr_configs = settings.get("ocr_configs", {})
-        has_ocr = var_name in ocr_configs
-        ocr_status = f"（已配置：{ocr_configs[var_name].get('text', '')}）" if has_ocr else "（未配置）"
+        global_texts = settings.get("global_ocr_texts", {})
+        has_ocr_text = bool(ocr_configs.get(var_name, {}).get("text")) or bool(global_texts.get(var_name))
+        ocr_cfg_text = ocr_configs.get(var_name, {}).get("text") or global_texts.get(var_name, "")
+        ocr_status = f"（已配置：{ocr_cfg_text}）" if has_ocr_text else "（未配置）"
 
         # 按钮区
         btn_frame = ttk.Frame(win)
