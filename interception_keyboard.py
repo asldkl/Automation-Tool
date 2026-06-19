@@ -164,18 +164,15 @@ def _setup_functions():
 
 
 def _check_driver():
-    """验证 Interception 驱动是否真正可用（create_context + send 验证）
-    interception.dll 在驱动未安装时有个 bug：create_context 返回非 NULL 的无效上下文。
-    必须通过 send 返回值判断驱动是否真实可用。
-    """
+    """验证 Interception 驱动是否真正可用"""
     if not _load_dll():
         return False
     try:
         ctx = _create_context()
         if not ctx:
             return False
-        # 发送一个空扫描码测试驱动是否响应（不会产生实际按键）
-        stroke = InterceptionKeyStroke(0, 0, 0)
+        # 发送左 Shift 释放事件作为测试（无害操作，不会产生实际按键效果）
+        stroke = InterceptionKeyStroke(0x2A, KEY_UP, 0)
         result = _send(ctx, 1, stroke, 1)
         _destroy_context(ctx)
         return result > 0
