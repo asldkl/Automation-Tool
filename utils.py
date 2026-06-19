@@ -16,6 +16,7 @@ import config
 from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS,
                     IMAGE_LOGIN_BTN)
 import relative_mouse_move
+import ctypes
 
 
 def smooth_move_to(x, y, duration=0.2, use_bezier=True):
@@ -133,7 +134,8 @@ def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titl
     print(f"❌ 超时未找到窗口 '{title_contains}'")
     return False
 
-# 模板图片缓存，避免每次匹配都从磁盘读取
+# 模板图片缓存，LRU 淘汰避免内存无限增长
+_MAX_CACHE_SIZE = 50
 _template_cache = {}
 
 def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
@@ -143,6 +145,20 @@ def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
         return cv2.imdecode(data, flags)
     except Exception:
         return None
+
+def _cache_get(key):
+    """LRU 缓存读取：命中时移至末尾（最近使用）"""
+    template = _template_cache.pop(key, None)
+    if template is not None:
+        _template_cache[key] = template
+    return template
+
+def _cache_put(key, value):
+    """LRU 缓存写入：超限时淘汰最早条目"""
+    if len(_template_cache) >= _MAX_CACHE_SIZE:
+        oldest = next(iter(_template_cache))
+        del _template_cache[oldest]
+    _template_cache[key] = value
 
 def clear_template_cache():
     """清除模板缓存（用于重新截图后刷新）"""
@@ -161,10 +177,14 @@ def _screenshot_gray(region=None):
     """截屏并直接转灰度（跳过 RGB→BGR 中间步骤）"""
     try:
         screen = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+        arr = np.array(screen)
     except Exception:
         return None
-    arr = np.array(screen)
-    screen.close()
+    finally:
+        try:
+            screen.close()
+        except Exception:
+            pass
     return cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
 
 
@@ -178,13 +198,13 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
     """
     threshold = confidence if confidence is not None else CONFIDENCE
     resolved = config.resolve_template_path(img_path)
-    template = _template_cache.get(resolved)
+    template = _cache_get(resolved)
     if template is None:
         template = _imread_unicode(resolved)
         if template is None:
             print(f"❌ 图片文件不存在或无法读取：{resolved}")
             return (False, None) if return_pos else False
-        _template_cache[resolved] = template
+        _cache_put(resolved, template)
 
     start = time.time()
     while time.time() - start < timeout:
@@ -313,13 +333,13 @@ def find_multiscale(img_path, timeout=20, region=None, confidence=None):
     """多尺度复合图像识别，仅检测不点击，返回 True/False"""
     threshold = confidence if confidence is not None else CONFIDENCE
     resolved = config.resolve_template_path(img_path)
-    template = _template_cache.get(resolved)
+    template = _cache_get(resolved)
     if template is None:
         template = _imread_unicode(resolved)
         if template is None:
             print(f"❌ 图片文件不存在或无法读取：{resolved}")
             return False
-        _template_cache[resolved] = template
+        _cache_put(resolved, template)
 
     start = time.time()
     while time.time() - start < timeout:
@@ -342,19 +362,6 @@ def find_and_click_pos_multiscale(img_path, timeout=20, region=None, confidence=
     return _find_and_click_core(img_path, timeout, region, confidence,
                                 multiscale=True, return_pos=True)
 
-
-def wegame_quick_login():
-    """
-    使用图像识别完成 WeGame 快捷登录：
-    直接点击登录按钮（使用当前已登录的 QQ 账号）
-    每轮运行前会先退出 QQ 和 WeGame，确保打开 WeGame 时快捷登录显示的就是当前 QQ 账号
-    """
-    print("🔍 点击登录按钮...")
-    if not find_and_click(IMAGE_LOGIN_BTN, timeout=15):
-        print("❌ 未找到登录按钮")
-        return False
-    print("✅ 快捷登录完成")
-    return True
 
 def kill_process(process_name, wait_exit=True, max_wait=30):
     """强制结束指定进程，可选等待退出"""
@@ -410,8 +417,6 @@ def close_window_by_title(title_contains, partial_match=True):
 
 
 # ==================== 电源管理 ====================
-import ctypes
-
 _kernel32 = ctypes.windll.kernel32
 
 # SetThreadExecutionState flags
@@ -676,13 +681,31 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
 
 # ==================== OCR 识别功能 ====================
 _ocr_engine = None
-_ocr_failed = False         # True = OCR 引擎不可用，全部降级为图像识别
-_ocr_timeout_count = 0      # 连续 OCR 超时计数
+_ocr_failed = False                          # True = OCR 引擎初始化失败，全局不可用
+_ocr_failures = {}                           # var_name → [failure_timestamps]，连续失败后临时禁用
+_OCR_MAX_FAILURES = 3                        # 连续失败次数阈值
+_OCR_DISABLE_SECONDS = 300                   # 临时禁用时长（5分钟），超时自动恢复
+
+def _ocr_is_disabled(var_name):
+    """检查指定 var_name 是否因连续失败被临时禁用（5分钟后自动恢复）"""
+    timestamps = _ocr_failures.get(var_name, [])
+    now = time.time()
+    cutoff = now - _OCR_DISABLE_SECONDS
+    recent = [t for t in timestamps if t > cutoff]
+    _ocr_failures[var_name] = recent
+    return len(recent) >= _OCR_MAX_FAILURES
+
+def _ocr_record_failure(var_name):
+    """记录一次 OCR 失败"""
+    _ocr_failures.setdefault(var_name, []).append(time.time())
+
+def _ocr_record_success(var_name):
+    """OCR 成功后清除该 var_name 的失败记录"""
+    _ocr_failures.pop(var_name, None)
 
 def init_ocr_engine():
     """预初始化 RapidOCR 引擎。程序启动时调用，失败则标记 _ocr_failed"""
-    global _ocr_engine, _ocr_failed, _ocr_timeout_count
-    _ocr_timeout_count = 0
+    global _ocr_engine, _ocr_failed
     try:
         from rapidocr_onnxruntime import RapidOCR
         _ocr_engine = RapidOCR()
@@ -766,6 +789,16 @@ def ocr_find(text, region=None, timeout=20, confidence=0.8):
     return False
 
 
+def _click_pos_valid(cx, cy):
+    """检查点击坐标是否在屏幕有效范围内（边缘 10px 留白）"""
+    screen_w, screen_h = pyautogui.size()
+    margin = 10
+    if cx < margin or cy < margin or cx > screen_w - margin or cy > screen_h - margin:
+        print(f"⚠️ 忽略可疑坐标 ({cx}, {cy})")
+        return False
+    return True
+
+
 def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
     """
     在屏幕指定区域查找包含指定文本的内容并点击其中心。
@@ -779,6 +812,8 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
             if conf >= confidence and text in recognized_text:
                 cx = int((bbox[0] + bbox[2]) / 2)
                 cy = int((bbox[1] + bbox[3]) / 2)
+                if not _click_pos_valid(cx, cy):
+                    continue
                 try:
                     smooth_move_to(cx, cy, duration=0.2)
                     pyautogui.click()
@@ -812,6 +847,8 @@ def ocr_find_and_click_offset(text, region=None, timeout=20, confidence=0.8, x_o
             if conf >= confidence and text in recognized_text:
                 cx = int((bbox[0] + bbox[2]) / 2) + x_offset
                 cy = int((bbox[1] + bbox[3]) / 2) + y_offset
+                if not _click_pos_valid(cx, cy):
+                    continue
                 try:
                     smooth_move_to(cx, cy, duration=0.2)
                     pyautogui.click()
@@ -842,8 +879,11 @@ def ocr_find_by_config(var_name, timeout=20):
     if not text:
         return None
 
-    region = tuple(ocr_cfg["region"]) if ocr_cfg.get("region") else None
-    # 无区域时尝试全局 OCR 区域（全局 OCR 或全局文本配置启用时均可使用）
+    region = None
+    cfg_region = ocr_cfg.get("region")
+    if cfg_region and len(cfg_region) == 4 and cfg_region[2] > 0 and cfg_region[3] > 0:
+        region = tuple(cfg_region)
+    # 无有效区域时尝试全局 OCR 区域
     if not region:
         global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
         if global_region[2] > 0 and global_region[3] > 0:
@@ -854,46 +894,18 @@ def ocr_find_by_config(var_name, timeout=20):
 
 
 # config 图片路径 → var_name 映射（用于 OCR 智能调度）
+# 自动从 TEMPLATE_CAPTURE_LIST 生成，无需手动维护
 _IMAGE_TO_VAR = None
 
 def _get_image_to_var():
     global _IMAGE_TO_VAR
     if _IMAGE_TO_VAR is None:
-        _IMAGE_TO_VAR = {
-            config.IMAGE_LOGIN_BTN: "IMAGE_LOGIN_BTN",
-            config.DELTA_LAUNCH_BTN: "DELTA_LAUNCH_BTN",
-            config.Hazard_Operations: "Hazard_Operations",
-            config.Special_Ops: "Special_Ops",
-            config.Tech_Center: "Tech_Center",
-            config.Tool_Bench: "Tool_Bench",
-            config.Armor_Station: "Armor_Station",
-            config.Pharmacy_Station: "Pharmacy_Station",
-            config.MAKE: "MAKE",
-            config.Produce: "Produce",
-            config.Collect: "Collect",
-            config.Auto_fill: "Auto_fill",
-            config.Claim_Reward: "Claim_Reward",
-            config.COIN_GAME: "COIN_GAME",
-            config.Warehouse: "Warehouse",
-            config.Sell: "Sell",
-            config.List_Item: "List_Item",
-            config.Discount: "Discount",
-            config.Confirm_Listing: "Confirm_Listing",
-            config.EMAIL_MAIL: "EMAIL_MAIL",
-            config.EMAIL_TRADE_HOUSE: "EMAIL_TRADE_HOUSE",
-            config.EMAIL_CLAIM_ALL: "EMAIL_CLAIM_ALL",
-            config.EMAIL_RECEIVE_COMPLETED: "EMAIL_RECEIVE_COMPLETED",
-            config.Produce_TechCenter: "Produce_TechCenter",
-            config.Produce_ToolBench: "Produce_ToolBench",
-            config.Produce_ArmorStation: "Produce_ArmorStation",
-            config.Produce_PharmacyStation: "Produce_PharmacyStation",
-            # WeGame 登录相关
-            config.DELTA_GAME_ICON: "DELTA_GAME_ICON",
-            config.LOGIN_AGAIN: "LOGIN_AGAIN",
-            config.ACCOUNT_SELECT: "ACCOUNT_SELECT",
-            config.IMAGE_INPUT_FIELD: "IMAGE_INPUT_FIELD",
-            config.SIGN_IN: "SIGN_IN",
-        }
+        _IMAGE_TO_VAR = {}
+        for entry in config.TEMPLATE_CAPTURE_LIST:
+            var_name = entry[0]
+            resolved = getattr(config, var_name, None)
+            if resolved:
+                _IMAGE_TO_VAR[resolved] = var_name
     return _IMAGE_TO_VAR
 
 
@@ -902,34 +914,30 @@ def find_and_click_smart(img_path, timeout=20, region=None, confidence=None,
     """
     智能识别点击：优先使用 OCR（如果配置了），否则使用图像匹配。
     自动根据 img_path 查找对应的 var_name OCR 配置。
-    连续 OCR 超时 2 次后自动禁用 OCR，全部降级为图像识别。
+    单 var_name 连续 OCR 失败 3 次后临时禁用（5分钟自动恢复），仅影响该 var_name。
     可通过全局 OCR 设置中的"OCR 降级"关闭降级，OCR 失败后直接返回 False。
     """
-    global _ocr_timeout_count, _ocr_failed
     var_map = _get_image_to_var()
     var_name = var_map.get(img_path)
 
-    if var_name and not _ocr_failed:
+    if var_name and not _ocr_failed and not _ocr_is_disabled(var_name):
         ocr_result = ocr_find_by_config(var_name, timeout=timeout)
         if ocr_result is True:
-            _ocr_timeout_count = 0  # 成功则重置计数
+            _ocr_record_success(var_name)
             print(f"✅ OCR 识别成功：{var_name}")
             return True
         if ocr_result is False:
-            # 检查是否允许降级到图片匹配
             settings = config.load_settings()
             downgrade_enabled = settings.get("ocr_downgrade_enabled", True)
             if not downgrade_enabled:
-                _ocr_timeout_count = 0
                 print(f"❌ OCR 未识别到：{var_name}（降级已关闭，不使用图片匹配）")
                 return False
-            _ocr_timeout_count += 1
-            print(f"⚠️ OCR 超时，回退到图像匹配：{var_name}（连续超时 {_ocr_timeout_count}/2）")
-            if _ocr_timeout_count >= 2:
-                _ocr_failed = True
-                print("⚠️ OCR 连续超时 2 次，已自动禁用 OCR，后续全部使用图像识别")
+            _ocr_record_failure(var_name)
+            if _ocr_is_disabled(var_name):
+                print(f"⚠️ {var_name} OCR 连续失败 {_OCR_MAX_FAILURES} 次，已临时禁用（5分钟后自动恢复）")
+            else:
+                print(f"⚠️ OCR 超时，回退到图像匹配：{var_name}")
 
-    # 有 OCR 配置但初次未启用（var_name 无 text 配置）、已禁用、或无 var_name 映射，都用图像匹配
     if var_name:
         print(f"🔍 使用图片识别：{var_name}")
     else:

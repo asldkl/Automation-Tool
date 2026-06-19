@@ -1,6 +1,6 @@
 """
 核心模块单元测试
-覆盖：cooldown_manager, asset_db, credential_crypto, config, utils, email_notifier
+覆盖：cooldown_manager, asset_db, config, utils, email_notifier
 通过实际调用函数验证逻辑，而非源码字符串匹配
 """
 import os
@@ -181,56 +181,6 @@ class TestAssetDB(unittest.TestCase):
         cursor = conn.execute("SELECT COUNT(*) FROM asset_records")
         count = cursor.fetchone()[0]
         self.assertGreaterEqual(count, 1)
-
-
-# ==================== credential_crypto ====================
-class TestCredentialCrypto(unittest.TestCase):
-    """测试凭据加密模块"""
-
-    def test_encrypt_decrypt_roundtrip(self):
-        """加密后解密应得到原始值"""
-        from credential_crypto import encrypt_value, decrypt_value
-        original = "my_smtp_code_12345"
-        encrypted = encrypt_value(original)
-        self.assertNotEqual(encrypted, original)
-        decrypted = decrypt_value(encrypted)
-        self.assertEqual(decrypted, original)
-
-    def test_encrypt_empty_string(self):
-        """空字符串加密应返回空"""
-        from credential_crypto import encrypt_value
-        self.assertEqual(encrypt_value(""), "")
-
-    def test_decrypt_plaintext_passthrough(self):
-        """明文解密应原样返回（向后兼容）"""
-        from credential_crypto import decrypt_value
-        plaintext = "not_encrypted"
-        self.assertEqual(decrypt_value(plaintext), plaintext)
-
-    def test_is_encrypted(self):
-        """判断是否已加密"""
-        from credential_crypto import encrypt_value, is_encrypted
-        self.assertFalse(is_encrypted(""))
-        self.assertFalse(is_encrypted("plaintext"))
-        encrypted = encrypt_value("secret")
-        self.assertTrue(is_encrypted(encrypted))
-
-    def test_encrypt_settings(self):
-        """加密设置中的敏感字段（smtp_code 不加密）"""
-        from credential_crypto import encrypt_settings, is_encrypted
-        settings = {"smtp_code": "my_code", "confidence": 0.7}
-        enc = encrypt_settings(settings)
-        self.assertFalse(is_encrypted(enc["smtp_code"]))  # smtp_code 不再加密
-        self.assertEqual(enc["smtp_code"], "my_code")
-        self.assertEqual(enc["confidence"], 0.7)
-
-    def test_decrypt_settings(self):
-        """解密设置中的敏感字段"""
-        from credential_crypto import encrypt_settings, decrypt_settings
-        settings = {"smtp_code": "my_code", "confidence": 0.7}
-        enc = encrypt_settings(settings)
-        dec = decrypt_settings(enc)
-        self.assertEqual(dec["smtp_code"], "my_code")
 
 
 # ==================== config ====================

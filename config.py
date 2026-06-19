@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import winreg
+import threading
 
 # ==================== 有效期由服务器端统一校验 ====================
 
@@ -153,9 +154,7 @@ DEFAULT_SETTINGS = {
     "run_on_startup": False,          # 开机立即运行一次程序
     # 一键出售
     "enable_sell_after_run": False,   # 主流程完成后执行一键售卖
-    "sell_discount_times": 0,         # 降价次数（0-5）
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
-    "sell_quantity": 1,               # 每个物品出售次数（1-99，用于产出数量>1的物品）
     "sell_time_enabled": False,       # 是否启用售卖时间区间
     "sell_time_start": "08:00",       # 售卖开始时间 (HH:MM)
     "sell_time_end": "22:00",         # 售卖结束时间 (HH:MM)
@@ -192,48 +191,47 @@ DEFAULT_SETTINGS = {
 
 _settings_cache = None
 _settings_cache_mtime = 0
+_settings_lock = threading.Lock()
 
 def load_settings():
-    """加载用户设置（敏感字段自动解密），带文件修改时间缓存"""
+    """加载用户设置（敏感字段自动解密），带文件修改时间缓存（线程安全）"""
     global _settings_cache, _settings_cache_mtime
-    try:
-        mtime = os.path.getmtime(SETTINGS_JSON_PATH) if os.path.exists(SETTINGS_JSON_PATH) else 0
-    except Exception:
-        mtime = 0
-    if _settings_cache is not None and mtime == _settings_cache_mtime:
-        return dict(_settings_cache)
-    if not os.path.exists(SETTINGS_JSON_PATH):
-        _settings_cache = dict(DEFAULT_SETTINGS)
-        _settings_cache_mtime = 0
-        return dict(_settings_cache)
-    try:
-        with open(SETTINGS_JSON_PATH, "r", encoding="utf-8") as f:
-            saved = json.load(f)
-        settings = dict(DEFAULT_SETTINGS)
-        settings.update(saved)
-        from credential_crypto import decrypt_settings
-        settings = decrypt_settings(settings)
-        _settings_cache = settings
-        _settings_cache_mtime = mtime
-        return dict(settings)
-    except Exception:
-        _settings_cache = dict(DEFAULT_SETTINGS)
-        _settings_cache_mtime = 0
-        return dict(_settings_cache)
+    with _settings_lock:
+        try:
+            mtime = os.path.getmtime(SETTINGS_JSON_PATH) if os.path.exists(SETTINGS_JSON_PATH) else 0
+        except Exception:
+            mtime = 0
+        if _settings_cache is not None and mtime == _settings_cache_mtime:
+            return dict(_settings_cache)
+        if not os.path.exists(SETTINGS_JSON_PATH):
+            _settings_cache = dict(DEFAULT_SETTINGS)
+            _settings_cache_mtime = 0
+            return dict(_settings_cache)
+        try:
+            with open(SETTINGS_JSON_PATH, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            settings = dict(DEFAULT_SETTINGS)
+            settings.update(saved)
+            _settings_cache = settings
+            _settings_cache_mtime = mtime
+            return dict(settings)
+        except Exception:
+            _settings_cache = dict(DEFAULT_SETTINGS)
+            _settings_cache_mtime = 0
+            return dict(_settings_cache)
 
 def save_settings(settings):
-    """保存用户设置到 JSON 文件（敏感字段加密存储）"""
+    """保存用户设置到 JSON 文件（线程安全）"""
     global _settings_cache, _settings_cache_mtime
-    try:
-        from credential_crypto import encrypt_settings
-        to_save = encrypt_settings(settings)
-        with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
-            json.dump(to_save, f, ensure_ascii=False, indent=2)
-        # 保存后立即更新缓存
-        _settings_cache = dict(settings)
-        _settings_cache_mtime = os.path.getmtime(SETTINGS_JSON_PATH)
-    except Exception as e:
-        print(f"⚠️ 保存设置失败：{e}")
+    with _settings_lock:
+        try:
+            with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
+            # 保存后立即更新缓存
+            _settings_cache = dict(settings)
+            _settings_cache_mtime = os.path.getmtime(SETTINGS_JSON_PATH)
+        except Exception as e:
+            print(f"⚠️ 保存设置失败：{e}")
 
 # ==================== 自动获取 WeGame 路径 ====================
 def get_wegame_path_from_reg():
@@ -280,8 +278,7 @@ IMAGE_LOGIN_BTN      = resource_path("picture/wegame_login/login_btn.png")
 DELTA_GAME_ICON     = resource_path("picture/wegame_login/delta_game_icon.png")
 DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
 LOGIN_AGAIN         = resource_path("picture/wegame_login/login_again.png")
-# WeGame QQ 账号登录（新模式）
-QQ_ACCOUNT_SIGN_IN  = resource_path("picture/wegame_login/QQAccount_Sign-in.png")
+
 ACCOUNT_SELECT      = resource_path("picture/wegame_login/account_select.png")
 SIGN_IN             = resource_path("picture/wegame_login/Sign-in.png")
 IMAGE_INPUT_FIELD   = resource_path("picture/wegame_login/Input.png")

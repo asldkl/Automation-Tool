@@ -709,15 +709,17 @@ def run_script_main(app):
                 server_client.update_account_status(app, file_name, "cooling")
                 continue
 
-            if app._ignore_cooldown_this_run and not app._is_boot_startup:
-                print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
-            if app.settings.get("enable_cooldown", False) and (not app._ignore_cooldown_this_run or app._is_boot_startup):
+            # 冷却检查：冷却到期/定时触发可跳过冷却；开机启动始终遵守冷却
+            skip_cooldown = app._ignore_cooldown_this_run and not app._is_boot_startup
+            if app.settings.get("enable_cooldown", False) and not skip_cooldown:
                 cooling, next_time = cooldown_manager.is_cooling_down(file_name)
                 if cooling:
                     print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
                     processed_accounts.append(f"{file_name} (冷却中)")
                     server_client.update_account_status(app, file_name, "cooling")
                     continue
+            elif skip_cooldown:
+                print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
 
             acc_text = f"第 {i+1}/{total} 个账号"
             app.root.after(0, update_ui, app, False, acc_text, file_name)

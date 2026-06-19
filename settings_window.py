@@ -1596,16 +1596,19 @@ class SettingsWindow:
             winreg.CloseKey(key)
 
     def _save(self):
+        # 从磁盘加载最新设置，避免覆盖其他模块（如模板向导）保存的 OCR 配置
+        fresh = config.load_settings()
+
         # 全局设置
-        self.app.settings["wegame_path"] = self.wegame_var.get()
-        self.app.settings["delta_path"] = self.delta_var.get()
-        self.app.settings["confidence"] = round(self.confidence_var.get(), 2)
-        self.app.settings["log_save_path"] = self.log_var.get()
+        fresh["wegame_path"] = self.wegame_var.get()
+        fresh["delta_path"] = self.delta_var.get()
+        fresh["confidence"] = round(self.confidence_var.get(), 2)
+        fresh["log_save_path"] = self.log_var.get()
         self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())
-        self.app.settings["run_on_startup"] = self.run_on_startup_var.get()
+        fresh["run_on_startup"] = self.run_on_startup_var.get()
 
         # 冷却执行设置
-        self.app.settings["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
+        fresh["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
 
         # 执行操作
         ops = []
@@ -1613,58 +1616,62 @@ class SettingsWindow:
         if self.op_bench.get(): ops.append("tool_bench")
         if self.op_armor.get(): ops.append("armor_station")
         if self.op_pharmacy.get(): ops.append("pharmacy_station")
-        self.app.settings["selected_operations"] = ops
+        fresh["selected_operations"] = ops
 
         # 自动关机
-        self.app.settings["auto_shutdown_enabled"] = self.shutdown_enable_var.get()
-        self.app.settings["auto_shutdown_time"] = self.shutdown_time_var.get()
-        self.app.settings["post_run_shutdown_delay"] = self.post_run_shutdown_delay_var.get()
+        fresh["auto_shutdown_enabled"] = self.shutdown_enable_var.get()
+        fresh["auto_shutdown_time"] = self.shutdown_time_var.get()
+        fresh["post_run_shutdown_delay"] = self.post_run_shutdown_delay_var.get()
 
         # 邮件通知设置
-        self.app.settings["email_enabled"] = self.email_enable_var.get()
-        self.app.settings["smtp_code"] = self.smtp_code_var.get()
-        self.app.settings["sender_email"] = self.sender_email_var.get()
-        self.app.settings["receiver_email"] = self.receiver_email_var.get()
-        self.app.settings["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
+        fresh["email_enabled"] = self.email_enable_var.get()
+        fresh["smtp_code"] = self.smtp_code_var.get()
+        fresh["sender_email"] = self.sender_email_var.get()
+        fresh["receiver_email"] = self.receiver_email_var.get()
+        fresh["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
 
         # 游戏启动等待
-        self.app.settings["game_launch_wait"] = self.game_launch_wait_var.get()
+        fresh["game_launch_wait"] = self.game_launch_wait_var.get()
 
         # 一键出售设置
-        self.app.settings["enable_sell_after_run"] = self.enable_sell_var.get()
-        self.app.settings["sell_confidence"] = round(self.sell_confidence_var.get(), 2)
+        fresh["enable_sell_after_run"] = self.enable_sell_var.get()
+        fresh["sell_confidence"] = round(self.sell_confidence_var.get(), 2)
 
         # 售卖时间区间
-        self.app.settings["sell_time_enabled"] = self.sell_time_enabled_var.get()
-        self.app.settings["sell_time_start"] = self.sell_time_start_var.get().strip()
-        self.app.settings["sell_time_end"] = self.sell_time_end_var.get().strip()
+        fresh["sell_time_enabled"] = self.sell_time_enabled_var.get()
+        fresh["sell_time_start"] = self.sell_time_start_var.get().strip()
+        fresh["sell_time_end"] = self.sell_time_end_var.get().strip()
 
         # 保存物品元数据
         self._save_sell_items_meta()
 
         # 邮箱货币设置
-        self.app.settings["enable_email_currency"] = self.email_currency_var.get()
+        fresh["enable_email_currency"] = self.email_currency_var.get()
 
         # 资产识别设置
-        self.app.settings["enable_asset_recognition"] = self.enable_asset_var.get()
+        fresh["enable_asset_recognition"] = self.enable_asset_var.get()
         try:
             region_str = self.asset_region_var.get().strip()
             if region_str:
                 region = ast.literal_eval(region_str)
                 if isinstance(region, list) and len(region) == 4:
-                    self.app.settings["asset_region"] = region
+                    fresh["asset_region"] = region
         except Exception:
             pass
 
         # 冷却管理设置
-        self.app.settings["enable_cooldown"] = self.cooldown_enable_var.get()
-        self.app.settings["cooldown_hours"] = self.cooldown_hours_var.get()
-        self.app.settings["cooldown_delay_minutes"] = self.cooldown_delay_var.get()
+        fresh["enable_cooldown"] = self.cooldown_enable_var.get()
+        fresh["cooldown_hours"] = self.cooldown_hours_var.get()
+        fresh["cooldown_delay_minutes"] = self.cooldown_delay_var.get()
 
-        config.APP_SETTINGS.update(self.app.settings)
-        config.save_settings(config.APP_SETTINGS)
-        config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
-        config.CONFIDENCE = config.APP_SETTINGS["confidence"]
+        # 滚动量
+        fresh["scroll_amount"] = self.scroll_amount_var.get()
+
+        # 保存并同步内存中的设置引用
+        config.save_settings(fresh)
+        config.APP_SETTINGS.update(fresh)
+        config.WEGAME_PATH = fresh.get("wegame_path", "")
+        config.CONFIDENCE = fresh["confidence"]
         self.app.update_confidence_display()
 
         # 应用定时设置

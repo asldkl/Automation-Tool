@@ -5,12 +5,14 @@
 import os
 import json
 import datetime
+import threading
 
 COOLDOWN_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown.json")
 
 # 内存缓存：避免每次读操作都访问磁盘
 _cache = None
 _cache_mtime = 0.0
+_lock = threading.Lock()
 
 
 def _load_data():
@@ -58,7 +60,8 @@ def is_cooling_down(account_name):
     检查账号是否在冷却中（暂停状态也算冷却中）
     返回: (is_cooling: bool, next_run_time_str: str or None)
     """
-    data = _load_data()
+    with _lock:
+        data = _load_data()
     if account_name not in data:
         return False, None
 
@@ -86,35 +89,38 @@ def record_run(account_name, cooldown_hours=8):
     记录账号运行完成，计算下次运行时间
     cooldown_hours: 冷却小时数
     """
-    data = _load_data()
-    now = datetime.datetime.now()
-    next_run = now + datetime.timedelta(hours=cooldown_hours)
+    with _lock:
+        data = _load_data()
+        now = datetime.datetime.now()
+        next_run = now + datetime.timedelta(hours=cooldown_hours)
 
-    if account_name in data:
-        data[account_name]["last_run_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
-        data[account_name]["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        data[account_name] = {
-            "last_run_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "next_run_time": next_run.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-    _save_data(data)
+        if account_name in data:
+            data[account_name]["last_run_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
+            data[account_name]["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            data[account_name] = {
+                "last_run_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "next_run_time": next_run.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        _save_data(data)
 
 
 def reset_cooldown(account_name):
     """重置指定账号的冷却"""
-    data = _load_data()
-    if account_name in data:
-        del data[account_name]
-        _save_data(data)
+    with _lock:
+        data = _load_data()
+        if account_name in data:
+            del data[account_name]
+            _save_data(data)
 
 
 def reset_all_cooldowns():
     """重置所有账号的冷却（保留暂停状态的账号）"""
-    data = _load_data()
-    # 仅保留暂停状态的账号
-    paused_data = {k: v for k, v in data.items() if v.get("account_paused")}
-    _save_data(paused_data)
+    with _lock:
+        data = _load_data()
+        # 仅保留暂停状态的账号
+        paused_data = {k: v for k, v in data.items() if v.get("account_paused")}
+        _save_data(paused_data)
 
 
 def get_all_cooldowns():
@@ -122,7 +128,8 @@ def get_all_cooldowns():
     获取所有账号的冷却信息
     返回: dict, key=account_name, value={last_run_time, next_run_time, remaining_seconds, paused}
     """
-    data = _load_data()
+    with _lock:
+        data = _load_data()
     now = datetime.datetime.now()
     result = {}
     for name, entry in data.items():
@@ -153,102 +160,108 @@ def set_custom_cooldown(account_name, next_run_time_str):
     为指定账号设置自定义冷却结束时间
     next_run_time_str: "YYYY-MM-DD HH:MM:SS" 或 "HH:MM" 格式
     """
-    data = _load_data()
-    now = datetime.datetime.now()
+    with _lock:
+        data = _load_data()
+        now = datetime.datetime.now()
 
-    # 支持 "HH:MM" 格式（当天或明天的该时间）
-    try:
-        if ":" in next_run_time_str and len(next_run_time_str) <= 5:
-            h, m = map(int, next_run_time_str.split(":"))
-            next_run = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if next_run <= now:
-                next_run += datetime.timedelta(days=1)
-        else:
-            next_run = datetime.datetime.strptime(next_run_time_str, "%Y-%m-%d %H:%M:%S")
-    except Exception:
-        return False
+        # 支持 "HH:MM" 格式（当天或明天的该时间）
+        try:
+            if ":" in next_run_time_str and len(next_run_time_str) <= 5:
+                h, m = map(int, next_run_time_str.split(":"))
+                next_run = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                if next_run <= now:
+                    next_run += datetime.timedelta(days=1)
+            else:
+                next_run = datetime.datetime.strptime(next_run_time_str, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return False
 
-    if account_name not in data:
-        data[account_name] = {}
+        if account_name not in data:
+            data[account_name] = {}
 
-    data[account_name]["last_run_time"] = data[account_name].get("last_run_time", now.strftime("%Y-%m-%d %H:%M:%S"))
-    data[account_name]["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
-    _save_data(data)
-    return True
+        data[account_name]["last_run_time"] = data[account_name].get("last_run_time", now.strftime("%Y-%m-%d %H:%M:%S"))
+        data[account_name]["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
+        _save_data(data)
+        return True
 
 
 def pause_cooldown(account_name):
     """暂停指定账号的冷却倒计时，保存剩余秒数"""
-    data = _load_data()
-    if account_name not in data:
-        return False
-    entry = data[account_name]
-    if entry.get("paused"):
-        return False  # 已经暂停
-    next_run_str = entry.get("next_run_time", "")
-    if not next_run_str:
-        return False
-    try:
-        next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-        now = datetime.datetime.now()
-        remaining = max(0, int((next_run - now).total_seconds()))
-        if remaining <= 0:
-            return False  # 已过期，无需暂停
-        entry["paused"] = True
-        entry["paused_remaining"] = remaining
-        _save_data(data)
-        return True
-    except Exception:
-        return False
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        entry = data[account_name]
+        if entry.get("paused"):
+            return False  # 已经暂停
+        next_run_str = entry.get("next_run_time", "")
+        if not next_run_str:
+            return False
+        try:
+            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+            now = datetime.datetime.now()
+            remaining = max(0, int((next_run - now).total_seconds()))
+            if remaining <= 0:
+                return False  # 已过期，无需暂停
+            entry["paused"] = True
+            entry["paused_remaining"] = remaining
+            _save_data(data)
+            return True
+        except Exception:
+            return False
 
 
 def resume_cooldown(account_name):
     """恢复指定账号的冷却倒计时，从暂停时的剩余时间重新计算"""
-    data = _load_data()
-    if account_name not in data:
-        return False
-    entry = data[account_name]
-    if not entry.get("paused"):
-        return False  # 未暂停
-    remaining = entry.get("paused_remaining", 0)
-    if remaining <= 0:
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        entry = data[account_name]
+        if not entry.get("paused"):
+            return False  # 未暂停
+        remaining = entry.get("paused_remaining", 0)
+        if remaining <= 0:
+            entry.pop("paused", None)
+            entry.pop("paused_remaining", None)
+            _save_data(data)
+            return True
+        now = datetime.datetime.now()
+        next_run = now + datetime.timedelta(seconds=remaining)
+        entry["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
         entry.pop("paused", None)
         entry.pop("paused_remaining", None)
         _save_data(data)
         return True
-    now = datetime.datetime.now()
-    next_run = now + datetime.timedelta(seconds=remaining)
-    entry["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
-    entry.pop("paused", None)
-    entry.pop("paused_remaining", None)
-    _save_data(data)
-    return True
 
 
 def is_paused(account_name):
     """检查账号的冷却是否处于暂停状态"""
-    data = _load_data()
-    if account_name not in data:
-        return False
-    return bool(data[account_name].get("paused"))
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        return bool(data[account_name].get("paused"))
 
 
 def set_account_paused(account_name, paused):
     """设置账号暂停状态（独立于冷却，暂停后运行时跳过该账号）"""
-    data = _load_data()
-    if account_name not in data:
-        data[account_name] = {}
-    data[account_name]["account_paused"] = paused
-    _save_data(data)
-    return True
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            data[account_name] = {}
+        data[account_name]["account_paused"] = paused
+        _save_data(data)
+        return True
 
 
 def is_account_paused(account_name):
     """检查账号是否被暂停（暂停后运行时跳过该账号）"""
-    data = _load_data()
-    if account_name not in data:
-        return False
-    return bool(data[account_name].get("account_paused"))
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        return bool(data[account_name].get("account_paused"))
 
 
 def remove_expired_cooldowns():
@@ -257,31 +270,32 @@ def remove_expired_cooldowns():
     保留 account_paused 状态的记录（仅清除冷却字段，不清除暂停标记）
     返回: 被移除的账号名称列表
     """
-    data = _load_data()
-    now = datetime.datetime.now()
-    removed = []
-    for name, entry in list(data.items()):
-        # 账号暂停状态的记录不删除，仅清除冷却相关字段
-        if entry.get("account_paused"):
-            if "next_run_time" in entry or "last_run_time" in entry:
-                entry.pop("next_run_time", None)
-                entry.pop("last_run_time", None)
-                entry.pop("paused", None)
-                entry.pop("paused_remaining", None)
-                entry.pop("paused_at", None)
-            continue
-        next_run_str = entry.get("next_run_time", "")
-        if not next_run_str:
-            removed.append(name)
-            continue
-        try:
-            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-            if now >= next_run:
+    with _lock:
+        data = _load_data()
+        now = datetime.datetime.now()
+        removed = []
+        for name, entry in list(data.items()):
+            # 账号暂停状态的记录不删除，仅清除冷却相关字段
+            if entry.get("account_paused"):
+                if "next_run_time" in entry or "last_run_time" in entry:
+                    entry.pop("next_run_time", None)
+                    entry.pop("last_run_time", None)
+                    entry.pop("paused", None)
+                    entry.pop("paused_remaining", None)
+                    entry.pop("paused_at", None)
+                continue
+            next_run_str = entry.get("next_run_time", "")
+            if not next_run_str:
                 removed.append(name)
-        except Exception:
-            removed.append(name)
-    for name in removed:
-        del data[name]
-    if removed:
-        _save_data(data)
-    return removed
+                continue
+            try:
+                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                if now >= next_run:
+                    removed.append(name)
+            except Exception:
+                removed.append(name)
+        for name in removed:
+            del data[name]
+        if removed:
+            _save_data(data)
+        return removed

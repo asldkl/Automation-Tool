@@ -141,6 +141,7 @@ def sell_operations(settings, stop_event, set_operation):
             if quantity > 1:
                 print(f"  📦 第 {qty + 1}/{quantity} 次出售")
 
+            # 用户上传的出售物品图片无对应 OCR 文本，直接图像匹配
             if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
                 print(f"⚠️ 未找到物品 {item_name}，跳过")
                 sell_stats["not_found"] += 1
@@ -160,11 +161,15 @@ def sell_operations(settings, stop_event, set_operation):
             utils.smooth_move_to(20, 20)
             time.sleep(0.5)
 
-            for i in range(discount_times):
+            if discount_times > 0:
+                # 首次识别降价按钮并点击，鼠标停在按钮位置
                 if utils.find_and_click_smart(config.Discount, timeout=5):
-                    print(f"📉 降价 {i + 1}/{discount_times}")
-                    utils.smooth_move_to(20, 20)
+                    print(f"📉 降价 1/{discount_times}")
                     time.sleep(0.3)
+                    # 鼠标已在按钮上，原地继续点击剩余次数
+                    for _ in range(1, discount_times):
+                        pyautogui.click()
+                        time.sleep(0.3)
 
             if not utils.find_and_click_smart(config.Confirm_Listing, timeout=10):
                 print(f"❌ 未找到确认上架按钮")

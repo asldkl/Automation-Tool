@@ -2,8 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.2.1
-日期: 2026-06-15
+版本: v1.3.0
+日期: 2026-06-19
 作者: 开发团队
 
 ================================================================================
@@ -62,7 +62,7 @@
 ├── cooldown_manager.py      # 冷却管理模块（含暂停/恢复功能）
 ├── relative_mouse_move.py   # 贝塞尔曲线鼠标移动模块（v1.1.2 新增）
 ├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
-├── credential_crypto.py     # 凭据加密模块（v1.1.4 新增，Fernet + PBKDF2）
+
 ├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
 ├── test_all_features.py     # 全功能测试套件（52 项）
 ├── test_core_modules.py     # 核心模块单元测试（v1.1.4 新增，35 项）
@@ -195,7 +195,7 @@ gui_app.py
 v1.0.3 采用全新的服务器端验证架构，彻底移除了本地有效期校验：
 
 旧机制（已移除）：
-    - 本地 XOR 加密有效期（crypto_utils.py）
+    - 本地 XOR 加密有效期
     - 多时间源交叉验证（淘宝/苏宁/世界时间API）
     - 本地时间戳防篡改（~/.delta_auto_timestamp.dat）
     - 以上代码已全部删除，不再使用
@@ -400,11 +400,10 @@ POST /api/v1/heartbeat
     - uac_admin: 请求管理员权限
 
 hiddenimports 包含的模块:
-    config, utils, settings_window, template_capture, crypto_utils,
+    config, utils, settings_window, template_capture,
     cooldown_manager, automation, machine_fingerprint, relative_mouse_move,
     email_notifier, account_manager, scheduler, cooldown_watcher,
-    server_client, automation_runner, asset_db, credential_crypto,
-    cryptography, cryptography.fernet, cryptography.hazmat.primitives.kdf.pbkdf2,
+    server_client, automation_runner, asset_db,
     psutil, win32gui, win32con, win32api, win32event, win32security,
     pystray, PIL, PIL.Image, cv2, numpy, pyautogui,
     smtplib, email, email.mime, email.mime.text, email.mime.multipart
@@ -613,6 +612,23 @@ v1.2.1 (2026-06-17)
 - 测试更新：修复 test_gui_version_updated、test_readme_has_v190_section、test_gui_app_has_wegame_login 等断言
 
 ----------------------------------------
+v1.3.0 (2026-06-19)
+----------------------------------------
+
+- 移除凭据加密模块：删除 credential_crypto.py、crypto_utils.py；settings 改为纯 JSON 明文读写
+- 冷却线程安全锁：cooldown_manager.py 所有公共函数添加 threading.Lock，防止并发读写
+- _IMAGE_TO_VAR 自动生成：从 TEMPLATE_CAPTURE_LIST 自动构建映射，无需手动维护
+- 模板缓存 LRU：限制最大 50 项，自动淘汰最久未使用的缓存模板
+- OCR 自动恢复：按 var_name 跟踪失败次数，3 次连续失败临时禁用（5分钟自动恢复），不影响其他模板
+- 点击坐标边界校验：ocr_find_and_click/ocr_find_and_click_offset 新增屏幕边界检查
+- 降价逻辑优化：首次识别降价按钮后原地 click 剩余次数，无需重复图像匹配
+- 截图 close() 安全：_screenshot_gray 用 try/finally 确保异常路径释放截图资源
+- 去除 cryptography 依赖：spec 文件清理 crypt 相关 hiddenimports
+- 重复 ctypes 导入移至文件顶部
+- 冷却开机启动逻辑简化：合并双重 if 条件为单一 skip_cooldown 变量
+- 核心模块单元测试更新（28 项，移除 6 项加密测试）
+
+----------------------------------------
 v1.2.0 (2026-06-14)
 ----------------------------------------
 
@@ -689,11 +705,8 @@ v1.1.4 (2026-06-10)
 - 代码精简：gui_app.py 删除 15+ 个调度器代理方法和相关实例变量
 - 代码精简：config.py DEFAULT_SETTINGS 删除 10 个已废弃配置项
 - 安全修复：settings_window.py 中 eval() 替换为 ast.literal_eval()，防止代码注入
-- 安全新增：credential_crypto.py 凭据加密模块（Fernet 对称加密 + PBKDF2 密钥派生）
-  - SMTP 授权码加密存储（~/.delta_auto_settings.json 中 smtp_code 字段）
-  - 账号密码加密存储（~/.delta_auto_accounts.json 中 notes.password 字段）
-  - 密钥基于机器指纹派生，绑定当前设备，不同机器无法解密
-  - 向后兼容：旧明文数据首次读取后自动解密，下次保存时自动加密
+
+
 - 线程安全：gui_app.py 中 app.running 从布尔值改为 threading.Event 包装（@property 代理）
 - 性能优化：cooldown_manager.py 加入内存缓存（mtime 校验），避免每 30 秒磁盘读取
 - 性能优化：asset_db.py 改为 SQLite 单例连接，CREATE TABLE 仅首次执行
