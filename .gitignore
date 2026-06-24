@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec.bak
+*.egg
+
+# PyInstaller / Nuitka output
+dist_nuitka/
+dist_nuitka_standalone/
+installer_output/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Build artifacts
+*.zip
+*.tmp
+
+# Third-party (Interception driver source)
+Interception-master/
+
+# User data (runtime generated)
+~/.delta_auto_*

@@ -1,0 +1,445 @@
+================================================================================
+三角洲行动自动化工具 - 项目结构说明
+版本: v1.3.1
+用途: 辅助 AI 快速了解项目结构和各模块功能
+================================================================================
+
+【项目概述】
+基于图像识别（OpenCV 模板匹配）+ OCR 文字识别（RapidOCR）的《三角洲行动》游戏日常自动化工具。
+支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知。
+v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步、运行完成后延迟关机。
+v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资产识别、模块拆分重构。
+v1.1.0 新增：资产识别修复（直接 numpy 数组，无 BGR 转换）、设置界面 6 选项卡、主界面简化、窗口可调整大小。
+v1.1.1 新增：资产监测（SQLite 持久化 + 时间段统计）、账号备注（账号密码输入框）、使用说明移至设置页面。
+v1.1.2 新增：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞尔曲线移动、运行完成后清空残余状态。
+v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中。
+v1.1.4 新增：eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试。UI简化：删除电源管理页签和定时执行功能，全部改用冷却执行，设置页签从6个精简为5个。
+v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 账号限制）、图像识别登录界面按钮（无 OCR）、pyautogui.typewrite 逐键输入、密码必填校验、账号信息设置窗口、主界面四列显示（账号名称/现有资产/下次运行时间/备注）、账号序号、资产监测自定义天数。删除 OLA SDK 依赖、登录流程 OCR 代码。
+v1.2.0 新增：WeGame 直接登录（Interception 驱动级键盘输入）、代码重构（合并 find_and_click、缓存 settings、消除冗余颜色转换）、截图对象关闭、prevent_sleep 线程安全。新增 interception_keyboard.py 模块。
+v1.2.1 新增：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护、SMTP 不加密、冷却到期优先运行+10分钟等待、删除 QQ 无效设置、售卖物品元数据原子写入+备份保护。
+v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设置明文读写；代码质量优化（冷却线程安全锁、_IMAGE_TO_VAR 自动生成、模板 LRU 缓存、OCR 按 var_name 失败跟踪自动恢复、点击坐标边界校验）；降价逻辑优化（首次识别后原地点击剩余次数）；截图 close() 安全（try/finally）。
+v1.3.1 (2026-06-24)：
+   - 新增冷却到期定时任务兜底机制：Windows 任务计划程序 + 信号文件双重保障
+   - 设置界面新增「定时任务兜底」开关（自动任务选项卡）
+   - WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，超时从15秒降至10秒
+   - cooldown_manager.record_run 时自动创建定时任务（最早到期时间）
+   - gui_app 主界面每30秒检查信号文件，检测到即触发运行
+   - 修复冷却 key 匹配 bug：新增 _get_cooldown_key 统一短名称优先，解决 account: 前缀导致的冷却状态不同步
+   - 冷却触发时额外检查 10 分钟内到期账号并等待执行
+   - 暂停账号正确跳过（is_account_paused 检查修复）
+   - 定时任务静默执行（VBScript 包装，无 cmd 窗口弹出）
+   - 删除未使用的图片资源（qq_login、Department_Bullets、background.jpg 等）
+   - 模板上传向导改用截取方式（屏幕框选替代文件上传）
+   - 全局 OCR 窗口可调节大小
+   - 自定义冷却时间支持分钟（小时+分钟双 Spinbox）
+   - 所有弹出窗口大小记忆（关闭时保存，下次恢复）
+   - 删除屏幕唤醒鼠标移动功能
+   - 修复停止按钮关闭子窗口问题
+   - 开机自启动设置移至自动任务选项卡
+   - 模板上传向导序号显示
+
+【核心文件】
+
+├── main.py                     # 程序入口
+│   - 单实例保护（Windows Mutex）
+│   - 启动 gui_app.main()
+│   - 异常日志写入 ~/.delta_auto_error.log
+│
+├── gui_app.py                  # 主 GUI 应用（入口层，约 800 行）
+│   - App 类：主窗口、UI 构建、样式设置、系统托盘
+│   - __init__：初始化各模块、预初始化 OCR 引擎、异步服务器验证、_account_notes 备注
+│   - _async_validate() / _check_validate_result()：后台线程服务器验证（v1.1.4，不阻塞 UI）
+│   - _continue_init()：验证通过后继续初始化（v1.1.4 拆分）
+│   - running 属性：threading.Event 包装（v1.1.4，线程安全布尔标志）
+│   - _build_ui()：构建主界面（Treeview 账号列表、日志区域、控制按钮）
+│     - 按钮栏：添加账号、清空列表、冷却重置、资产监测
+│     - Treeview 四列：账号名称（左对齐+序号）、现有资产、下次运行时间、备注
+│     - Treeview 颜色标签：cooling（蓝色）、runnable（绿色）、paused（红色）
+│   - _setup_styles() / _setup_tray()：样式与托盘
+│   - open_settings()：打开设置窗口
+│   - 所有业务逻辑委托给 7 个子模块（见下方）
+│
+├── automation_runner.py        # 自动化运行模块（v1.1.0 拆分，约 596 行）
+│   - start_run() / stop_run()：启动/停止自动化任务
+│   - run_script_main()：主自动化循环（v1.1.4 重构为 ~80 行，调用 8 个子函数）
+│   - _validate_daily() / _cleanup_processes() / _login_account()
+│   - _launch_game() / _recognize_and_store_asset() / _close_game() / _cleanup_account_processes()
+│   - _ensure_wegame_focused()：WeGame 窗口聚焦检查，失去焦点时自动激活（v1.2.1 新增）
+│   - _login_account()：WeGame 直接登录（v1.2.0，Interception 驱动级键盘输入）
+│     - 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空
+│     - Interception 驱动级键盘输入账号和密码（绕开 QQ 同 IP 验证码）
+│     - 输入前检查 WeGame 窗口聚焦（v1.2.1）
+│     - 图像识别点击 Sign-in 登录
+│     - 失败时记录具体错误到 app._last_account_error（v1.2.1）
+│   - _get_cooldown_key()：统一冷却 key 匹配（优先短名称，兼容 account: 前缀，v1.3.1 新增）
+│   - _recognize_asset()：资产识别（RapidOCR 缓存引擎，直接 numpy 数组，无 BGR 转换）
+│   - 资产识别后自动调用 asset_db.record_asset() 写入 SQLite
+│   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作（含 asset_db 钩子）
+│   - sell_operations_wrapper()：委托 automation.sell_operations() 执行一键出售
+│   - _wait_and_run_nearby_cooldowns()：先运行已到期账号，再等待 10 分钟内到期的账号（v1.2.1）
+│     - run_script_main 开始前和结束后均调用（v1.3.1）
+│   - _run_single_account()：从冷却等待中调用的单账号运行（v1.3.1 使用 _get_cooldown_key）
+│   - on_finish()：任务完成后清空残余状态（进度条、状态标签）、刷新账号列表、延迟关机（可选 0-5 分钟）；手动终止时跳过邮件通知
+│   - update_ui() / set_operation()：UI 更新辅助
+│   - get_account_next_run() / build_accounts_html()：账号信息构建
+│
+├── scheduler.py                # 调度模块（v1.1.4 精简，约 100 行）
+│   - set_next_wake_timer()：计算冷却到期时间，设置唤醒定时器（v1.3.1 使用 _get_cooldown_key 统一 key）
+│   - update_cooldown_wake_timer()：冷却监听专用唤醒定时器更新（v1.3.1 使用 _get_cooldown_key）
+│   - apply_auto_settings()：应用冷却执行设置
+│
+├── account_manager.py          # 账号管理模块（v1.1.0 拆分，约 738 行）
+│   - save_accounts() / load_accounts()：账号持久化（含 notes 备注数据）
+│   - add_account() / delete_account() / clear_accounts()：账号增删
+│   - move_up() / move_down()：账号排序
+│   - refresh_account_tree()：刷新 Treeview 列表（四列：账号名称/现有资产/下次运行时间/备注）
+│   - show_account_menu() / manual_add_cooldown()：右键菜单
+│   - reset_selected_cooldown() / custom_cooldown_time() / reset_all_cooldowns()：冷却管理
+│   - toggle_account_pause()：暂停/恢复账号（独立于冷却）
+│   - _tree_idx_to_account_idx()：Treeview 索引转账号索引（跳过分隔行）
+│   - _account_key_from_path()：账号路径提取（支持 image 路径和 account: 占位路径）
+│   - _open_account_info_window()：账号信息设置窗口（v1.1.5 新增）
+│   - show_cooldown_window() / show_help()：弹窗
+│   - show_asset_history()：资产记录弹窗（居中、图标、无年份，v1.2.1 支持双击编辑资产值）
+│   - show_asset_monitor()：资产监测弹窗（SQLite 统计，自定义天数）
+│
+├── email_notifier.py           # 邮件通知模块（v1.1.0 拆分，约 250 行）
+│   - _get_email_config()：共享邮箱配置检查（v1.1.4 提取），4 个发送函数复用
+│   - send_run_report_email()：运行报告邮件（含每个账号资产数）
+│   - send_failure_email()：运行失败通知
+│   - send_account_failure_email()：单账号失败通知（v1.2.1 含错误日志）
+│   - send_cooldown_ready_email()：冷却到期提醒
+│
+├── cooldown_watcher.py         # 冷却监听模块（v1.1.0 拆分，约 160 行）
+│   - start_cooldown_watcher() / stop_cooldown_watcher()：启动/停止监听
+│   - restart_cooldown_watcher()：重启监听（含 hasattr 保护，v1.3.1）
+│   - cooldown_watcher_loop()：监听主循环（每 30 秒检查）
+│   - check_any_account_ready()：检查是否有账号冷却到期（排除暂停账号，v1.3.1 使用 _get_cooldown_key 统一 key）
+│
+├── server_client.py            # 服务器通信模块（v1.1.0 拆分，约 117 行）
+│   - validate_with_server()：服务器验证（机器指纹+有效期）
+│   - start_heartbeat() / stop_heartbeat()：心跳线程管理
+│   - heartbeat_loop() / send_heartbeat()：心跳数据发送
+│   - update_account_status()：更新账号运行状态
+│
+├── asset_db.py                 # 资产数据 SQLite 持久化模块（v1.1.1 新增）
+│   - 数据存储：~/.delta_auto_assets.db
+│   - record_asset()：记录资产快照（账号、时间戳、原始值、数值）
+│   - update_asset_record()：更新指定账号在指定时间的资产记录（v1.2.1 新增）
+│   - query_total_change(days)：查询最近 N 天所有账号资产变化总和
+│   - format_asset_num()：代理到 utils.format_asset_num()
+│   - 单例连接（v1.1.4）：CREATE TABLE 仅首次执行，连接复用
+│
+
+
+│
+├── driver_keyboard.py          # 驱动级键盘输入模块（v1.1.5 新增）
+│   - 使用 PyDirectInput，回退到 pyautogui
+│   - send_string()：发送字符串到指定窗口（剪贴板粘贴方式，QQ 密码框不兼容）
+│   - key_press() / key_down() / key_up()：按键操作
+│   - hold_key()：长按指定键（用于清空输入框）
+│   - get_backend()：获取当前使用的后端名称
+│   - 注：登录流程已改用 Interception 驱动级键盘输入，此模块保留供其他场景使用
+│
+├── interception_keyboard.py    # Interception 驱动级键盘输入模块（v1.2.0 新增）
+│   - 通过 ctypes 调用 interception.dll 实现驱动级键盘模拟
+│   - is_available()：检查 Interception 驱动和 DLL 是否可用
+│   - send_string(text, interval)：逐字符发送按键（扫描码方式）
+│   - send_key(char, interval)：发送单个按键事件
+│   - get_backend()：返回后端名称 "Interception"
+│   - 字符→扫描码映射表（支持字母、数字、常用符号、Shift 组合）
+│   - DLL 搜索路径：项目目录、Interception-master/library/、System32、sys._MEIPASS
+│   - 无降级方案：Interception 不可用时返回 False
+│   - 驱动状态：interception.sys（Authenticode 签名有效，GlobalSign CA 签发）
+│   - 工作模式：正常模式（非测试模式），本机 WHQL 驱动强制已禁用，驱动可正常加载
+
+├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
+│   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
+│   - handle_facility()：单个设施操作（制造→收取→领取→产出→购买材料）
+│   - sell_operations()：一键出售流程（仓库→物品→出售→上架→降价→确认）；降价首次识别后原地点击（v1.3.0）
+│
+├── config.py                   # 配置管理
+│   - DEFAULT_SETTINGS：所有默认配置项（含 server_url、client_key、post_run_shutdown_delay）
+│   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json（v1.2.0 mtime 缓存，v1.3.0 明文读写）
+│   - resource_path()：PyInstaller/Nuitka 资源路径处理
+│   - resolve_template_path()：用户自定义模板优先
+│   - get_sell_items()：获取售卖物品图片列表
+│   - load_sell_items_meta() / save_sell_items_meta()：售卖物品元数据（v1.2.1 原子写入+备份保护）
+│   - TEMPLATE_CAPTURE_LIST：所有模板图片定义（变量名、路径、中文描述）
+│   - WeGame 路径自动检测（Windows 注册表）
+│   - 屏幕分辨率检测与模板分辨率记录
+│   - WeGame 登录模板路径
+│
+├── machine_fingerprint.py      # 机器指纹模块（v1.0.3 新增）
+│   - get_machine_id()：获取本机 SHA256 指纹（32位十六进制）
+│   - _get_disk_serial()：WMI 获取硬盘序列号
+│   - _get_baseboard_serial()：WMI 获取主板序列号
+│   - _get_fallback_id()：降级方案（hostname + MAC）
+│   - 可独立运行测试: python machine_fingerprint.py
+│
+├── utils.py                    # 工具函数
+│   - 图像识别：
+│     - _find_and_click_core()：统一的图像识别+点击核心函数（v1.2.0，支持 multiscale/return_pos 参数）
+│     - _screenshot_gray()：截屏直接转灰度（try/finally 安全释放截图）
+│     - _match_template()：标准灰度模板匹配
+│     - find_and_click()：单尺度模板匹配+点击（薄包装，兼容旧调用）
+│     - find_and_click_multiscale()：多尺度复合匹配（薄包装）
+│     - find_and_click_smart()：智能匹配（OCR 优先 → 支持降级开关 → 超时回退图像匹配，日志区分识别方式）
+│     - _match_template_multiscale()：核心多尺度匹配算法（灰度+边缘）
+│   - 鼠标移动：
+│     - smooth_move_to()：贝塞尔曲线+Smoothstep平滑鼠标移动（v1.1.2 新增）
+│     - 调用 relative_mouse_move.perform_timed_relative_move() 实现
+│   - OCR 文字识别：
+│     - init_ocr_engine()：预初始化 RapidOCR 引擎（程序启动时调用）
+│     - _get_ocr_engine()：获取/创建 OCR 引擎（单例）
+│     - ocr_recognize()：对指定区域进行 OCR 识别，返回文字/置信度/坐标
+│     - ocr_find_and_click()：查找指定文字并点击（支持置信度过滤、调试日志）
+│     - ocr_find_by_config()：根据 OCR 配置（ocr_configs / global_ocr_texts）识别点击
+│     - _ocr_failures：按 var_name 跟踪失败次数，3 次连续失败临时禁用（5分钟自动恢复）
+│     - ocr_downgrade_enabled：OCR 降级开关（关闭时 OCR 失败不回落图像匹配）
+│   - 进程管理：
+│     - start_app() / kill_process() / close_window_by_title()
+│     - activate_window_by_title() / wait_for_window()
+│     - find_window_by_title()：查找窗口句柄（v1.1.5 新增，返回 hwnd）
+│   - WeGame 登录：
+│     - wegame_quick_login()：WeGame 快捷登录
+│   - 电源管理：
+│     - prevent_sleep() / allow_sleep()：防休眠
+│     - set_wake_timer() / cancel_wake_timer()：定时唤醒
+│     - schedule_shutdown() / cancel_shutdown()：自动关机
+│   - Windows 任务计划：
+│     - schedule_startup_task() / remove_startup_task()
+│     - write_cooldown_signal()：写入冷却触发信号文件（定时任务触发时通知已有实例）
+│     - check_cooldown_signal()：检查并消费信号文件
+│     - create_cooldown_scheduled_task()：创建一次性定时任务（到期写信号文件+启动程序）
+│     - remove_cooldown_scheduled_task()：删除冷却到期定时任务
+│   - 邮件发送：
+│     - send_email_notification()：QQ 邮箱 SMTP 发送
+│   - 共享工具（v1.1.4 新增）：
+│     - set_window_icon()：统一窗口图标设置（替代 8 处重复代码）
+│     - parse_asset_value()：资产字符串解析（'1.2M' → 1200000）
+│     - format_asset_num()：资产数值格式化（1200000 → '1.20M'）
+│
+├── relative_mouse_move.py      # 鼠标移动算法模块（v1.1.2 新增）
+│   - generate_relative_path_points()：生成贝塞尔曲线/Smoothstep路径点
+│   - perform_timed_relative_move()：执行带时间控制的相对鼠标移动
+│   - 贝塞尔曲线模式：二次贝塞尔，控制点垂直于移动方向偏移（amplitude=min(100, distance*0.2)）
+│   - Smoothstep模式：eased = progress² × (3.0 - 2.0 × progress) S曲线缓动
+│   - precise_sleep()：高精度睡眠（内联实现，修复原 utils.precise_sleep 导入错误）
+│
+├── settings_window.py          # 设置对话框（v1.1.4 精简，约 1100 行）
+│   - SettingsWindow 类：5个选项卡
+│     - Tab 1: 全局设置（WeGame/QQ 路径、置信度、资产识别、日志目录、机器指纹、使用说明）
+│     - Tab 2: 售卖物品（物品列表、出售参数、一键出售开关）
+│     - Tab 3: 自动任务（冷却执行、操作选择）
+│     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
+│     - Tab 5: 其他设置（开机自启、自动关机、运行完成后关机）
+│   - 开发者测试窗口：测试 Account Sign-in / account_select / Input 图像识别
+│   - 资产识别：区域框选（全屏 overlay）、测试识别（直接 RapidOCR，无 BGR 转换）
+│   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
+│   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
+│
+├── cooldown_manager.py         # 冷却管理
+│   - 数据存储：~/.delta_auto_cooldown.json
+│   - 内存缓存（v1.1.4）：mtime 校验，文件未变直接返回缓存，避免重复磁盘读取
+│   - is_cooling_down()：检查账号是否在冷却中（含暂停状态判断）
+│   - record_run()：记录运行时间，计算下次可运行时间
+│   - reset_cooldown() / reset_all_cooldowns()：重置冷却
+│   - pause_cooldown() / resume_cooldown()：暂停/恢复冷却倒计时（v1.1.2 新增）
+│   - is_paused()：检查冷却是否处于暂停状态
+│   - set_account_paused() / is_account_paused()：账号暂停/恢复（v1.1.3 新增，独立于冷却）
+│   - get_all_cooldowns()：获取所有账号冷却信息（含 paused、account_paused 状态）
+│   - 线程安全（v1.3.0）：threading.Lock 包裹所有公共函数，防止并发读写
+│   - 原子写入（.tmp + os.replace）
+│
+├── template_capture.py         # 模板上传向导（约 986 行）
+│   - TemplateCaptureWizard 类：可调整大小的模态对话框（550x700，minsize 300x400）
+│   - 列出所有模板图片（中文名+截图提示）
+│   - 上传/预览/恢复默认
+│   - 售卖物品管理（添加/删除，支持重复添加）
+│   - 出售测试按钮
+│   - 一键重置按钮（清除所有用户模板和 OCR 配置）
+│   - OCR 配置：每个模板可配置 OCR 识别区域和目标文本
+│   - 全局 OCR 设置：统一配置 OCR 区域、置信度、文本列表（底部含使用说明）
+│   - 保存到 ~/.delta_auto_templates/
+│
+├── test_all_features.py        # 全功能测试（52 项）
+│   - 测试配置、冷却、互斥、QQ降级、邮件、代码一致性
+│   - 验证各模块函数存在性和调用关系
+│
+├── test_core_modules.py        # 核心模块单元测试（v1.1.4 新增，35 项）
+│   - cooldown_manager：缓存命中/失效、暂停恢复、过期清理、自定义冷却
+│   - asset_db：单例连接、建表去重、记录/查询、删除
+
+
+│   - config：默认值、保存加载、向下兼容、分辨率、物品元数据
+│   - utils：资产解析/格式化、往返一致性、图标设置
+│   - email_notifier：配置检查、禁用安全性
+
+【服务器端文件】（部署到云端，不在客户端打包）
+
+├── server.py服务器主程序.txt   # FastAPI 后端
+│   - POST /api/v1/validate：客户端启动验证（白名单+有效期）
+│   - POST /api/v1/heartbeat：客户端心跳（账号状态同步）
+│   - POST /api/v1/admin/add_to_whitelist：添加机器到白名单
+│   - POST /api/v1/admin/remove_from_whitelist：移除机器
+│   - POST /api/v1/admin/set_user_expiry：设置独立有效期
+│   - GET  /api/v1/admin/get_all_users：查看所有用户
+│   - GET  /api/v1/admin/get_machine_status：查看机器实时状态
+│   - 数据存储：user_data.json
+│
+├── 图形化可视管理后台代码.txt   # 管理后台前端
+│   - 用户列表管理（添加/删除/查看）
+│   - 有效期设置
+│   - 机器实时状态面板（每10秒自动刷新）
+│   - 显示各账号运行状态和最后心跳时间
+
+【资源目录】
+
+├── picture/                    # 游戏 UI 元素截图
+│   ├── icon.ico                # 应用图标
+│   ├── Facility_Controls/      # 设施图标（技术中心、工作台、防具台、制药台）
+│   ├── Crafting_Controls/      # 制造按钮（制造、产出、收取、一键补齐、领取奖励）
+│   ├── Navigation/             # 导航图标（烽火地带、特勤处）
+│   ├── One_Click_Sell/         # 出售流程模板（仓库、出售、上架、降价、确认上架）
+│   ├── email/                  # 邮箱货币模板（邮箱、交易中心、全部领取、领取完成）
+│   ├── wegame_login/           # WeGame 登录模板（account_select、Input、Sign-in、delta_game_icon、delta_launch_btn、login_again）
+│   └── produce/                # 生产设施模板（各设施产出项截图）
+
+【用户数据目录】(~/.delta_auto_*)
+
+├── ~/.delta_auto_settings.json     # 用户设置（含 ocr_configs、global_ocr_* 配置，敏感字段加密）
+├── ~/.delta_auto_accounts.json     # QQ 账号列表（含 assets、asset_history、notes，密码加密）
+├── ~/.delta_auto_cooldown.json     # 冷却数据
+├── ~/.delta_auto_assets.db         # 资产记录 SQLite 数据库（v1.1.1 新增）
+├── ~/.delta_auto_templates/        # 用户自定义模板 + OCR 模板图片
+├── ~/.delta_auto_sell_items/       # 售卖物品图片 + items_meta.json
+└── ~/.delta_auto_error.log         # 异常日志
+
+【模块调用关系】
+
+gui_app.py (入口层)
+  ├── automation_runner.py  ← start_run / stop_run / on_finish
+  │     ├── automation.py   ← game_operations / sell_operations
+  │     └── asset_db.py     ← record_asset（资产识别后写入 SQLite）
+  ├── scheduler.py          ← set_next_wake_timer / apply_auto_settings
+  │     └── cooldown_watcher.py
+  ├── account_manager.py    ← 账号 CRUD / 冷却管理 UI / 资产监测 / 备注
+  │     └── asset_db.py     ← query_total_change（资产统计查询）
+  ├── email_notifier.py     ← 邮件发送
+  ├── server_client.py      ← 验证 / 心跳
+  ├── cooldown_watcher.py   ← 冷却到期监听
+  ├── utils.py              ← 图像识别 / OCR / 进程管理 / 电源管理 / 平滑鼠标移动
+  │     └── relative_mouse_move.py ← 贝塞尔曲线 / Smoothstep 鼠标移动算法
+  ├── config.py             ← 配置读写
+  ├── settings_window.py    ← 设置对话框（含使用说明）
+  ├── template_capture.py   ← 模板上传向导
+  ├── cooldown_manager.py   ← 冷却数据持久化
+  └── machine_fingerprint.py ← 机器指纹
+
+【关键配置项】
+
+| 配置项                      | 说明                              | 默认值                        |
+|-----------------------------|----------------------------------|------------------------------|
+| confidence                  | 图像匹配置信度                     | 0.7                          |
+| server_url                  | 服务器地址                         | http://112.74.106.69:8000    |
+| client_key                  | 客户端密钥                         | Client_Normal_Key_2026       |
+| post_run_shutdown_delay     | 运行完成后延迟关机（分钟，0=不关机）  | 0                            |
+| auto_shutdown_enabled       | 启用自动关机                       | False                        |
+| auto_shutdown_time          | 自动关机时间                       | 22:00                        |
+| enable_cooldown             | 启用账号冷却                       | False                        |
+| cooldown_hours              | 冷却小时数                         | 8                            |
+| cooldown_run_immediately    | 冷却完立即运行                     | False                        |
+| cooldown_email_enabled      | 冷却到期邮件提醒                   | False                        |
+| cooldown_delay_minutes      | 账号间隔时间（分钟）               | 1                            |
+| enable_sell_after_run       | 主流程后执行一键出售               | False                        |
+| sell_discount_times         | 降价次数（0-5）                    | 0                            |
+| sell_quantity               | 出售数量（1-99）                   | 1                            |
+| sell_confidence             | 出售物品匹配置信度                  | 0.55                         |
+| email_enabled               | 启用邮件通知                       | False                        |
+| enable_email_currency       | 自动领取邮箱货币                   | False                        |
+| global_ocr_enabled          | 启用全局 OCR 文字识别              | False                        |
+| global_ocr_region           | 全局 OCR 识别区域 [x,y,w,h]       | None                         |
+| global_ocr_confidence       | OCR 匹配置信度                     | 0.8                          |
+| global_ocr_texts            | 全局 OCR 目标文本列表              | []                           |
+| global_text_enabled          | 启用全局文本配置                   | False                        |
+| ocr_configs                 | 每模板 OCR 配置（var_name→配置）   | {}                           |
+| enable_asset_recognition    | 启用资产识别                       | False                        |
+| asset_region                | 资产识别屏幕区域 [x,y,w,h]        | [0, 0, 0, 0]                 |
+| cooldown_scheduled_task_enabled | 冷却到期定时任务兜底           | True                         |
+
+【运行流程】
+
+1. 启动 → 单实例检查 → 预初始化 OCR 引擎 → 服务器验证（机器指纹+有效期） → 加载设置 → 显示主界面
+2. 用户点击"开始运行"或冷却到期自动触发
+3. 每天首次运行时再次验证服务器（防长期不退出绕过）
+4. 启动心跳线程（每30秒同步账号状态）
+5. 清理进程（QQ/WeGame/三角洲）
+6. 逐个账号：
+   a. 暂停检查（跳过已暂停的账号，状态标记为 "已暂停"）
+   b. 冷却检查（跳过冷却中的账号，状态标记为 "cooling"）
+   c. 启动 WeGame → 双击账号选择框 → Interception 输入账号 → 点击密码框 → 输入密码 → 点击登录
+   d. 找到三角洲图标 → 资产识别 → 启动游戏
+   e. 可选：资产识别（等待 4 秒后截图指定区域，RapidOCR 识别，过滤"现有资产"等文字）
+   f. 进入烽火地带 → 特勤处
+   g. 可选：领取邮箱货币
+   h. 执行选中的设施操作（制造/收取/产出）
+   i. 可选：一键出售
+   j. 关闭游戏/WeGame
+   l. 记录冷却时间
+   m. 等待账号间隔
+7. 所有账号完成 → 停止心跳线程 → 发送邮件报告 → 恢复睡眠设置
+8. 如果设置了延迟关机（且非手动终止） → 等待指定分钟后关机
+
+【OCR 识别机制】
+
+1. 智能匹配（find_and_click_smart）：
+   - 优先尝试 OCR 文字识别（如果已配置且引擎可用）
+   - OCR 超时自动回退到图像匹配（受 ocr_downgrade_enabled 控制）
+   - 单 var_name 连续失败 3 次临时禁用 OCR（5分钟自动恢复），不影响其他模板
+   - _IMAGE_TO_VAR 从 TEMPLATE_CAPTURE_LIST 自动生成（v1.3.0）
+
+2. OCR 配置（per-template）：
+   - 每个模板可配置独立的 OCR 识别区域和目标文本
+   - 通过模板上传向导的「OCR识别」按钮配置
+   - 配置存储在 settings.json 的 ocr_configs 字段
+
+3. 全局 OCR 设置：
+   - 统一配置 OCR 区域、置信度、目标文本列表
+   - 可一键应用到所有模板
+   - 禁用时自动清理相关 ocr_configs
+
+4. 资产识别（automation_runner._recognize_asset）：
+   - 游戏启动后自动识别屏幕指定区域的资产数值
+   - 使用独立的 RapidOCR 引擎缓存（_ocr_engine），首次创建后复用
+   - 直接传入 numpy 数组（不做 BGR 转换），与 utils.ocr_recognize 不同
+   - 正则匹配格式：(\d+\.?\d*)\s*([KMBkmb])，如 "1.2M", "500K"
+   - 设置界面支持区域框选（全屏 overlay）和测试识别
+
+【技术栈】
+
+Python 3.8+ / Tkinter / OpenCV / RapidOCR (onnxruntime) / PyAutoGUI / psutil / pywin32 / pystray+Pillow / PyInstaller
+
+服务器端: Python / FastAPI / uvicorn
+
+【Interception 驱动状态】
+
+驱动文件：C:\Windows\System32\drivers\interception.sys
+服务名称：interception（内核驱动，手动启动）
+DLL 依赖：interception.dll（项目目录，打包时嵌入 exe）
+签名状态：Authenticode 有效（GlobalSign CodeSigning CA 签发）
+工作模式：正常模式（Windows 测试签名关闭）
+加载条件：本机 Code Integrity 在每次启动时禁用 WHQL 驱动强制（Event 3085），
+          使非 WHQL 交叉签名驱动可正常加载
+
+注意事项：
+- 在新电脑部署时，需安装 Interception 驱动并确保签名可被系统接受
+- 如果目标系统启用了 WHQL 强制（Secure Boot / HVCI），驱动需在测试模式下使用
+- 本机不开启测试模式即可工作的原因：Code Integrity 启动时自动禁用了 WHQL 强制
+
+【打包命令】
+
+pip install pyinstaller rapidocr-onnxruntime
+pyinstaller 三角洲自动工具.spec
+
+================================================================================

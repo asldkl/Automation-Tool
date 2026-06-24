@@ -1,0 +1,1121 @@
+================================================================================
+                    三角洲行动自动化工具 - 开发者使用说明书
+================================================================================
+
+版本: v1.3.1
+日期: 2026-06-24
+（Interception 驱动文档更新: 2026-06-19）
+作者: 开发团队
+
+================================================================================
+目录
+================================================================================
+
+1.  项目概述
+2.  文件结构
+3.  模块拆分架构（v1.1.0）
+4.  防破解保护机制
+5.  机器指纹机制详解
+6.  服务器验证流程
+7.  Interception 驱动级键盘输入
+8.  心跳同步机制
+9.  如何管理用户（白名单/有效期）
+10. 打包说明（PyInstaller）
+11. 打包说明（Nuitka）
+12. 制作安装程序（Inno Setup）
+13. 更新日志
+14. 服务器部署
+15. 常见问题
+
+================================================================================
+1. 项目概述
+================================================================================
+
+本工具是《三角洲行动》游戏的日常自动化工具，基于图像识别 + OCR 文字识别技术，支持：
+- WeGame 直接登录（Interception 驱动级键盘输入）
+- 多账号管理
+- 冷却执行（冷却到期自动运行）
+- 自动关机
+- 邮件通知
+- OCR 文字识别（RapidOCR）
+- 机器指纹绑定（防复制/防滥用）
+- 远程有效期控制（服务器端校验）
+- 账号状态实时同步（心跳推送）
+
+================================================================================
+2. 文件结构
+================================================================================
+
+项目根目录/
+├── main.py                  # 主入口文件
+├── gui_app.py               # 图形界面主程序（入口层，约 900 行）
+├── automation_runner.py     # 自动化运行模块（v1.1.0 新增）
+├── scheduler.py             # 定时调度模块（v1.1.0 新增）
+├── account_manager.py       # 账号管理模块（v1.1.0 新增）
+├── email_notifier.py        # 邮件通知模块（v1.1.0 新增）
+├── cooldown_watcher.py      # 冷却监听模块（v1.1.0 新增）
+├── server_client.py         # 服务器通信模块（v1.1.0 新增）
+├── automation.py            # 自动化流程模块（游戏操作、设施处理、一键出售）
+├── config.py                # 配置管理模块（含 resource_path 资源定位）
+├── machine_fingerprint.py   # 机器指纹模块（防破解核心）
+├── utils.py                 # 工具函数模块（图像识别、OCR、进程管理等）
+├── settings_window.py       # 设置窗口（支持 Canvas+Scrollbar 滚动）
+├── template_capture.py      # 模板截图工具（含 OCR 配置）
+├── cooldown_manager.py      # 冷却管理模块（含暂停/恢复功能）
+├── relative_mouse_move.py   # 贝塞尔曲线鼠标移动模块（v1.1.2 新增）
+├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
+
+├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
+├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
+├── interception.dll         # Interception 驱动通信 DLL（打包时自动嵌入 exe）
+├── interception.sys         # Interception 内核驱动文件（安装到系统目录）
+├── test_all_features.py     # 全功能测试套件（52 项）
+├── test_core_modules.py     # 核心模块单元测试（v1.1.4 新增，35 项）
+├── README.md                # 用户说明文档
+├── 开发者使用说明书.txt      # 本文件
+├── 项目结构说明.txt          # 项目结构速查
+├── 三角洲自动工具.spec       # PyInstaller 打包配置
+├── installer.iss            # Inno Setup 安装程序脚本
+├── server.py服务器主程序.txt # 服务器后端代码（部署到云端）
+├── 图形化可视管理后台代码.txt # 管理后台前端代码
+├── picture/                 # 图片资源目录
+│   ├── icon/                # 程序图标
+│   │   └── icon.ico
+│   ├── Facility_Controls/   # 设施图标
+│   ├── Crafting_Controls/   # 制造按钮
+│   ├── Navigation/          # 导航图标
+│   ├── One_Click_Sell/      # 一键出售模板
+│   ├── email/               # 邮箱货币模板
+│   ├── wegame_login/        # WeGame 登录模板（account_select、Input、Sign-in、delta_game_icon、delta_launch_btn、login_again）
+│   └── produce/             # 生产设施模板
+├── build/                   # PyInstaller 构建临时目录
+├── dist/                    # PyInstaller 打包输出目录
+├── dist_nuitka/             # Nuitka onefile 打包输出目录
+├── dist_nuitka_standalone/  # Nuitka standalone 打包输出目录
+│   └── main.dist/           # standalone 分发文件夹
+│       ├── 三角洲自动工具.exe
+│       ├── picture/         # 数据文件
+│       └── *.dll / *.pyd    # 依赖文件
+└── installer_output/        # Inno Setup 安装程序输出目录
+    ├── 三角洲行动自动化工具_安装程序.exe
+    └── 使用说明.txt
+
+================================================================================
+3. 模块拆分架构（v1.1.0）
+================================================================================
+
+v1.1.0 将 gui_app.py（原约 2926 行）拆分为 7 个文件，采用模块级函数 + app 参数的模式：
+
+----------------------------------------
+3.1 设计模式
+----------------------------------------
+
+所有子模块使用模块级函数，接收 `app` 参数（App 实例）：
+
+    # gui_app.py
+    import automation_runner
+
+    class App:
+        def start(self):
+            automation_runner.start_run(self)
+
+    # automation_runner.py
+    def start_run(app):
+        # 直接访问 app.root, app.log_area 等
+        ...
+
+优点：无需继承、无循环依赖、函数可独立测试。
+
+----------------------------------------
+3.2 模块职责
+----------------------------------------
+
+gui_app.py（入口层，约 900 行）
+    - App 类定义、__init__、_build_ui、_setup_styles、_setup_tray
+    - 所有业务逻辑委托给子模块
+    - 保留 UI 构建和窗口管理代码
+
+automation_runner.py（约 596 行）
+    - start_run / stop_run：启动/停止自动化任务
+    - run_script_main：主自动化循环（开始前和结束后均检查 10 分钟内到期账号）
+    - _login_account：WeGame 直接登录（Interception 驱动级键盘输入账号密码，图像识别点击登录按钮）
+    - _launch_game：查找三角洲图标、资产识别、启动游戏
+    - _get_cooldown_key：统一冷却 key 匹配（优先短名称，兼容 account: 前缀）
+    - _wait_and_run_nearby_cooldowns：检查并等待 10 分钟内到期的账号
+    - _run_single_account：从冷却等待中调用的单账号运行
+    - game_operations_wrapper / sell_operations_wrapper
+    - on_finish：任务完成后处理（延迟关机等）
+
+scheduler.py（约 100 行，v1.1.4 精简）
+    - set_next_wake_timer：计算下一个冷却到期时间，设置唤醒定时器
+    - update_cooldown_wake_timer：冷却监听专用唤醒定时器更新
+    - apply_auto_settings：应用冷却执行设置
+
+account_manager.py（约 738 行）
+    - 账号 CRUD：save/load/add/delete/clear
+    - 排序：move_up / move_down
+    - Treeview 管理：refresh_account_tree（四列：账号名称/现有资产/下次运行时间/备注）
+    - 冷却 UI：reset_selected_cooldown / custom_cooldown_time / reset_all_cooldowns
+    - 账号信息设置：_open_account_info_window（游戏账号/密码/备注）
+    - 资产监测：show_asset_monitor（自定义天数统计）
+
+email_notifier.py（约 250 行）
+    - send_run_report_email：运行完成报告
+    - send_failure_email：运行失败通知
+    - send_account_failure_email：单账号失败通知
+    - send_cooldown_ready_email：冷却到期提醒
+
+cooldown_watcher.py（约 160 行）
+    - start/stop/restart_cooldown_watcher
+    - cooldown_watcher_loop：每 30 秒检查冷却到期
+    - check_any_account_ready：检查是否有账号冷却到期（排除暂停账号，使用 _get_cooldown_key 统一 key）
+
+server_client.py（约 117 行）
+    - validate_with_server：启动验证
+    - start/stop_heartbeat：心跳管理
+    - heartbeat_loop / send_heartbeat
+    - update_account_status
+
+----------------------------------------
+3.3 调用关系图
+----------------------------------------
+
+gui_app.py
+  ├── automation_runner.py → automation.py
+  ├── scheduler.py → cooldown_watcher.py
+  ├── account_manager.py
+  ├── email_notifier.py
+  ├── server_client.py
+  ├── cooldown_watcher.py
+  ├── utils.py（图像识别 / OCR / 进程管理 / 电源管理）
+  ├── config.py
+  ├── settings_window.py
+  ├── template_capture.py
+  ├── cooldown_manager.py
+  └── machine_fingerprint.py
+
+================================================================================
+4. 防破解保护机制
+================================================================================
+
+v1.0.3 采用全新的服务器端验证架构，彻底移除了本地有效期校验：
+
+旧机制（已移除）：
+    - 本地 XOR 加密有效期
+    - 多时间源交叉验证（淘宝/苏宁/世界时间API）
+    - 本地时间戳防篡改（~/.delta_auto_timestamp.dat）
+    - 以上代码已全部删除，不再使用
+
+新机制（v1.0.3）：
+    - 机器指纹绑定：通过硬件序列号生成唯一指纹，程序只能在授权电脑运行
+    - 服务器端有效期校验：有效期由服务器统一管理，无法本地篡改
+    - 双重验证：启动时验证 + 每天首次运行任务时验证
+    - 心跳同步：运行时每30秒推送账号状态到服务器
+
+================================================================================
+5. 机器指纹机制详解
+================================================================================
+
+文件: machine_fingerprint.py
+
+----------------------------------------
+5.1 指纹生成算法
+----------------------------------------
+
+1. 通过 WMI 获取硬盘序列号：
+   命令: wmic diskdrive get serialnumber
+
+2. 通过 WMI 获取主板序列号：
+   命令: wmic baseboard get serialnumber
+
+3. 拼接两个序列号（格式: "DISK_SERIAL:BOARD_SERIAL"）
+
+4. 对拼接字符串进行 SHA256 哈希
+
+5. 取哈希值前32个十六进制字符作为机器指纹
+
+降级方案：如果 WMI 调用失败，使用 hostname + MAC 地址作为备用标识
+
+----------------------------------------
+5.2 核心函数
+----------------------------------------
+
+    get_machine_id() -> str
+        返回32位十六进制机器指纹字符串
+        示例: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+
+----------------------------------------
+5.3 指纹验证流程
+----------------------------------------
+
+客户端启动时：
+    1. 调用 get_machine_id() 获取本机指纹
+    2. 发送 POST 到 /api/v1/validate，携带 machine_id
+    3. 服务器检查白名单 + 有效期
+    4. 返回 granted 或 denied
+
+如果验证失败，弹窗显示本机指纹，方便用户复制给管理员
+
+================================================================================
+6. 服务器验证流程
+================================================================================
+
+----------------------------------------
+6.1 启动时验证（server_client.py → validate_with_server）
+----------------------------------------
+
+    1. 获取机器指纹
+    2. POST /api/v1/validate {"machine_id": "xxx", "current_date": "2026-05-28"}
+    3. 如果返回 "granted" → 正常启动
+    4. 如果返回 "denied" → 弹窗显示指纹 + 错误原因，退出程序
+    5. 如果服务器不可达 → 弹窗显示指纹 + "服务器不可用"，退出程序
+
+----------------------------------------
+6.2 每天首次运行验证（automation_runner.py → run_script_main）
+----------------------------------------
+
+    1. 检查 _last_validated_date 是否等于今天
+    2. 如果不是今天 → 重新调用 /api/v1/validate
+    3. 验证通过 → 更新 _last_validated_date
+    4. 验证失败 → 弹窗显示指纹，root.destroy() 退出程序
+
+这确保了即使程序长时间不退出，每天也会重新验证一次
+
+----------------------------------------
+6.3 验证失败弹窗
+----------------------------------------
+
+所有验证失败的弹窗都包含本机机器指纹，格式：
+    "机器指纹: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+    "请联系管理员将此指纹添加到白名单"
+
+================================================================================
+7. Interception 驱动级键盘输入
+================================================================================
+
+本工具使用 Interception 驱动实现 WeGame 登录时的账号密码输入，通过 ctypes 调用
+interception.dll 实现驱动级键盘模拟，绕开 WeGame 10 账号限制和 QQ 同 IP 验证码。
+
+----------------------------------------
+7.1 模块结构
+----------------------------------------
+
+interception_keyboard.py（约 150 行）
+    - 通过 ctypes 调用 interception.dll，使用驱动级键盘扫描码方式输入
+    - is_available()：检查 Interception 驱动和 DLL 是否可用
+    - send_string(text, interval)：逐字符发送按键（扫描码方式）
+    - send_key(char, interval)：发送单个按键事件
+    - 字符→扫描码映射表：支持字母、数字、常用符号、Shift 组合键
+    - DLL 搜索路径：项目目录 → Interception-master/library/ → System32 → sys._MEIPASS
+    - 无降级方案：Interception 不可用时返回 False，由调用方处理失败
+
+utils.py 新增函数（冷却定时任务兜底）：
+    - write_cooldown_signal()：写入冷却触发信号文件
+    - check_cooldown_signal()：检查并消费信号文件
+    - create_cooldown_scheduled_task(trigger_time)：创建一次性定时任务
+    - remove_cooldown_scheduled_task()：删除冷却到期定时任务
+
+automation_runner._login_account()
+    - WeGame 直接登录流程：
+      1. 杀进程 → 打开 WeGame → 等待窗口出现
+      2. 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空旧账号
+      3. Interception 驱动级键盘输入账号
+      4. 图像识别点击 Input（密码框）→ Interception 输入密码
+      5. 图像识别点击 Sign-in 完成登录
+    - 输入前检查 WeGame 窗口聚焦（v1.2.1 新增聚焦保护）
+    - 失败时记录具体错误到 app._last_account_error
+
+----------------------------------------
+7.2 驱动安装与状态
+----------------------------------------
+
+文件: interception.sys（内核驱动）
+路径: C:\Windows\System32\drivers\interception.sys
+服务: interception（内核驱动，手动启动）
+签名: Authenticode 有效（GlobalSign CodeSigning CA - G2 签发，时间戳 2012）
+DLL: interception.dll（项目根目录，打包时嵌入 exe 的根目录）
+
+当前状态：
+- 工作模式：正常模式（Windows 测试签名关闭，无需开启测试模式）
+- 驱动签名已通过 Authenticode 验证（Status: Valid）
+- 本机 Code Integrity 每次启动时自动禁用 WHQL 驱动强制（Event ID 3085）
+- 因此非 WHQL 交叉签名的 Interception 驱动可在正常模式下加载
+
+----------------------------------------
+7.3 在新电脑部署驱动
+----------------------------------------
+
+方式一：使用官方安装程序（推荐）
+    以管理员身份运行 install-interception.exe /install
+    注意：64 位 Windows 需绕过 WOW64 重定向，使用 SysNative 路径：
+        C:\Windows\SysNative\cmd.exe /c "install-interception.exe /install"
+
+方式二：手动安装
+    1. 从官方 Release 或已安装的电脑获取 interception.sys
+    2. 复制到 C:\Windows\System32\drivers\interception.sys
+    3. 以管理员身份执行：
+        sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
+        sc start interception
+
+----------------------------------------
+7.4 驱动加载失败排查
+----------------------------------------
+
+错误 183 "当文件已存在时，无法创建该文件"：
+    - 通常表示驱动已加载或设备对象已存在
+    - 检查：sc query interception
+    - 如果 STOPPED 状态，可能是签名验证失败
+
+错误 577 "Windows 无法验证此文件的数字签名"：
+    - Secure Boot 或 HVCI（内存完整性）阻止非 WHQL 驱动
+    - 解决方案：关闭 Secure Boot / HVCI，或在测试模式下运行
+
+驱动签名检查：
+    Get-AuthenticodeSignature C:\Windows\System32\drivers\interception.sys
+    确认 Status 为 "Valid"
+
+================================================================================
+8. 心跳同步机制
+================================================================================
+
+文件: server_client.py（start_heartbeat / heartbeat_loop / send_heartbeat）
+
+----------------------------------------
+8.1 心跳线程
+----------------------------------------
+
+- 在任务开始时启动，任务结束时停止
+- 每30秒发送一次心跳到服务器
+- 使用 daemon 线程，不阻塞主程序退出
+
+----------------------------------------
+8.2 心跳数据格式
+----------------------------------------
+
+POST /api/v1/heartbeat
+{
+    "machine_id": "a1b2c3d4...",
+    "accounts": [
+        {"name": "qq1.png", "status": "running"},
+        {"name": "qq2.png", "status": "cooling"},
+        {"name": "qq3.png", "status": "success"}
+    ],
+    "is_running": true
+}
+
+----------------------------------------
+8.3 账号状态值
+----------------------------------------
+
+- "running"  - 正在执行自动化任务
+- "cooling"  - 跳过（冷却中）
+- "success"  - 本账号执行成功
+- "failed"   - 本账号执行失败
+- "idle"     - 空闲/未执行
+
+----------------------------------------
+8.4 状态更新时机
+----------------------------------------
+
+在 automation_runner.run_script_main() 中：
+    - 开始处理账号 → "running"
+    - 冷却跳过 → "cooling"
+    - 执行成功 → "success"
+    - 执行失败 → "failed"
+    - 任务全部完成 → 停止心跳线程
+
+================================================================================
+9. 如何管理用户（白名单/有效期）
+================================================================================
+
+----------------------------------------
+9.1 服务器管理接口
+----------------------------------------
+
+所有管理接口需要 ADMIN_SECRET_KEY 认证（Header: Authorization）
+
+1. 添加机器到白名单：
+   POST /api/v1/admin/add_to_whitelist
+   Body: {"machine_id": "a1b2c3d4..."}
+
+2. 移除机器：
+   POST /api/v1/admin/remove_from_whitelist
+   Body: {"machine_id": "a1b2c3d4..."}
+
+3. 设置独立有效期：
+   POST /api/v1/admin/set_user_expiry
+   Body: {"machine_id": "a1b2c3d4...", "expiry": "2026-12-31"}
+
+4. 查看所有用户：
+   GET /api/v1/admin/get_all_users
+
+5. 查看机器实时状态：
+   GET /api/v1/admin/get_machine_status
+
+----------------------------------------
+9.2 有效期管理逻辑
+----------------------------------------
+
+- 全局默认有效期：user_data.json 中的 "expiry_date" 字段
+- 用户独立有效期：user_data.json → users → {machine_id} → expiry
+- 优先级：用户独立有效期 > 全局默认有效期
+- 修改有效期只需调用 set_user_expiry 接口，无需重新打包客户端
+
+----------------------------------------
+
+================================================================================
+10. 打包说明（PyInstaller）
+================================================================================
+
+----------------------------------------
+9.1 安装依赖
+----------------------------------------
+
+    pip install opencv-python numpy pyautogui psutil pywin32 pystray pillow pyinstaller rapidocr-onnxruntime
+
+----------------------------------------
+9.2 打包命令
+----------------------------------------
+
+    pyinstaller 三角洲自动工具.spec
+
+----------------------------------------
+9.3 打包配置（三角洲自动工具.spec）
+----------------------------------------
+
+关键配置:
+    - hiddenimports: 包含所有依赖模块（含 6 个新子模块）
+    - datas: 包含 picture 目录中的图片资源
+    - 使用 collect_all 收集 rapidocr_onnxruntime 和 onnxruntime 的所有依赖
+    - icon: 程序图标
+    - uac_admin: 请求管理员权限
+
+hiddenimports 包含的模块:
+    config, utils, settings_window, template_capture,
+    cooldown_manager, automation, machine_fingerprint, relative_mouse_move,
+    email_notifier, account_manager, scheduler, cooldown_watcher,
+    server_client, automation_runner, asset_db,
+    psutil, win32gui, win32con, win32api, win32event, win32security,
+    pystray, PIL, PIL.Image, cv2, numpy, pyautogui,
+    smtplib, email, email.mime, email.mime.text, email.mime.multipart
+
+----------------------------------------
+9.4 添加新模块到打包
+----------------------------------------
+
+如果添加了新的 Python 模块，需要在 .spec 文件的 hiddenimports 列表中添加：
+
+    hiddenimports=[..., '新模块名'],
+
+----------------------------------------
+9.5 输出
+----------------------------------------
+
+    dist/三角洲自动工具.exe    （单文件，约 100 MB）
+
+================================================================================
+11. 打包说明（Nuitka）
+================================================================================
+
+Nuitka 将 Python 编译为 C 代码后打包，体积更小、性能更好。
+
+----------------------------------------
+10.1 安装 Nuitka
+----------------------------------------
+
+    pip install nuitka
+
+Nuitka 会自动下载 zig 编译器和 Dependency Walker。
+
+----------------------------------------
+10.2 打包模式
+----------------------------------------
+
+模式一：onefile（单文件，用于直接分发）
+    python -m nuitka --standalone --onefile \
+        --enable-plugin=tk-inter \
+        --include-data-dir=picture=picture \
+        --windows-icon-from-ico=picture/icon/icon.ico \
+        --windows-uac-admin \
+        --windows-console-mode=disable \
+        --output-filename=三角洲自动工具.exe \
+        --output-dir=dist_nuitka \
+        --assume-yes-for-downloads \
+        main.py
+
+    输出: dist_nuitka/三角洲自动工具.exe （约 52 MB）
+
+模式二：standalone（文件夹，用于安装程序分发）
+    python -m nuitka --standalone \
+        --enable-plugin=tk-inter \
+        --include-data-dir=picture=picture \
+        --windows-icon-from-ico=picture/icon/icon.ico \
+        --windows-uac-admin \
+        --windows-console-mode=disable \
+        --output-filename=三角洲自动工具.exe \
+        --output-dir=dist_nuitka_standalone \
+        --assume-yes-for-downloads \
+        main.py
+
+    输出: dist_nuitka_standalone/main.dist/ （文件夹，约 195 MB）
+
+----------------------------------------
+10.3 Nuitka 与 PyInstaller 对比
+----------------------------------------
+
+    特性            PyInstaller       Nuitka
+    --------------------------------------------------
+    打包体积        约 95 MB          onefile 约 52 MB
+    启动速度        较慢              较快
+    运行性能        原生 Python       编译为 C，更快
+    数据文件访问    sys._MEIPASS      __file__ 定位
+    Python 版本     全版本支持        3.14 实验性支持
+    编译时间        短                长（需 C 编译）
+
+----------------------------------------
+10.4 资源文件定位（resource_path）
+----------------------------------------
+
+config.py 中的 resource_path() 同时兼容两种打包方式：
+
+    def resource_path(relative_path):
+        if getattr(sys, 'frozen', False):
+            # PyInstaller: sys._MEIPASS 指向临时解压目录
+            base_path = getattr(sys, '_MEIPASS', ...)
+        elif "__compiled__" in dir():
+            # Nuitka: __file__ 指向编译后的模块位置
+            # onefile 模式下指向临时解压目录
+            # standalone 模式下指向 dist 文件夹
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        else:
+            # 开发环境
+            base_path = os.path.abspath(".")
+        return os.path.join(base_path, relative_path)
+
+注意：Nuitka onefile 模式下，数据文件解压到系统临时目录，
+__file__ 在编译模块中指向该临时目录，因此 resource_path 能正确定位。
+
+----------------------------------------
+10.5 Nuitka 注意事项
+----------------------------------------
+
+1. Python 3.14 仅被 Nuitka 4.x 实验性支持，建议使用 Python 3.13
+2. --mingw64 不支持 Python 3.13+，Nuitka 会自动使用 zig 编译器
+3. onefile 首次运行较慢（需解压），后续启动会利用缓存
+4. standalone 模式更稳定，推荐用于安装程序分发
+
+================================================================================
+12. 制作安装程序（Inno Setup）
+================================================================================
+
+使用 Inno Setup 6 将打包后的程序制作成 Windows 安装程序。
+
+----------------------------------------
+11.1 安装 Inno Setup 6
+----------------------------------------
+
+下载地址: https://jrsoftware.org/isinfo.php
+安装路径: C:\Program Files (x86)\Inno Setup 6
+
+----------------------------------------
+11.2 安装脚本（installer.iss）
+----------------------------------------
+
+项目根目录下的 installer.iss 是安装程序配置文件，关键配置：
+
+    [Setup]
+    AppId={固定GUID}              # 保持不变，用于覆盖安装识别
+    AppName=三角洲行动自动化工具
+    AppVersion=1.1.0              # 每次新版本更新
+    DefaultDirName={autopf}\三角洲行动自动化工具
+    SetupIconFile=picture\icon\icon.ico
+    PrivilegesRequired=admin      # 需要管理员权限
+
+    [Languages]
+    # 使用简体中文语言包
+    Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+    [Files]
+    # standalone 模式：将整个 main.dist 文件夹打包
+    Source: "dist_nuitka_standalone\main.dist\*"; DestDir: "{app}"; \
+        Flags: ignoreversion recursesubdirs createallsubdirs
+
+    [Tasks]
+    # 安装时可选：桌面快捷方式、开机自启动
+    Name: "desktopicon"; Description: "创建桌面快捷方式"
+    Name: "startupicon"; Description: "开机自动启动"
+
+    [Run]
+    # 安装完成后可选启动程序
+    Filename: "{app}\三角洲自动工具.exe"; Description: "启动程序"; \
+        Flags: nowait postinstall skipifsilent
+
+----------------------------------------
+11.3 编译安装程序
+----------------------------------------
+
+命令行编译:
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+或在 Inno Setup 编辑器中打开 installer.iss，点击 编译 → 执行。
+
+输出: installer_output/三角洲行动自动化工具_安装程序.exe （约 49 MB）
+
+----------------------------------------
+11.4 覆盖安装
+----------------------------------------
+
+只要 AppId 保持不变，后续版本运行安装程序时会自动检测已有安装：
+- 覆盖旧文件（ignoreversion 标志）
+- 保留用户数据（配置文件存在 %USERPROFILE% 下）
+- 更新开始菜单和桌面快捷方式
+
+每次新版本只需：
+1. 更新 installer.iss 中的 AppVersion
+2. 重新打包 Nuitka standalone
+3. 重新编译 Inno Setup 安装程序
+
+----------------------------------------
+11.5 语言配置
+----------------------------------------
+
+简体中文语言包位于:
+    C:\Program Files (x86)\Inno Setup 6\Languages\ChineseSimplified.isl
+
+在 installer.iss 的 [Languages] 段中引用：
+    Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+================================================================================
+13. 更新日志
+================================================================================
+
+----------------------------------------
+v1.3.1 (2026-06-24)
+----------------------------------------
+
+- 新增冷却到期定时任务兜底机制：
+  - 每次 record_run 时自动创建 Windows 一次性定时任务（最早冷却到期时间）
+  - 定时任务触发时写入信号文件 + 尝试启动程序
+  - gui_app 主界面每 30 秒检查信号文件，检测到即触发运行
+  - 三条触发路径覆盖所有场景（监听线程正常/程序未运行/监听线程异常）
+  - 设置界面新增「定时任务兜底」开关（默认开启）
+- WeGame 登录失败检测优化：
+  - 每次查找游戏图标失败后立即检测 login_again（原来等 3 次全部失败才检测）
+  - login_again 超时从 5 秒降至 3 秒
+  - 游戏图标查找超时从 15 秒降至 10 秒
+  - login_again 没找到后不再等待，直接重试
+  - 检测到 login_again 后立即重新登录，不再等待 3 秒
+
+----------------------------------------
+v1.2.1 (2026-06-17)
+----------------------------------------
+
+- 资产记录双击编辑：show_asset_history() 中双击「资产」列可手动修改数值，同步更新内存、SQLite 和主界面
+- 失败邮件含错误日志：send_account_failure_email 新增 error_msg 参数，邮件显示具体错误原因
+- WeGame 登录窗口聚焦保护：新增 _ensure_wegame_focused()，输入账号密码前检查窗口焦点，失去聚焦自动激活
+- SMTP 不加密：从 encrypt_settings/decrypt_settings 中移除 smtp_code，已加密的旧值自动解密回明文
+- 冷却到期优先运行：全部运行完后先检测已到期账号直接运行，再检测 10 分钟内到期的账号等待执行
+- 删除 QQ 无效设置：移除 qq_path、qq_scroll_* 等配置，移除 QQ 路径 UI、QQ_TEMPLATE_CAPTURE_LIST、qq_quick_login()
+- 售卖物品元数据保护：save_sell_items_meta 改为原子写入（临时文件+shutil.move），保存前自动备份旧文件
+- 测试更新：修复 test_gui_version_updated、test_readme_has_v190_section、test_gui_app_has_wegame_login 等断言
+
+----------------------------------------
+v1.3.0 (2026-06-19)
+----------------------------------------
+
+- 移除凭据加密模块：删除 credential_crypto.py、crypto_utils.py；settings 改为纯 JSON 明文读写
+- 冷却线程安全锁：cooldown_manager.py 所有公共函数添加 threading.Lock，防止并发读写
+- _IMAGE_TO_VAR 自动生成：从 TEMPLATE_CAPTURE_LIST 自动构建映射，无需手动维护
+- 模板缓存 LRU：限制最大 50 项，自动淘汰最久未使用的缓存模板
+- OCR 自动恢复：按 var_name 跟踪失败次数，3 次连续失败临时禁用（5分钟自动恢复），不影响其他模板
+- 点击坐标边界校验：ocr_find_and_click/ocr_find_and_click_offset 新增屏幕边界检查
+- 降价逻辑优化：首次识别降价按钮后原地 click 剩余次数，无需重复图像匹配
+- 截图 close() 安全：_screenshot_gray 用 try/finally 确保异常路径释放截图资源
+- 去除 cryptography 依赖：spec 文件清理 crypt 相关 hiddenimports
+- 重复 ctypes 导入移至文件顶部
+- 冷却开机启动逻辑简化：合并双重 if 条件为单一 skip_cooldown 变量
+- 核心模块单元测试更新（28 项，移除 6 项加密测试）
+
+----------------------------------------
+v1.2.0 (2026-06-14)
+----------------------------------------
+
+- 登录方式重构：WeGame 直接登录，使用 Interception 驱动级键盘输入（绕开 QQ 同 IP 验证码）
+  - 新登录流程：杀进程 → 打开 WeGame → 双击账号选择框 → Interception 输入账号 → 点击密码框 → 输入密码 → 点击登录
+  - 新增 interception_keyboard.py 模块：通过 ctypes 调用 interception.dll 实现驱动级键盘模拟
+  - 删除所有 QQ 登录相关代码和图片模板
+  - 删除 pyautogui 降级方案（Interception 不可用时直接报错）
+- 代码重构优化：
+  - 合并 4 个重复的 find_and_click 函数为统一的 _find_and_click_core，旧函数名保留为薄包装
+  - 新增 _screenshot_gray 直接 RGB→GRAY，跳过中间 BGR 转换（每帧节省一次颜色空间转换）
+  - config.load_settings() 添加文件修改时间缓存，避免热循环中反复读磁盘
+  - 提取 DELTA_TITLES 模块级常量，消除 _launch_game 和 _close_game 中的重复定义
+  - 消除 _launch_game 中连续两次 time.sleep(2) 浪费的 2 秒
+  - ocr_recognize 去掉多余的 RGB→BGR 转换
+- 截图对象内存泄漏修复：所有 pyautogui.screenshot() 调用后添加 .close() 释放资源
+- prevent_sleep 计数器线程安全：添加 threading.Lock 保护共享计数器
+- 配置说明优化：server_url 和 client_key 添加注释说明可覆盖
+- 新增 Interception 驱动安装支持：interception.dll 放入项目目录，spec 文件自动打包
+- 重新打包 PyInstaller（~100MB）
+
+----------------------------------------
+v1.1.5 (2026-06-13)
+----------------------------------------
+
+- 登录方式重构：从 WeGame 内部登录改为 QQ 账号密码登录 + WeGame 快捷安全登录，绕开 WeGame 10 账号限制
+- 登录流程（全部使用图像识别，无 OCR）：
+  1. 杀掉 QQ/WeGame/三角洲进程
+  2. 打开 QQ
+  3. 图像识别点击 Account Sign-in「账号登录」
+  4. 图像识别点击 QQ_account_select，鼠标下移 60px
+  5. 图像识别点击 Remove（左偏 20px）删除旧账号
+  6. pyautogui.typewrite 输入账号
+  7. 图像识别点击 Input「输入QQ密码」
+  8. pyautogui.typewrite 输入密码（不调用 SetForegroundWindow，防止焦点丢失）
+  9. 图像识别点击 Accept（左偏 5px）
+  10. 图像识别点击 QQ_login_btn 登录
+  11. 关闭 QQ 窗口（保留后台）
+  12. 打开 WeGame
+  13. 图像识别点击 login_btn「快捷安全登录」
+- 登录输入改用 pyautogui.typewrite 逐键输入（替代 driver_keyboard.send_string 剪贴板粘贴），兼容 QQ 自定义密码框
+- QQ 登录模板：QQ_ACCOUNT_LOGIN / QQ_ACCOUNT_SELECT / QQ_REMOVE_BTN / QQ_INPUT_FIELD / QQ_ACCEPT_BTN / QQ_LOGIN_BTN
+- 删除登录流程中所有 OCR 识别代码（ocr_find_and_click_offset）
+- 密码改为必填（红色星号标记，保存时校验）
+- 账号信息设置窗口「游戏名称」改名为「备注」
+- 新建账号时备注信息自动填入添加时间
+- 开发者测试按钮更新：测试 Account Sign-in / 测试 account_select / 测试 Input
+- 缩短 QQ 登录各步骤等待时间（总等待从约 40s 缩短到约 24s）
+- 主界面 Treeview 改为四列：账号名称 | 现有资产 | 下次运行时间 | 备注
+  - 冷却剩余和下次运行合并为一列：格式如 `6h12m(23:00)`
+  - 新增备注列，显示账号信息中填写的备注内容
+- 账号名称前加序号（1. 2. 3.），便于辨别顺序
+- 账号名称左对齐显示
+- 资产监测窗口改进：固定1/7/30天按钮改为用户自行输入天数（默认1天，最大365天）
+- 资产监测窗口账号名称与主界面统一（相同顺序+序号+显示名称）
+- 右键菜单精简：移除「机器指纹」和「测试截图识别」选项
+- 右键菜单「备注」改名为「账号信息设置」
+- 主界面标题「截图顺序即运行顺序」改为「添加顺序即运行顺序」
+- .png 后缀名不再显示在账号名称中
+- 冷却重置按钮不再重置暂停中的账号
+- 修复邮箱 SMTP "Connection unexpectedly closed" 错误（重试机制+超时延长）
+
+----------------------------------------
+v1.1.4 (2026-06-10)
+----------------------------------------
+
+- UI 简化：删除「电源管理」设置页签，仅保留「自动关机」和「运行完成后关机」移至「其他设置」
+- UI 简化：删除「自动任务」中的定时执行功能，全部改用冷却执行模式
+  - 删除：启用定时执行、运行模式（单次/每日循环）、时间点管理、运行提醒
+  - 冷却设置移入「自动任务」页签：冷却小时数、账号间隔时间、冷却完立即运行
+- UI 简化：删除日志按钮中的图标，仅保留文字
+- 售卖物品列表改进：支持多图片同时添加（askopenfilenames），自动跳过重复文件名，添加完成后显示结果统计
+- 代码精简：scheduler.py 从约 540 行精简至约 100 行，删除 15 个定时执行相关函数
+- 代码精简：gui_app.py 删除 15+ 个调度器代理方法和相关实例变量
+- 代码精简：config.py DEFAULT_SETTINGS 删除 10 个已废弃配置项
+- 安全修复：settings_window.py 中 eval() 替换为 ast.literal_eval()，防止代码注入
+
+
+- 线程安全：gui_app.py 中 app.running 从布尔值改为 threading.Event 包装（@property 代理）
+- 性能优化：cooldown_manager.py 加入内存缓存（mtime 校验），避免每 30 秒磁盘读取
+- 性能优化：asset_db.py 改为 SQLite 单例连接，CREATE TABLE 仅首次执行
+- 性能优化：gui_app.py 服务器验证移到后台线程，启动时显示"正在验证许可证..."而非阻塞
+- 性能优化：settings_window.py 测试邮件发送改为异步线程
+- 代码清理：删除 gui_app.py 中 _v1_check/_v2_check/_v3_check 干扰代码
+- 代码清理：删除 utils.py 中未使用的 import datetime as _dt
+- 代码去重：提取 utils.set_window_icon()，替代 8 处重复的窗口图标设置代码
+- 代码去重：提取 email_notifier._get_email_config()，替代 4 处重复的邮箱配置检查
+- 代码去重：提取 utils.parse_asset_value() / format_asset_num()，消除 account_manager 和 asset_db 间的重复
+- 测试新增：test_core_modules.py，35 个真实功能测试，覆盖 6 个核心模块
+- automation_runner.py run_script_main() 重构为 8 个子函数（约 80 行主函数）
+- Bug修复：修复多次鼠标点击账号后右键菜单无法弹出的问题（移除 tk_popup 后的 grab_release 干扰）
+- Bug修复：修复右键菜单暂停/恢复标签显示错误（使用固定索引替代标签查找，避免标签变化后找不到菜单项）
+- Bug修复：修复暂停账号在重启后意外解除暂停的问题（remove_expired_cooldowns 保留 account_paused 状态，record_run 合并而非覆盖已有字段）
+- Bug修复：修复设置窗口鼠标滚轮无法滚动的问题（为每个 Canvas 添加直接 MouseWheel 绑定，不依赖 grab_set 下的 Enter 事件）
+- Bug修复：修复冷却中的账号被误判为冷却完成而提前运行的问题（is_cooling_down 增加 account_paused 检查，防止暂停账号触发冷却监听误启动）
+- 邮件内容调整：删除「运行模式」栏位，暂停账号的下次运行时间显示为「待定」
+- 邮件内容简化：账号失败通知仅包含账号名称和失败时间，移除统计数据和其他账号信息
+- 新增功能：运行完成后自动检测冷却列表，若有 5 分钟内到期的账号则等待并执行
+- 新增功能：右键菜单「机器指纹」可查看本机指纹、硬盘序列号、主板序列号
+- 服务器新增：用户名称字段（set_user_name 接口），管理后台可为每台机器设置名称便于识别
+- 服务器新增：远程执行功能（remote_run 接口），管理后台可远程触发指定机器执行任务
+- 客户端新增：心跳响应处理远程指令，收到 run 指令后自动启动任务
+- 重新打包 PyInstaller（~100MB）
+
+----------------------------------------
+v1.1.3 (2026-06-09)
+----------------------------------------
+
+- 暂停账号功能：右键菜单「暂停账号」/「恢复账号」，暂停后运行时自动跳过该账号（独立于冷却暂停）
+  - cooldown_manager.py 新增 set_account_paused() / is_account_paused()，使用 account_paused 字段
+  - account_manager.py toggle_cooldown_pause() 重命名为 toggle_account_pause()，移除"必须在冷却中"限制
+  - gui_app.py 菜单标签「停止冷却」→「暂停账号」
+  - automation_runner.py 账号循环中新增暂停检查，暂停账号状态标记为 "已暂停"
+  - refresh_account_tree() 中暂停账号显示"已暂停"、红色标签
+- 批量添加账号图片：filedialog.askopenfilename → askopenfilenames，支持多选文件，跳过重复项
+- 账号列表分隔线：每个账号下方插入分隔行（灰色背景），所有索引操作适配分隔行
+  - 新增 _tree_idx_to_account_idx() 辅助函数，跳过分隔行计算真实账号索引
+  - 所有右键菜单、双击、删除、排序操作加入分隔行过滤
+  - 分隔行不可选中：绑定 <Button-1> 事件，点击分隔行时返回 "break" 阻止选中
+- QQ 登录逻辑优化：
+  - 启动 QQ 等待时间从 5 秒改为 3 秒（start_app 新增 wait_time 参数）
+  - qq_quick_login() 重写：先滚动到列表底部（qq_scroll_down_times 次），再向上查找（qq_scroll_up_times 次）
+  - config.py 新增 qq_scroll_down_times（默认3）和 qq_scroll_up_times（默认3）设置项
+  - settings_window.py 其他设置中新增两个 Spinbox 控件
+  - 滚动幅度范围扩展为 0-800，默认值：向下300、向上200
+- 资产识别过滤优化：_recognize_asset() 正则不匹配时，清理非数字/KMB 字符后重试，最终返回 None
+  - settings_window.py 测试识别同步更新降级逻辑
+- 手动终止时跳过关机：on_finish() 中 post_run_shutdown_delay 块增加 _user_stopped_cooldown 判断
+- 手动停止时完全不发邮件：automation_runner.py 中所有邮件发送点（降级失败、账号失败、异常处理）均增加 _user_stopped_cooldown 判断
+- 日志侧边面板：日志区域重构为右侧可收起侧边面板（350px），点击「日志」按钮展开/收起，主窗口宽度调整为 750px
+
+----------------------------------------
+v1.1.2 (2026-06-08)
+----------------------------------------
+
+- 新增冷却暂停/恢复功能：右键菜单「停止冷却」/「恢复冷却」，暂停时保存剩余秒数，恢复后继续倒计时
+  - cooldown_manager.py 新增 pause_cooldown() / resume_cooldown() / is_paused()
+  - 冷却数据新增 paused 和 paused_remaining 字段
+  - is_cooling_down() 和 get_all_cooldowns() 支持暂停状态
+- 账号状态颜色可视化：Treeview 使用 tag 系统实现行级着色
+  - 蓝色（#3498db）= 冷却中，绿色（#27ae60）= 可运行，红色（#e74c3c）= 已暂停
+  - refresh_account_tree() 根据冷却状态自动分配标签
+- 右键菜单优化：「加入备注」改名为「备注」
+- 备注窗口优化：密码「显示」按钮移至密码输入框下方，更名为「显示密码」
+- 运行完成后清空残余状态：on_finish() 重置进度条为 0、清空状态标签、刷新账号列表
+- 鼠标移动算法优化：贝塞尔曲线路径 + Smoothstep 缓动
+  - 新增 relative_mouse_move.py 模块：二次贝塞尔曲线（控制点垂直偏移）+ Smoothstep S曲线
+  - utils.py 新增 smooth_move_to() 包装函数，替代所有 pyautogui.moveTo 调用
+  - automation.py 鼠标移至 (20,20) 替代 (0,0)，防止触发 pyautogui 角落安全机制
+  - 修复 relative_mouse_move.py 的 broken import（utils.precise_sleep），改为内联实现
+- .spec 文件 hiddenimports 新增 relative_mouse_move 模块
+- 邮件通知优化：运行报告邮件新增每个账号资产数；手动终止运行时不发送邮件通知
+- build_accounts_html() 新增资产信息展示（从 app._account_assets 读取）
+
+----------------------------------------
+v1.1.1 (2026-06-07)
+----------------------------------------
+
+- 新增资产监测功能：SQLite 持久化资产记录（~/.delta_auto_assets.db），支持按 1天/7天/30天 统计资产变化
+  - 新增 asset_db.py 模块：record_asset() 记录资产快照，query_total_change() 查询时间段内变化
+  - 资产识别后自动写入 SQLite（automation_runner.py 两处钩子）
+  - 主界面新增「资产监测」按钮，弹窗显示所有账号当前资产 + 时间段统计
+- 新增账号备注功能：右键菜单「加入备注」，支持记录游戏账号、密码和其他信息
+  - 密码输入框默认隐藏，可点击「显示」切换
+  - 备注数据结构化存储（account/password/note），兼容旧纯文本格式
+- 主界面按钮调整：
+  - 删除「使用说明」按钮，移至设置→全局设置底部
+  - 「一键重置冷却」改名为「冷却重置」
+  - 新增「资产监测」按钮（Accent 样式）
+- 资产记录窗口优化：
+  - 窗口居中显示
+  - 添加 picture/icon/icon.ico 图标
+  - 修复右侧文字被遮挡问题（Treeview 布局调整）
+  - 时间显示去掉年份前缀（2026-06-07 → 06-07）
+- 资产监测窗口：400x400，最小 200x200
+- 备注界面：保存/取消按钮固定在窗口底部，窗口缩小时不被隐藏
+- .spec 文件 hiddenimports 新增 asset_db 模块
+
+----------------------------------------
+v1.1.2 (2026-06-19)
+----------------------------------------
+
+- OCR 文字识别全面增强：
+  - 全局 OCR 设置新增「OCR 降级到图片匹配」开关：启用时 OCR 超时自动回退图像匹配，关闭时 OCR 失败直接返回
+  - 全局默认置信度从 0.8 降至 0.55，适配游戏界面文字识别
+  - 程序启动时预加载 RapidOCR 引擎，避免首次使用等待
+  - ocr_find_and_click 新增调试日志：首次扫描未命中时输出实际识别到的文字和置信度
+  - find_and_click_smart 新增清晰日志区分 OCR 识别 / 图片识别 / OCR 超时降级
+- 全局文本配置完善：
+  - 新增 ACCOUNT_SELECT / IMAGE_INPUT_FIELD / SIGN_IN / LOGIN_AGAIN 四个默认文本条目
+  - 保存全局 OCR 设置时自动同步 global_ocr_texts 到 ocr_configs
+  - 模板上传向导、单个模板弹窗均同时检查 ocr_configs 和 global_ocr_texts 显示状态
+- WeGame 登录流程改用 find_and_click_smart（支持 OCR 优先 + 图片匹配回退）
+- _IMAGE_TO_VAR 新增 DELTA_GAME_ICON / LOGIN_AGAIN / ACCOUNT_SELECT / IMAGE_INPUT_FIELD / SIGN_IN 映射
+- 开发者测试窗口新增 OCR 文字识别测试功能：点击按钮 → 扫描窗口区域 → 鼠标移动点击 → 按钮变绿/红，全部测试串行执行，只扫描窗口区域降低 CPU 占用
+
+----------------------------------------
+v1.1.0 (2026-06-06)
+----------------------------------------
+
+- 新增 OCR 文字识别：模板上传向导中每个模板旁新增「OCR识别」按钮，可框选屏幕区域并设置目标文本
+- 新增资产识别：游戏启动后自动识别资产数值（支持 K/M/B 后缀），显示在账号列表中
+  - automation_runner.py 新增 _recognize_asset() 函数，使用缓存 RapidOCR 引擎
+  - 直接传入 numpy 数组（不做 BGR 转换），匹配参考实现
+  - 设置界面支持区域框选和测试识别
+- 主界面账号列表重新设计：从 Listbox 升级为 Treeview，新增四列（账号名称、现有资产、冷却剩余、下次运行）
+- 主界面简化：删除刷新按钮，右键菜单集成测试截图识别/上移/下移/重置冷却/自定义冷却/删除
+- 设置窗口重新布局（v1.1.4 精简为 5 个选项卡）：
+  - 5 个选项卡：全局设置 → 售卖物品 → 自动任务 → 邮件通知 → 其他设置
+  - 窗口 550x700，可调整大小，minsize(500, 600)
+  - 去除所有浏览按钮，路径/日志目录直接输入
+  - 机器指纹自动加载显示，无需手动刷新
+  - Spinbox 统一宽度，标签左对齐
+- 模板上传向导改进：
+  - 窗口可调整大小，minsize(300, 400)
+  - "全部跳过"按钮改为"一键重置"
+  - 全局文本配置底部添加使用说明
+  - padx 35→30
+- 冷却剩余时间自动刷新：账号列表每 60 秒自动刷新一次
+- 模块拆分：gui_app.py（约 2926 行）拆分为 7 个文件
+  - gui_app.py（约 864 行）：入口层，委托模式
+  - automation_runner.py（约 596 行）：自动化运行 + 资产识别
+  - scheduler.py（约 540 行）：定时调度
+  - account_manager.py（约 738 行）：账号管理
+  - email_notifier.py（约 250 行）：邮件通知
+  - cooldown_watcher.py（约 160 行）：冷却监听
+  - server_client.py（约 117 行）：服务器通信
+- 修复资产识别不工作：utils.ocr_recognize() 的 BGR 转换导致识别失败，改为直接传 numpy 数组
+- 修复全局 OCR 禁用时未清理残余 ocr_configs
+- 修复状态图标未反映 OCR 配置状态
+- 预初始化 RapidOCR 引擎（避免首次 OCR 超时）
+- OCR 连续超时 2 次自动禁用，回退到图像匹配
+- 新增 Nuitka 打包支持和 Inno Setup 安装程序
+- 依赖新增：rapidocr-onnxruntime（OCR 文字识别引擎）
+- 测试套件更新为 54 项，适配模块拆分
+
+----------------------------------------
+v1.0.32 (2026-06-02)
+----------------------------------------
+
+- 修复设置窗口按钮显示不全：可调整大小 + Canvas+Scrollbar 滚动
+- 修复主窗口按钮显示不全：可调整大小，底部按钮固定
+- 优化设置窗口滚轮滚动：全局处理器 + 活跃 Canvas 跟踪
+- 修复 QQ 降级方案重复点击：降级改为仅检测不点击
+- 修复鼠标触碰屏幕角落导致崩溃：捕获 FailSafeException
+- 新增 find_multiscale 函数：仅检测不点击的图像识别
+- 新增 Nuitka 打包支持（onefile + standalone）
+- 新增 Inno Setup 安装程序打包支持
+- resource_path 兼容 PyInstaller 和 Nuitka 两种打包方式
+
+----------------------------------------
+v1.0.31 (2026-05-30)
+----------------------------------------
+
+- 修复手动启动时冷却中的账号被意外执行
+- 修复开机启动后冷却中的账号被意外执行
+- 修复冷却到期后自动任务不执行
+- 优化三角洲行动退出流程（多次 Alt+F4）
+- 修复启动时/结束后未清理三角洲行动进程
+- 修复最小化窗口后恢复异常
+- 优化托盘显示窗口线程安全
+
+----------------------------------------
+v1.0.3 (2026-05-28)
+----------------------------------------
+
+- 机器指纹绑定（防复制/防滥用）
+- 远程有效期控制（服务器端校验）
+- 账号状态实时同步（心跳推送）
+- 运行完成后延迟关机
+
+----------------------------------------
+v1.0.2 (2026-05-27)
+----------------------------------------
+
+- 拆分自动化流程模块（automation.py）
+- 邮箱货币领取移至售卖物品 Tab
+- 优化售卖物品界面布局
+
+----------------------------------------
+v1.0.1 (2026-05-26)
+----------------------------------------
+
+- 修复模板上传向导鼠标滚轮报错
+- 修复冷却完成后不自动运行
+- 新增自定义冷却结束时间
+
+----------------------------------------
+v1.0.0 (2026-05-25)
+----------------------------------------
+
+- 初始发布版本
+
+================================================================================
+14. 服务器部署
+================================================================================
+
+1. 将 server.py 上传到云服务器
+2. 安装依赖: pip install fastapi uvicorn
+3. 启动: python server.py 或 uvicorn server:app --host 0.0.0.0 --port 8000
+4. 管理后台: 将图形化可视管理后台代码部署为 HTML 页面
+
+================================================================================
+15. 常见问题
+================================================================================
+
+Q: 如何测试机器指纹验证？
+A:
+    1. 运行 python machine_fingerprint.py 查看本机指纹
+    2. 确保该指纹在服务器白名单中
+    3. 如果不在白名单，调用 /api/v1/admin/add_to_whitelist 添加
+
+Q: 服务器不可达时程序会怎样？
+A:
+    程序会弹窗显示本机指纹和"服务器不可用"提示，然后退出。
+    不会降级到本地验证，确保安全性。
+
+Q: 用户说程序打不开怎么办？
+A:
+    1. 让用户截图弹窗中的机器指纹
+    2. 在管理后台调用 add_to_whitelist 添加该指纹
+    3. 如果是有效期问题，调用 set_user_expiry 延长有效期
+
+Q: 如何查看哪些机器在线？
+A:
+    调用 GET /api/v1/admin/get_machine_status，返回所有机器的实时状态。
+    超过5分钟无心跳的机器会被标记为离线。
+
+Q: 心跳数据不更新了怎么办？
+A:
+    1. 检查客户端程序是否还在运行
+    2. 检查服务器是否在线
+    3. 心跳停止不影响本地自动化功能，只是无法远程监控
+
+Q: 如何修改服务器地址？
+A:
+    修改 config.py 中 DEFAULT_SETTINGS 的 server_url 字段，重新打包。
+    或者让用户在 ~/.delta_auto_settings.json 中手动修改。
+
+Q: 打包后程序无法启动？
+A:
+    1. 检查所有新模块是否在 hiddenimports 中（PyInstaller）
+    2. 检查图片资源是否正确打包
+    3. 查看 dist 目录下的错误日志
+    4. 确保目标机器能访问服务器
+
+Q: Nuitka 打包后图片资源找不到？
+A:
+    1. 确认使用了 --include-data-dir=picture=picture 参数
+    2. 确认 resource_path() 中 Nuitka 分支使用 __file__ 定位
+    3. standalone 模式下确认 picture/ 目录在 exe 同级目录
+    4. onefile 模式下数据解压到临时目录，重启后可能需重新解压
+
+Q: Inno Setup 安装后程序无法运行？
+A:
+    1. 确认安装目录下有 picture/ 目录及所有子目录
+    2. 确认以管理员权限运行（电源管理功能需要）
+    3. 检查目标机器是否安装了 VC++ 运行库
+
+Q: OCR 识别不工作怎么办？
+A:
+    1. 检查是否安装了 rapidocr-onnxruntime 依赖
+    2. OCR 连续超时 2 次会自动禁用，重启程序可恢复
+    3. 检查 OCR 配置是否正确（识别区域、目标文本）
+    4. 如果 OCR 引擎初始化失败，程序会自动回退到图像匹配
+
+Q: 资产识别不工作怎么办？
+A:
+    1. 在设置→全局设置中勾选"启用资产识别"
+    2. 点击"设置区域"框选游戏中的资产数值区域（如 "1.2M"）
+    3. 点击"测试识别"验证是否能正确识别
+    4. 确保游戏画面稳定后再识别（程序会等待 1 秒）
+    5. 资产识别使用独立的 RapidOCR 引擎实例（缓存在 automation_runner._ocr_engine）
+    6. 注意：资产识别不做 BGR 转换，直接传 numpy 数组给 RapidOCR
+
+================================================================================
+                            文档结束
+================================================================================
+
+如有问题，请联系开发团队。
+
+最后更新: 2026-06-24
