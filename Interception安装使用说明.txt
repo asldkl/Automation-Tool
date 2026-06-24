@@ -1,0 +1,300 @@
+================================================================================
+            Interception 驱动安装与使用说明
+================================================================================
+
+版本: v2.0
+更新日期: 2026-06-24
+适用系统: Windows 10 / 11 64-bit
+
+================================================================================
+1. 概述
+================================================================================
+
+Interception 是一个内核级键盘/鼠标拦截驱动，本工具用它实现 WeGame 登录时的
+驱动级键盘输入（绕开 WeGame 10 账号限制和 QQ 同 IP 验证码）。
+
+需要安装两个组件：
+  - interception.sys  — 内核驱动文件（安装到系统目录）
+  - interception.dll  — 用户态通信 DLL（项目目录已包含）
+
+================================================================================
+2. 下载驱动包
+================================================================================
+
+从 GitHub 下载 Interception 驱动包：
+
+  下载地址: https://github.com/oblitum/Interception/releases/tag/v1.0.1
+  文件名: Interception.zip（约 380KB）
+
+解压后目录结构：
+  Interception/
+  ├── command line installer/
+  │   └── install-interception.exe    ← 内含驱动文件
+  ├── library/
+  │   ├── interception.h
+  │   ├── x64/
+  │   │   ├── interception.dll
+  │   │   └── interception.lib
+  │   └── x86/
+  │       ├── interception.dll
+  │       └── interception.lib
+  ├── licenses/
+  └── samples/
+
+注意：项目目录中已包含 interception.dll，无需从解压包中复制。
+
+================================================================================
+3. 安装方法（推荐：手动提取+安装）
+================================================================================
+
+install-interception.exe 是 32 位程序，在 64 位系统上直接运行会因 WOW64
+文件系统重定向导致安装失败。需要手动提取驱动文件并安装。
+
+---------- 步骤一：提取 interception.sys 驱动文件 ----------
+
+方法 A：使用项目提供的 Python 脚本提取
+
+  在项目目录下运行：
+
+    python -c "
+    import struct
+    with open(r'<解压目录>\Interception\command line installer\install-interception.exe', 'rb') as f:
+        data = f.read()
+    pe_offsets = []
+    i = 0
+    while True:
+        pos = data.find(b'MZ', i)
+        if pos == -1 or pos > len(data) - 100: break
+        try:
+            pe_off = struct.unpack_from('<I', data, pos + 0x3c)[0]
+            if pos + pe_off + 4 < len(data) and data[pos + pe_off:pos + pe_off + 4] == b'PE\x00\x00':
+                pe_offsets.append(pos)
+        except: pass
+        i = pos + 2
+    for idx, pe_start in enumerate(pe_offsets):
+        pe_off = struct.unpack_from('<I', data, pe_start + 0x3c)[0]
+        file_header = pe_start + pe_off + 4
+        machine = struct.unpack_from('<H', data, file_header)[0]
+        opt_offset = file_header + 20
+        subsystem = struct.unpack_from('<H', data, opt_offset + 68)[0]
+        if machine == 0x8664 and subsystem == 1:
+            pe_end = pe_offsets[idx + 1] if idx + 1 < len(pe_offsets) else len(data)
+            driver_data = data[pe_start:pe_end]
+            with open('interception.sys', 'wb') as f:
+                f.write(driver_data)
+            print(f'Extracted: {len(driver_data)} bytes')
+            break
+    "
+
+  输出：interception.sys（约 18536 字节，x64 内核驱动）
+
+方法 B：用 7-Zip 解压
+
+  用 7-Zip 打开 install-interception.exe，找到其中 x64 的内核驱动文件提取出来。
+
+---------- 步骤二：复制驱动到系统目录 ----------
+
+以管理员身份打开 PowerShell，执行：
+
+    Copy-Item "interception.sys" "C:\Windows\System32\drivers\interception.sys" -Force
+
+或者用管理员 CMD：
+
+    copy interception.sys C:\Windows\System32\drivers\interception.sys
+
+---------- 步骤三：创建驱动服务 ----------
+
+以管理员身份打开 CMD，执行：
+
+    sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
+
+---------- 步骤四：重启电脑 ----------
+
+  ⚠️ 重要：安装后必须重启电脑，驱动才能加载。
+
+  重启后驱动会自动加载（Start=3 手动启动，程序调用时自动激活）。
+
+================================================================================
+4. 验证安装
+================================================================================
+
+重启后，在项目目录下运行：
+
+    python -c "import interception_keyboard; print(interception_keyboard.is_available())"
+
+输出 True 表示安装成功。
+
+或者检查驱动状态：
+
+    sc query interception
+    driverquery | findstr interception
+
+================================================================================
+5. 驱动签名说明
+================================================================================
+
+驱动文件签名信息：
+  - 签名人: Francisco Lopes da Silva（Interception 作者）
+  - 颁发者: GlobalSign CodeSigning CA - G2
+  - 证书有效期: 2011-10-21 ~ 2012-10-21（已过期，有时间戳）
+  - 签名类型: Authenticode
+  - 签名状态: Valid（有过期时间戳的 Authenticode 签名）
+
+驱动签名虽然过期，但带有 RFC 3161 时间戳，Windows 仍视为有效签名。
+在大多数系统上可正常加载，无需开启测试模式。
+
+================================================================================
+6. 常见问题与解决方案
+================================================================================
+
+---------- 问题 1：sc start 报错 577 "无法验证数字签名" ----------
+
+原因：系统开启了 Secure Boot 或 HVCI（内存完整性），阻止加载非 WHQL 驱动。
+
+解决方案（按优先级）：
+
+  A. 关闭内存完整性（推荐，不影响游戏）
+     1. 打开 Windows 安全中心 → 设备安全性 → 内核隔离详细信息
+     2. 关闭「内存完整性」
+     3. 重启电脑
+
+  B. 关闭 Secure Boot（进 BIOS 设置）
+     进入主板 BIOS → Security → Secure Boot → Disabled
+
+  C. 开启测试模式（最后手段，可能影响游戏）
+     以管理员身份运行：
+         bcdedit /set testsigning on
+     重启后生效。注意：测试模式下 EasyAntiCheat 等反作弊系统可能阻止游戏启动。
+
+---------- 问题 2：sc start 报错 183 "文件已存在" ----------
+
+原因：驱动服务已创建但设备对象冲突，或驱动已在运行。
+
+解决方案：
+  1. 检查状态：sc query interception
+  2. 如果显示 STOPPED → 重启电脑后重试
+  3. 如果仍失败 → 先删除再重建：
+       sc stop interception
+       sc delete interception
+       sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
+       重启电脑
+
+---------- 问题 3：sc start 报错 193 "不是有效的应用程序" ----------
+
+原因：interception.sys 文件不完整或损坏（提取方式不正确）。
+
+解决方案：
+  1. 重新提取驱动文件（使用上面的 Python 脚本）
+  2. 确认文件大小约 18536 字节（x64 版本）
+  3. 检查签名：Get-AuthenticodeSignature interception.sys
+     应显示 Status=Valid，Signer=Francisco Lopes da Silva
+
+---------- 问题 4：驱动安装成功但程序检测不到 ----------
+
+原因：interception.dll 不在正确位置。
+
+解决方案：
+  1. 确认项目目录下有 interception.dll（约 11KB）
+  2. DLL 搜索顺序：项目目录 → Interception-master/library/ → System32
+  3. 如果是打包后的 exe，DLL 会在 exe 同级目录
+
+---------- 问题 5：安装驱动后游戏无法启动 ----------
+
+原因：部分反作弊系统（EasyAntiCheat、BattlEye）检测到 Interception 驱动会阻止游戏启动。
+
+解决方案：
+  1. 运行自动化工具前安装驱动
+  2. 玩游戏前卸载驱动：
+       sc stop interception
+       sc delete interception
+  3. 或使用双启动项方案（一个开启测试模式用于自动化，一个正常模式用于游戏）
+
+================================================================================
+7. 工具集成说明
+================================================================================
+
+项目相关文件：
+  - interception_keyboard.py   — Python 封装模块（ctypes 调用 interception.dll）
+  - interception.dll           — Interception 通信 DLL（项目根目录，约 11KB）
+  - 三角洲自动工具.spec         — PyInstaller 配置（已配置嵌入 interception.dll）
+
+interception_keyboard.py 功能：
+  - is_available()：检查 Interception 驱动和 DLL 是否可用
+  - send_string(text, interval)：逐字符发送按键（扫描码方式）
+  - send_key(char, interval)：发送单个按键事件
+  - get_backend()：返回后端名称 "Interception"
+  - DLL 搜索路径：项目目录 → Interception-master/library/ → System32 → sys._MEIPASS
+
+自动化登录流程（automation_runner.py _login_account）：
+  1. 杀进程（WeGame/三角洲）
+  2. 打开 WeGame → 等待窗口
+  3. 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空旧账号
+  4. Interception 驱动级键盘输入账号
+  5. 图像识别点击 Input（密码框）→ Interception 输入密码
+  6. 图像识别点击 Sign-in 登录
+
+================================================================================
+8. 驱动卸载方法
+================================================================================
+
+停止驱动：
+    sc stop interception
+
+删除服务：
+    sc delete interception
+
+删除驱动文件：
+    del C:\Windows\System32\drivers\interception.sys
+
+卸载后重启电脑生效。
+
+================================================================================
+9. 快速安装脚本（一键安装）
+================================================================================
+
+将以下内容保存为 install_interception.bat，以管理员身份运行：
+
+    @echo off
+    echo === Interception 驱动安装 ===
+
+    REM 检查是否已安装
+    sc query interception >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo 驱动服务已存在，跳过安装。
+        goto :check
+    )
+
+    REM 复制驱动文件
+    echo 复制驱动文件...
+    copy /Y "%~dp0interception.sys" "C:\Windows\System32\drivers\interception.sys"
+    if %errorlevel% neq 0 (
+        echo 复制失败！请以管理员身份运行此脚本。
+        pause
+        exit /b 1
+    )
+
+    REM 创建服务
+    echo 创建驱动服务...
+    sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
+    if %errorlevel% neq 0 (
+        echo 创建服务失败！
+        pause
+        exit /b 1
+    )
+
+    echo.
+    echo 安装完成！请重启电脑使驱动生效。
+    echo.
+
+    :check
+    echo 验证安装：
+    sc query interception
+    echo.
+    pause
+
+使用方法：
+  1. 将 interception.sys 和此 bat 文件放在同一目录
+  2. 右键 bat 文件 → 以管理员身份运行
+  3. 重启电脑
+
+================================================================================
