@@ -10,7 +10,7 @@ import uuid
 
 
 def _get_wmic_value(cmd):
-    """执行 WMIC 命令并提取返回值"""
+    """执行 WMIC 命令并提取返回值（兼容无 wmic 的系统）"""
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=10,
@@ -27,14 +27,37 @@ def _get_wmic_value(cmd):
     return None
 
 
+def _get_wmi_value_powershell(class_name, property_name):
+    """通过 PowerShell WMI 获取硬件属性（兼容 Windows 11 无 wmic 的情况）"""
+    try:
+        ps_cmd = f"Get-WmiObject {class_name} | Select-Object -ExpandProperty {property_name}"
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        value = result.stdout.strip()
+        if value and value not in ('(null)', 'To Be Filled By O.E.M.', 'Default string', ''):
+            return value
+    except Exception:
+        pass
+    return None
+
+
 def _get_disk_serial():
     """获取硬盘序列号"""
-    return _get_wmic_value(["wmic", "diskdrive", "get", "serialnumber"])
+    serial = _get_wmic_value(["wmic", "diskdrive", "get", "serialnumber"])
+    if not serial:
+        serial = _get_wmi_value_powershell("Win32_DiskDrive", "SerialNumber")
+    return serial
 
 
 def _get_baseboard_serial():
     """获取主板序列号"""
-    return _get_wmic_value(["wmic", "baseboard", "get", "serialnumber"])
+    serial = _get_wmic_value(["wmic", "baseboard", "get", "serialnumber"])
+    if not serial:
+        serial = _get_wmi_value_powershell("Win32_BaseBoard", "SerialNumber")
+    return serial
 
 
 def _get_fallback_id():

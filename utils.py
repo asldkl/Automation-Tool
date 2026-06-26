@@ -13,8 +13,7 @@ import psutil
 import win32gui
 import win32con
 import config
-from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS,
-                    IMAGE_LOGIN_BTN)
+from config import (CONFIDENCE, WAIT_TIME, WEGAME_PROCESS, DELTA_PROCESS)
 import relative_mouse_move
 import ctypes
 
@@ -137,6 +136,7 @@ def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titl
 # 模板图片缓存，LRU 淘汰避免内存无限增长
 _MAX_CACHE_SIZE = 50
 _template_cache = {}
+_template_cache_lock = threading.Lock()
 
 def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
     """cv2.imread 不支持非 ASCII 路径（如中文），用 np.fromfile + cv2.imdecode 替代"""
@@ -148,22 +148,24 @@ def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
 
 def _cache_get(key):
     """LRU 缓存读取：命中时移至末尾（最近使用）"""
-    template = _template_cache.pop(key, None)
-    if template is not None:
-        _template_cache[key] = template
-    return template
+    with _template_cache_lock:
+        template = _template_cache.pop(key, None)
+        if template is not None:
+            _template_cache[key] = template
+        return template
 
 def _cache_put(key, value):
     """LRU 缓存写入：超限时淘汰最早条目"""
-    if len(_template_cache) >= _MAX_CACHE_SIZE:
-        oldest = next(iter(_template_cache))
-        del _template_cache[oldest]
-    _template_cache[key] = value
+    with _template_cache_lock:
+        if len(_template_cache) >= _MAX_CACHE_SIZE:
+            oldest = next(iter(_template_cache))
+            del _template_cache[oldest]
+        _template_cache[key] = value
 
 def clear_template_cache():
     """清除模板缓存（用于重新截图后刷新）"""
-    global _template_cache
-    _template_cache.clear()
+    with _template_cache_lock:
+        _template_cache.clear()
 
 def _match_template(gray_screen, template, threshold):
     """标准灰度模板匹配，返回 (matched, max_val, max_loc, (h, w))"""
@@ -525,53 +527,6 @@ def cancel_shutdown():
         return False
 
 
-def wake_display():
-    """
-    唤醒显示器（从黑屏/息屏状态恢复显示）。
-    组合多种方法确保显示器正常点亮。
-    """
-    # 方法1: 模拟鼠标移动和点击（常用于唤醒休眠中的显示器）
-    try:
-        screen_w, screen_h = pyautogui.size()
-        smooth_move_to(screen_w // 2, screen_h // 2, duration=0.5)
-        pyautogui.click()
-        pyautogui.moveRel(1, 0, duration=0.1)
-    except Exception:
-        pass
-    time.sleep(0.3)
-
-    # 方法2: 模拟键盘按键 (Ctrl 键)
-    ctypes.windll.user32.keybd_event(0x11, 0, 0, 0)  # Ctrl down
-    time.sleep(0.05)
-    ctypes.windll.user32.keybd_event(0x11, 0, 2, 0)  # Ctrl up
-    time.sleep(0.3)
-
-    # 方法3: 使用 SC_MONITORPOWER 发送显示器唤醒信号
-    HWND_BROADCAST = 0xFFFF
-    WM_SYSCOMMAND = 0x0112
-    SC_MONITORPOWER = 0xF170
-    ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1)
-    time.sleep(0.5)
-
-    # 再次请求保持显示器开启
-    _kernel32.SetThreadExecutionState(
-        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
-    )
-    time.sleep(0.5)
-
-    # 解除 Windows 锁屏：屏幕唤醒后可能处于锁屏界面，
-    # 需要按 Space 键进入 Windows 桌面。
-    # 第1次 Space：响应屏幕点亮/唤起床；第2次 Space：进入桌面。
-    try:
-        pyautogui.press("Space")
-        time.sleep(1)
-        pyautogui.press("Space")
-    except Exception:
-        pass
-
-    print("🖥️ 已尝试唤醒显示器")
-
-
 def schedule_startup_task(time_str):
     """
     使用 Windows Task Scheduler 创建每日定时任务。
@@ -683,25 +638,29 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
 _ocr_engine = None
 _ocr_failed = False                          # True = OCR 引擎初始化失败，全局不可用
 _ocr_failures = {}                           # var_name → [failure_timestamps]，连续失败后临时禁用
+_ocr_failures_lock = threading.Lock()        # 线程安全锁
 _OCR_MAX_FAILURES = 3                        # 连续失败次数阈值
 _OCR_DISABLE_SECONDS = 300                   # 临时禁用时长（5分钟），超时自动恢复
 
 def _ocr_is_disabled(var_name):
     """检查指定 var_name 是否因连续失败被临时禁用（5分钟后自动恢复）"""
-    timestamps = _ocr_failures.get(var_name, [])
-    now = time.time()
-    cutoff = now - _OCR_DISABLE_SECONDS
-    recent = [t for t in timestamps if t > cutoff]
-    _ocr_failures[var_name] = recent
-    return len(recent) >= _OCR_MAX_FAILURES
+    with _ocr_failures_lock:
+        timestamps = _ocr_failures.get(var_name, [])
+        now = time.time()
+        cutoff = now - _OCR_DISABLE_SECONDS
+        recent = [t for t in timestamps if t > cutoff]
+        _ocr_failures[var_name] = recent
+        return len(recent) >= _OCR_MAX_FAILURES
 
 def _ocr_record_failure(var_name):
     """记录一次 OCR 失败"""
-    _ocr_failures.setdefault(var_name, []).append(time.time())
+    with _ocr_failures_lock:
+        _ocr_failures.setdefault(var_name, []).append(time.time())
 
 def _ocr_record_success(var_name):
     """OCR 成功后清除该 var_name 的失败记录"""
-    _ocr_failures.pop(var_name, None)
+    with _ocr_failures_lock:
+        _ocr_failures.pop(var_name, None)
 
 def init_ocr_engine():
     """预初始化 RapidOCR 引擎。程序启动时调用，失败则标记 _ocr_failed"""
@@ -949,13 +908,20 @@ def find_and_click_smart(img_path, timeout=20, region=None, confidence=None,
 
 # ==================== 窗口图标设置 ====================
 def set_window_icon(win):
-    """为 Tkinter 窗口统一设置应用图标"""
+    """为 Tkinter 窗口统一设置应用图标，最小化恢复后自动重新设置"""
     try:
         icon_path = config.resource_path("picture/icon/icon.ico")
         if os.path.exists(icon_path):
             from PIL import Image, ImageTk
             win._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
             win.iconphoto(False, win._icon_photo)
+            # 绑定窗口恢复事件，防止最小化后图标消失
+            def _reapply_icon(event=None):
+                try:
+                    win.iconphoto(False, win._icon_photo)
+                except Exception:
+                    pass
+            win.bind('<Map>', _reapply_icon)
     except Exception:
         pass
 
@@ -990,3 +956,163 @@ def format_asset_num(val):
         return f"{val / 1_000:.1f}K"
     else:
         return f"{val:.0f}"
+
+
+# ==================== 冷却到期定时任务兜底 ====================
+COOLDOWN_SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown_signal")
+COOLDOWN_TASK_NAME = "DeltaAutoTool_Cooldown"
+
+
+def write_cooldown_signal():
+    """写入冷却触发信号文件（定时任务触发时调用，通知已有实例）"""
+    try:
+        import datetime
+        with open(COOLDOWN_SIGNAL_PATH, "w", encoding="utf-8") as f:
+            f.write(datetime.datetime.now().isoformat())
+        print(f"[OK] 已写入冷却触发信号文件")
+    except Exception as e:
+        print(f"[WARN] 写入冷却信号文件失败: {e}")
+
+
+def check_cooldown_signal():
+    """检查并消费信号文件，返回 True 表示有信号"""
+    try:
+        os.remove(COOLDOWN_SIGNAL_PATH)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
+def create_cooldown_scheduled_task(trigger_time):
+    """创建一次性定时任务，到期时写信号文件并启动程序
+    trigger_time: datetime 对象
+    """
+    import subprocess, tempfile, sys
+    import datetime
+
+    trigger_str = trigger_time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    # 创建辅助脚本：写信号文件 + 启动程序（无窗口）
+    # 放到 ProgramData 目录避免中文路径问题
+    # 用 GBK 编码写入 cmd 脚本，用 VBScript 隐藏窗口运行
+    programdata = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+    helper_dir = os.path.join(programdata, "DeltaAutoTool")
+    os.makedirs(helper_dir, exist_ok=True)
+    cmd_path = os.path.join(helper_dir, "cooldown_trigger.cmd")
+    vbs_path = os.path.join(helper_dir, "cooldown_trigger.vbs")
+
+    if getattr(sys, 'frozen', False):
+        exe_path = sys.executable
+        with open(cmd_path, 'w', encoding='gbk') as f:
+            f.write(f'@echo signal > "{COOLDOWN_SIGNAL_PATH}"\n')
+            f.write(f'start "" "{exe_path}"\n')
+    else:
+        python_exe = sys.executable
+        script_path = os.path.abspath(sys.argv[0]) if sys.argv[0] else os.path.abspath(__file__)
+        with open(cmd_path, 'w', encoding='gbk') as f:
+            f.write(f'@echo signal > "{COOLDOWN_SIGNAL_PATH}"\n')
+            f.write(f'"{python_exe}" "{script_path}" --auto-start\n')
+
+    # VBScript 包装器：隐藏 cmd 窗口运行
+    with open(vbs_path, 'w', encoding='gbk') as f:
+        f.write(f'Set objShell = CreateObject("WScript.Shell")\n')
+        f.write(f'objShell.Run "cmd /c ""{cmd_path}""", 0, False\n')
+
+    # 用 vbs 作为实际执行入口
+    helper_path = vbs_path
+
+    # 使用 schtasks 创建定时任务
+    trigger_date = trigger_time.strftime("%Y/%m/%d")
+    trigger_time_str = trigger_time.strftime("%H:%M")
+
+    try:
+        # 先删除旧任务（静默，失败无所谓）
+        subprocess.run(
+            ["schtasks", "/delete", "/tn", COOLDOWN_TASK_NAME, "/f"],
+            capture_output=True, timeout=10
+        )
+
+        # 创建新任务（用 wscript.exe 运行 VBScript，完全无窗口）
+        result = subprocess.run(
+            ["schtasks", "/create",
+             "/tn", COOLDOWN_TASK_NAME,
+             "/tr", f'wscript.exe "{vbs_path}"',
+             "/sc", "once",
+             "/st", trigger_time_str,
+             "/sd", trigger_date,
+             "/f"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            print(f"[OK] 已创建冷却定时任务：{trigger_time.strftime('%Y-%m-%d %H:%M')}")
+            return True
+        else:
+            print(f"[WARN] 创建冷却定时任务失败: {result.stderr}")
+            return False
+    except Exception as e:
+        print(f"[WARN] 创建冷却定时任务失败: {e}")
+        return False
+
+
+def remove_cooldown_scheduled_task():
+    """删除冷却到期定时任务"""
+    import subprocess
+    try:
+        subprocess.run(
+            ["schtasks", "/delete", "/tn", COOLDOWN_TASK_NAME, "/f"],
+            capture_output=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        print(f"[OK] 已删除冷却定时任务")
+        return True
+    except Exception:
+        return False
+
+
+# ==================== 窗口大小记忆 ====================
+def restore_window_geometry(win, settings_key, default_size="550x700", min_size=None):
+    """恢复窗口大小和位置，返回 True=已恢复，False=使用默认"""
+    import config
+    settings = config.load_settings()
+    saved = settings.get(settings_key, "")
+    if saved and "x" in saved:
+        try:
+            win.geometry(saved)
+            return True
+        except Exception:
+            pass
+    # 使用默认大小并居中
+    w, h = map(int, default_size.split("x"))
+    if min_size:
+        win.minsize(*min_size)
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
+    return False
+
+
+def save_window_geometry(win, settings_key):
+    """保存窗口大小和位置到设置文件"""
+    import config
+    try:
+        win.update_idletasks()
+        geo = win.geometry()
+        if not geo or "x" not in geo:
+            return
+        settings = config.load_settings()
+        settings[settings_key] = geo
+        config.save_settings(settings)
+    except Exception:
+        pass
+
+
+def bind_window_geometry(win, settings_key, default_size=None, min_size=None):
+    """一行代码给窗口加上大小记忆：恢复上次大小 + 关闭时自动保存"""
+    if default_size:
+        restore_window_geometry(win, settings_key, default_size, min_size)
+    def _on_close():
+        save_window_geometry(win, settings_key)
+        win.destroy()
+    win.protocol("WM_DELETE_WINDOW", _on_close)

@@ -62,26 +62,26 @@ def is_cooling_down(account_name):
     """
     with _lock:
         data = _load_data()
-    if account_name not in data:
-        return False, None
+        if account_name not in data:
+            return False, None
 
-    entry = data[account_name]
-    # 暂停状态（冷却暂停 或 账号暂停）均视为冷却中
-    if entry.get("paused") or entry.get("account_paused"):
-        return True, entry.get("next_run_time")
+        entry = data[account_name]
+        # 暂停状态（冷却暂停 或 账号暂停）均视为冷却中
+        if entry.get("paused") or entry.get("account_paused"):
+            return True, entry.get("next_run_time")
 
-    next_run_str = entry.get("next_run_time")
-    if not next_run_str:
-        return False, None
+        next_run_str = entry.get("next_run_time")
+        if not next_run_str:
+            return False, None
 
-    try:
-        next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-        now = datetime.datetime.now()
-        if now < next_run:
-            return True, next_run_str
-        return False, next_run_str
-    except Exception:
-        return False, None
+        try:
+            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+            now = datetime.datetime.now()
+            if now < next_run:
+                return True, next_run_str
+            return False, next_run_str
+        except Exception:
+            return False, None
 
 
 def record_run(account_name, cooldown_hours=8):
@@ -103,6 +103,44 @@ def record_run(account_name, cooldown_hours=8):
                 "next_run_time": next_run.strftime("%Y-%m-%d %H:%M:%S"),
             }
         _save_data(data)
+
+    # 新增：创建定时任务兜底（在锁外调用，避免死锁）
+    try:
+        import config
+        import utils
+        settings = config.load_settings()
+        if settings.get("cooldown_scheduled_task_enabled", True):
+            earliest = _find_earliest_cooldown(data)
+            if earliest:
+                # 延后 2 分钟，确保账号冷却已完全结束
+                earliest_with_buffer = earliest + datetime.timedelta(minutes=2)
+                utils.create_cooldown_scheduled_task(earliest_with_buffer)
+    except Exception as e:
+        print(f"⚠️ 创建冷却定时任务失败: {e}")
+
+
+def _find_earliest_cooldown(data):
+    """找到所有账号中最早的冷却到期时间，返回 datetime 对象或 None"""
+    earliest = None
+    for name, entry in data.items():
+        if entry.get("paused") or entry.get("account_paused"):
+            continue
+        # 用短名称再检查一次暂停状态（防止多 key 导致漏检）
+        short_name = name.split(":")[-1] if ":" in name else name
+        if short_name != name:
+            short_entry = data.get(short_name, {})
+            if short_entry.get("paused") or short_entry.get("account_paused"):
+                continue
+        next_run_str = entry.get("next_run_time", "")
+        if not next_run_str:
+            continue
+        try:
+            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+            if earliest is None or next_run < earliest:
+                earliest = next_run
+        except Exception:
+            pass
+    return earliest
 
 
 def reset_cooldown(account_name):
@@ -130,29 +168,29 @@ def get_all_cooldowns():
     """
     with _lock:
         data = _load_data()
-    now = datetime.datetime.now()
-    result = {}
-    for name, entry in data.items():
-        next_run_str = entry.get("next_run_time", "")
-        paused = entry.get("paused", False)
-        remaining = 0
-        if paused:
-            remaining = entry.get("paused_remaining", 0)
-        elif next_run_str:
-            try:
-                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-                diff = (next_run - now).total_seconds()
-                remaining = max(0, int(diff))
-            except Exception:
-                pass
-        result[name] = {
-            "last_run_time": entry.get("last_run_time", ""),
-            "next_run_time": next_run_str,
-            "remaining_seconds": remaining,
-            "paused": paused,
-            "account_paused": entry.get("account_paused", False),
-        }
-    return result
+        now = datetime.datetime.now()
+        result = {}
+        for name, entry in data.items():
+            next_run_str = entry.get("next_run_time", "")
+            paused = entry.get("paused", False)
+            remaining = 0
+            if paused:
+                remaining = entry.get("paused_remaining", 0)
+            elif next_run_str:
+                try:
+                    next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                    diff = (next_run - now).total_seconds()
+                    remaining = max(0, int(diff))
+                except Exception:
+                    pass
+            result[name] = {
+                "last_run_time": entry.get("last_run_time", ""),
+                "next_run_time": next_run_str,
+                "remaining_seconds": remaining,
+                "paused": paused,
+                "account_paused": entry.get("account_paused", False),
+            }
+        return result
 
 
 def set_custom_cooldown(account_name, next_run_time_str):

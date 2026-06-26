@@ -24,18 +24,26 @@ def set_next_wake_timer(app):
         now = datetime.datetime.now()
         next_run = None
 
-        # 冷却完立即运行模式：取最早冷却到期时间
-        if app.settings.get("cooldown_run_immediately", False) and app.qq_account_images:
-            for img_path in app.qq_account_images:
-                fname = os.path.basename(img_path)
-                cooling, next_time_str = cooldown_manager.is_cooling_down(fname)
-                if cooling and next_time_str:
-                    try:
-                        cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
-                        if next_run is None or cd_next < next_run:
-                            next_run = cd_next
-                    except Exception:
-                        pass
+        # 冷却完立即运行模式：取最早冷却到期时间（直接遍历冷却数据，避免 key 不一致）
+        if app.settings.get("cooldown_run_immediately", False):
+            cd_data = cooldown_manager._load_data()
+            for name, entry in cd_data.items():
+                if entry.get("paused") or entry.get("account_paused"):
+                    continue
+                short_name = name.split(":")[-1] if ":" in name else name
+                if short_name != name:
+                    short_entry = cd_data.get(short_name, {})
+                    if short_entry.get("paused") or short_entry.get("account_paused"):
+                        continue
+                next_time_str = entry.get("next_run_time", "")
+                if not next_time_str:
+                    continue
+                try:
+                    cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
+                    if cd_next > now and (next_run is None or cd_next < next_run):
+                        next_run = cd_next
+                except Exception:
+                    pass
 
         if next_run:
             wake_time = next_run - datetime.timedelta(minutes=5)
@@ -59,17 +67,25 @@ def update_cooldown_wake_timer(app):
     try:
         now = datetime.datetime.now()
         earliest_next = None
-        if app.qq_account_images:
-            for img_path in app.qq_account_images:
-                fname = os.path.basename(img_path)
-                cooling, next_time_str = cooldown_manager.is_cooling_down(fname)
-                if cooling and next_time_str:
-                    try:
-                        cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
-                        if earliest_next is None or cd_next < earliest_next:
-                            earliest_next = cd_next
-                    except Exception:
-                        pass
+        # 直接遍历冷却数据，避免 key 不一致
+        cd_data = cooldown_manager._load_data()
+        for name, entry in cd_data.items():
+            if entry.get("paused") or entry.get("account_paused"):
+                continue
+            short_name = name.split(":")[-1] if ":" in name else name
+            if short_name != name:
+                short_entry = cd_data.get(short_name, {})
+                if short_entry.get("paused") or short_entry.get("account_paused"):
+                    continue
+            next_time_str = entry.get("next_run_time", "")
+            if not next_time_str:
+                continue
+            try:
+                cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
+                if cd_next > now and (earliest_next is None or cd_next < earliest_next):
+                    earliest_next = cd_next
+            except Exception:
+                pass
 
         if earliest_next:
             wake_time = earliest_next - datetime.timedelta(minutes=5)

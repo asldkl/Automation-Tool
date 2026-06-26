@@ -23,15 +23,20 @@ def start_cooldown_watcher(app):
     # 防止所有账号在30秒内全部执行
     if app.settings.get("enable_cooldown", False):
         cd_hours = app.settings.get("cooldown_hours", 8)
+        all_cd = cooldown_manager.get_all_cooldowns()
         for acc_idx, img_path in enumerate(app.qq_account_images):
             file_name = os.path.basename(img_path)
+            # 用两种 key 检查，避免误判
+            short_name = file_name.split(":")[-1] if ":" in file_name else file_name
+            has_record = file_name in all_cd or short_name in all_cd or img_path in all_cd
+            if has_record:
+                continue
             cooling, _ = cooldown_manager.is_cooling_down(file_name)
             if not cooling:
-                # 检查是否有历史记录
-                all_cd = cooldown_manager.get_all_cooldowns()
-                if file_name not in all_cd:
-                    cooldown_manager.record_run(file_name, cd_hours)
-                    print(f"📝 首次启用冷却监听，为 {file_name} 记录冷却时间")
+                # 用 _get_cooldown_key 的逻辑获取正确的 key
+                cd_key = short_name if short_name in all_cd else file_name
+                cooldown_manager.record_run(cd_key, cd_hours)
+                print(f"📝 首次启用冷却监听，为 {cd_key} 记录冷却时间")
 
     app._cooldown_watcher_stop = threading.Event()
     app._cooldown_watcher_thread = threading.Thread(target=cooldown_watcher_loop, args=(app,), daemon=True)
@@ -47,6 +52,8 @@ def stop_cooldown_watcher(app):
 
 def restart_cooldown_watcher(app):
     """冷却监听异常退出后的恢复入口"""
+    if not hasattr(app, '_cooldown_watcher_stop') or app._cooldown_watcher_stop is None:
+        return
     if not app._cooldown_watcher_stop.is_set() and app.settings.get("cooldown_run_immediately", False):
         print("🔄 正在重启冷却监听...")
         app._cooldown_watcher_thread = None
@@ -89,20 +96,27 @@ def cooldown_watcher_loop(app):
 
                             # 发送冷却到期邮件提醒
                             ready_list = []
+                            cd_data = cooldown_manager._load_data()
                             for img_path in app.qq_account_images:
                                 fname = os.path.basename(img_path)
-                                cooling, _ = cooldown_manager.is_cooling_down(fname)
+                                cd_name = img_path if img_path in cd_data else fname
+                                cooling, _ = cooldown_manager.is_cooling_down(cd_name)
                                 if not cooling:
-                                    ready_list.append(fname)
+                                    ready_list.append(cd_name)
                             if ready_list:
                                 email_notifier.send_cooldown_ready_email(app, ready_list)
 
                             # 直接设置标志位并安全调用 start()
                             app._ignore_cooldown_this_run = True
                             utils.prevent_sleep()
-                            utils.wake_display()
 
                             print("🚀 冷却到期，正在启动自动任务...")
+
+                            # 删除定时任务兜底（监听线程已成功触发，不需要定时任务了）
+                            try:
+                                utils.remove_cooldown_scheduled_task()
+                            except Exception:
+                                pass
 
                             # 直接在主线程调度 start()，这是最可靠的方式
                             app.root.after(0, app.start)
@@ -138,15 +152,27 @@ def cooldown_watcher_loop(app):
 
 
 def check_any_account_ready(app):
-    """检查是否有账号冷却到期且未在冷却中，返回是否有可用账号"""
+    """检查是否有账号冷却到期且未在冷却中且未暂停，返回是否有可用账号"""
     if not app.settings.get("cooldown_run_immediately", False):
         return False
     ready_accounts = []
+    cd_data = cooldown_manager._load_data()
     for img_path in app.qq_account_images:
         file_name = os.path.basename(img_path)
-        cooling, next_time = cooldown_manager.is_cooling_down(file_name)
+        short_name = file_name.split(":")[-1] if ":" in file_name else file_name
+        # 优先用短名称（暂停状态通常记录在短名称上）
+        if short_name in cd_data:
+            cd_name = short_name
+        elif img_path in cd_data:
+            cd_name = img_path
+        else:
+            cd_name = file_name
+        # 跳过暂停的账号
+        if cooldown_manager.is_account_paused(cd_name):
+            continue
+        cooling, next_time = cooldown_manager.is_cooling_down(cd_name)
         if not cooling:
-            ready_accounts.append(file_name)
+            ready_accounts.append(cd_name)
     # 只在状态变化时打印日志，避免重复输出
     ready_key = tuple(sorted(ready_accounts))
     if ready_accounts:

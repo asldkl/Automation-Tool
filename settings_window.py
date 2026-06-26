@@ -22,14 +22,8 @@ class SettingsWindow:
         self.app = app
         self.win = tk.Toplevel(parent)
         self.win.title("设置")
-        self.win.geometry("550x700")
         self.win.resizable(True, True)
         self.win.minsize(550, 500)
-        # 窗口居中
-        self.win.update_idletasks()
-        x = (self.win.winfo_screenwidth() - 550) // 2
-        y = (self.win.winfo_screenheight() - 700) // 2
-        self.win.geometry(f"550x700+{x}+{y}")
         self.win.transient(parent)
         self.win.grab_set()
         # 设置窗口图标
@@ -45,6 +39,7 @@ class SettingsWindow:
 
         # 自动任务设置变量
         self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
+        self.cooldown_scheduled_task_var = tk.BooleanVar(value=app.settings.get("cooldown_scheduled_task_enabled", True))
 
         # 操作选择变量
         selected = app.settings.get("selected_operations", [])
@@ -92,10 +87,14 @@ class SettingsWindow:
         self._setup_styles()
         self._build_ui()
         self.win.bind_all("<MouseWheel>", self._on_mousewheel)
+        # 恢复窗口大小
+        utils.restore_window_geometry(self.win, "settings_window_geometry", "550x700", (550, 500))
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _on_close(self):
         """窗口关闭时清理资源，防止内存泄漏"""
+        # 保存窗口大小和位置
+        utils.save_window_geometry(self.win, "settings_window_geometry")
         # 保存售卖物品元数据（防止未点保存按钮就关闭窗口）
         if hasattr(self, '_sell_items_meta'):
             self._save_sell_items_meta()
@@ -124,6 +123,10 @@ class SettingsWindow:
                         font=('Microsoft YaHei UI', 9))
         style.configure('SettingsSmall.TLabel', background='#ffffff', foreground='#666666',
                         font=('Microsoft YaHei UI', 8))
+        # 滑块样式（确保可拖动，增大滑块区域）
+        style.configure('TScale', background='#ffffff', troughcolor='#f5f5f5',
+                        bordercolor='#e0e0e0', lightcolor='#0078d4', darkcolor='#0078d4',
+                        sliderlength=20, sliderrelief='raised')
 
     def _on_mousewheel(self, event):
         """全局滚轮事件处理，仅滚动当前激活的 canvas"""
@@ -183,7 +186,7 @@ class SettingsWindow:
         ttk.Button(btn_frame, text="✓ 保存设置", style='Success.TButton',
                    command=self._save, width=14).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(btn_frame, text="✕ 取消", style='TButton',
-                   command=self.win.destroy, width=10).pack(side=tk.LEFT)
+                   command=self._on_close, width=10).pack(side=tk.LEFT)
 
         # 选项卡
         notebook = ttk.Notebook(main_frame)
@@ -349,6 +352,28 @@ class SettingsWindow:
         ttk.Checkbutton(cd_row3, text="冷却完立即运行（冷却结束后自动执行任务）",
                        variable=self.cooldown_run_immediately_var).pack(side=tk.LEFT, padx=5, pady=5)
 
+        cd_row4 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row4.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(cd_row4, text="定时任务兜底（冷却到期时自动启动程序）",
+                       variable=self.cooldown_scheduled_task_var).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Label(cooldown_frame, text="开启后即使程序未运行，冷却到期也会通过系统定时任务自动启动程序执行",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
+        # ----- 开机自启动 -----
+        autostart_frame = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=10)
+        autostart_frame.pack(fill=tk.X, pady=(8, 8))
+
+        as_row1 = ttk.Frame(autostart_frame, style='SettingsInner.TFrame')
+        as_row1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(as_row1, text="开机自启动（登录 Windows 时自动运行）",
+                       variable=self.autostart_var).pack(side=tk.LEFT, padx=5, pady=5)
+        as_row2 = ttk.Frame(autostart_frame, style='SettingsInner.TFrame')
+        as_row2.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(as_row2, text="开机后立即运行一次任务（需先开启开机自启动）",
+                       variable=self.run_on_startup_var).pack(side=tk.LEFT, padx=5, pady=(0, 5))
+        ttk.Label(autostart_frame, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
         # ----- 执行操作选择 -----
         ops_frame = ttk.LabelFrame(parent, text="  执行操作（可多选）  ", style='SettingsCard.TLabelframe', padding=10)
         ops_frame.pack(fill=tk.X, pady=(0, 0))
@@ -466,28 +491,16 @@ class SettingsWindow:
                   state='readonly', font=('Consolas', 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(frame_fp, text="此指纹用于服务器绑定验证，需告知管理员添加到白名单后方可使用",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
-        # 自动加载指纹
-        try:
-            import machine_fingerprint
-            info = machine_fingerprint.get_machine_info()
-            self._fingerprint_var.set(info["machine_id"])
-        except Exception:
-            self._fingerprint_var.set("获取失败")
-
-        # ----- 开机自启动 -----
-        frame1 = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=12)
-        frame1.pack(fill=tk.X, pady=(0, 8))
-
-        f1 = ttk.Frame(frame1, style='SettingsInner.TFrame')
-        f1.pack(fill=tk.X)
-        ttk.Checkbutton(f1, text="开机自启动（登录 Windows 时自动运行）",
-                       variable=self.autostart_var).pack(side=tk.LEFT, padx=5, pady=5)
-        f1b = ttk.Frame(frame1, style='SettingsInner.TFrame')
-        f1b.pack(fill=tk.X)
-        ttk.Checkbutton(f1b, text="开机后立即运行一次任务（需先开启开机自启动）",
-                       variable=self.run_on_startup_var).pack(side=tk.LEFT, padx=5, pady=(0, 5))
-        ttk.Label(frame1, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+        # 异步加载指纹（避免阻塞 UI）
+        def _load_fingerprint():
+            try:
+                import machine_fingerprint
+                info = machine_fingerprint.get_machine_info()
+                self.win.after(0, self._fingerprint_var.set, info["machine_id"])
+            except Exception:
+                self.win.after(0, self._fingerprint_var.set, "获取失败")
+        import threading
+        threading.Thread(target=_load_fingerprint, daemon=True).start()
 
         # ----- 自动关机 -----
         frame_shutdown = ttk.LabelFrame(parent, text="  自动关机  ", style='SettingsCard.TLabelframe', padding=12)
@@ -544,17 +557,13 @@ class SettingsWindow:
         """打开开发者测试独立窗口"""
         win = tk.Toplevel(self.win)
         win.title("开发者测试")
-        win.geometry("500x600")
         win.resizable(True, True)
         win.transient(self.win)
         win.grab_set()
         utils.set_window_icon(win)
 
-        # 窗口居中
-        win.update_idletasks()
-        x = (win.winfo_screenwidth() - 500) // 2
-        y = (win.winfo_screenheight() - 600) // 2
-        win.geometry(f"500x600+{x}+{y}")
+        # 恢复窗口大小 + 关闭时自动保存
+        utils.bind_window_geometry(win, "dev_test_geometry", "500x600")
 
         # 滚动容器
         canvas = tk.Canvas(win, highlightthickness=0, bg='#ffffff')
@@ -603,26 +612,6 @@ class SettingsWindow:
         self._dev_login_status = ttk.Label(frame_login, text="", style='SettingsSmall.TLabel')
         self._dev_login_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
-        # ----- 图像识别测试 -----
-        frame_img = ttk.LabelFrame(parent, text="  图像识别测试  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_img.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(frame_img, text="测试模板图片是否能正确识别",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
-
-        img_btn_frame = ttk.Frame(frame_img, style='SettingsInner.TFrame')
-        img_btn_frame.pack(fill=tk.X)
-
-        ttk.Button(img_btn_frame, text="测试 account_select", style='TButton',
-                   command=lambda: self._test_image_recognition("ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(img_btn_frame, text="测试 Input", style='TButton',
-                   command=lambda: self._test_image_recognition("IMAGE_INPUT_FIELD"), width=12).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(img_btn_frame, text="测试 Sign-in", style='TButton',
-                   command=lambda: self._test_image_recognition("SIGN_IN"), width=14).pack(side=tk.LEFT)
-
-        self._dev_img_status = ttk.Label(frame_img, text="", style='SettingsSmall.TLabel')
-        self._dev_img_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
-
         # ----- 驱动键盘测试 -----
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
@@ -653,8 +642,6 @@ class SettingsWindow:
         proc_btn_frame = ttk.Frame(frame_proc, style='SettingsInner.TFrame')
         proc_btn_frame.pack(fill=tk.X)
 
-        ttk.Button(proc_btn_frame, text="清理 QQ", style='TButton',
-                   command=lambda: self._test_kill_process("QQ"), width=10).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(proc_btn_frame, text="清理 WeGame", style='TButton',
                    command=lambda: self._test_kill_process("WeGame"), width=12).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(proc_btn_frame, text="清理三角洲", style='TButton',
@@ -677,8 +664,6 @@ class SettingsWindow:
 
         ttk.Button(win_btn_frame, text="查找 WeGame 窗口", style='TButton',
                    command=lambda: self._test_find_window("WeGame"), width=16).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(win_btn_frame, text="查找 QQ 窗口", style='TButton',
-                   command=lambda: self._test_find_window("QQ"), width=14).pack(side=tk.LEFT)
 
         self._dev_win_status = ttk.Label(frame_win, text="", style='SettingsSmall.TLabel')
         self._dev_win_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
@@ -698,6 +683,144 @@ class SettingsWindow:
 
         self._dev_ocr_status = ttk.Label(frame_ocr, text="", style='SettingsSmall.TLabel')
         self._dev_ocr_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 图片识别置信度测试 -----
+        frame_conf = ttk.LabelFrame(parent, text="  图片识别置信度测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_conf.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_conf, text="点击模板名称，在屏幕上识别并返回置信度（匹配当前设置的置信度）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        ttk.Button(frame_conf, text="打开置信度测试窗口", style='TButton',
+                   command=self._open_confidence_test_window, width=20).pack(anchor=tk.W, padx=5)
+
+    def _open_confidence_test_window(self):
+        """打开图片识别置信度测试窗口"""
+        import config as cfg
+        win = tk.Toplevel(self.win)
+        win.title("图片识别置信度测试")
+        win.resizable(True, True)
+        win.minsize(400, 300)
+        win.transient(self.win)
+        win.grab_set()
+        utils.set_window_icon(win)
+        utils.restore_window_geometry(win, "confidence_test_geometry", "500x600", (400, 300))
+
+        # 标题
+        ttk.Label(win, text="点击模板名称，识别屏幕并返回置信度",
+                  font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(10, 5))
+        ttk.Label(win, text=f"当前匹配置信度：{self.confidence_var.get():.2f}",
+                  font=('Microsoft YaHei UI', 9), foreground='#666').pack(pady=(0, 5))
+
+        # 结果显示
+        result_var = tk.StringVar(value="等待测试...")
+        result_label = ttk.Label(win, textvariable=result_var,
+                                font=('Consolas', 10), foreground='#333')
+        result_label.pack(pady=(0, 10))
+
+        # 滚动区域
+        canvas = tk.Canvas(win, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def _on_mousewheel(event):
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except tk.TclError:
+                pass
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 分组
+        section_headers = {
+            "Produce_TechCenter": "产出项",
+            "DELTA_GAME_ICON": "WeGame 登录",
+            "Hazard_Operations": "游戏内导航",
+            "Tech_Center": "设施操作",
+            "MAKE": "制造操作",
+            "Warehouse": "一键出售",
+            "EMAIL_MAIL": "邮箱货币",
+        }
+
+        def _test_template(var_name, rel_path, name, btn):
+            """测试单个模板的识别置信度"""
+            import cv2
+            import numpy as np
+            btn.config(state='disabled')
+            result_var.set(f"正在识别: {name}...")
+            win.update_idletasks()
+
+            try:
+                # 截取全屏
+                screen = utils._screenshot_gray()
+                if screen is None:
+                    result_var.set("截图失败")
+                    btn.config(state='normal')
+                    return
+
+                # 加载模板
+                template = utils._imread_unicode(config.resolve_template_path(rel_path))
+                if template is None:
+                    result_var.set(f"模板加载失败: {rel_path}")
+                    btn.config(state='normal')
+                    return
+
+                # 转灰度
+                if len(template.shape) == 3:
+                    template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+                # 匹配
+                confidence = float(self.confidence_var.get())
+                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+                h, w = template.shape[:2]
+                if max_val >= confidence:
+                    result_var.set(f"✅ {name}: 置信度 {max_val:.4f} (阈值 {confidence:.2f}) 坐标({max_loc[0]},{max_loc[1]})")
+                    result_label.config(foreground='#27ae60')
+                else:
+                    result_var.set(f"❌ {name}: 置信度 {max_val:.4f} (阈值 {confidence:.2f}) 未达标")
+                    result_label.config(foreground='#e74c3c')
+            except Exception as e:
+                result_var.set(f"错误: {e}")
+                result_label.config(foreground='#e74c3c')
+            finally:
+                btn.config(state='normal')
+
+        seq_num = 0
+        for var_name, rel_path, name, hint in cfg.TEMPLATE_CAPTURE_LIST:
+            if var_name in section_headers:
+                hdr = ttk.Frame(inner)
+                hdr.pack(fill=tk.X, pady=(8, 2), padx=5)
+                ttk.Label(hdr, text=section_headers[var_name],
+                         font=('Microsoft YaHei UI', 9, 'bold'), foreground='#2c3e50').pack(side=tk.LEFT)
+                ttk.Separator(inner, orient='horizontal').pack(fill=tk.X, padx=5, pady=(0, 2))
+
+            seq_num += 1
+            row = ttk.Frame(inner)
+            row.pack(fill=tk.X, padx=5, pady=1)
+
+            ttk.Label(row, text=f"{seq_num}.", width=3, foreground='#999').pack(side=tk.LEFT)
+            btn = ttk.Button(row, text=name, width=25,
+                           command=lambda v=var_name, r=rel_path, n=name, b=None: _test_template(v, r, n, b))
+            # 需要在创建后绑定自身引用
+            btn.configure(command=lambda v=var_name, r=rel_path, n=name, b=btn: _test_template(v, r, n, b))
+            btn.pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(row, text=hint, font=('Microsoft YaHei UI', 8), foreground='#999').pack(side=tk.LEFT)
+
+        # 关闭时清理
+        def _on_close():
+            utils.save_window_geometry(win, "confidence_test_geometry")
+            try:
+                canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _test_account_login(self):
         """测试账号登录流程（WeGame 直接登录）"""
@@ -734,34 +857,6 @@ class SettingsWindow:
                         text=f"✗ WeGame 登录测试失败", foreground="#e74c3c"))
             except Exception as e:
                 self.win.after(0, lambda: self._dev_login_status.config(
-                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
-
-        threading.Thread(target=_run_test, daemon=True).start()
-
-    def _test_image_recognition(self, config_name):
-        """测试图像识别"""
-        import config
-        img_path = getattr(config, config_name, None)
-        if not img_path:
-            self._dev_img_status.config(text=f"配置 {config_name} 不存在", foreground="#e74c3c")
-            return
-
-        self._dev_img_status.config(text=f"正在识别 {config_name}...", foreground="#3498db")
-        self.win.update()
-
-        import threading
-        def _run_test():
-            try:
-                import utils
-                found = utils.find_multiscale(img_path, timeout=5)
-                if found:
-                    self.win.after(0, lambda: self._dev_img_status.config(
-                        text=f"✓ 找到 {config_name}", foreground="#27ae60"))
-                else:
-                    self.win.after(0, lambda: self._dev_img_status.config(
-                        text=f"✗ 未找到 {config_name}", foreground="#e74c3c"))
-            except Exception as e:
-                self.win.after(0, lambda: self._dev_img_status.config(
                     text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
 
         threading.Thread(target=_run_test, daemon=True).start()
@@ -849,7 +944,6 @@ class SettingsWindow:
     def _test_kill_process(self, process_name):
         """测试清理指定进程"""
         process_map = {
-            "QQ": config.QQ_PROCESS,
             "WeGame": config.WEGAME_PROCESS,
             "DeltaForce": config.DELTA_PROCESS,
         }
@@ -923,17 +1017,13 @@ class SettingsWindow:
 
         win = tk.Toplevel(self.win)
         win.title("文本识别测试")
-        win.geometry("700x500")
         win.resizable(True, True)
         win.transient(self.win)
         win.grab_set()
         utils.set_window_icon(win)
 
-        # 居中
-        win.update_idletasks()
-        x = (win.winfo_screenwidth() - 700) // 2
-        y = (win.winfo_screenheight() - 500) // 2
-        win.geometry(f"700x500+{x}+{y}")
+        # 恢复窗口大小 + 关闭时自动保存
+        utils.bind_window_geometry(win, "ocr_test_geometry", "700x500")
 
         # 标题说明
         ttk.Label(win, text="点击按钮 → OCR 识别屏幕上的文字 → 鼠标移动并点击 → 按钮变绿色",
@@ -1608,6 +1698,14 @@ class SettingsWindow:
 
         # 冷却执行设置
         fresh["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
+        fresh["cooldown_scheduled_task_enabled"] = self.cooldown_scheduled_task_var.get()
+
+        # 如果关闭了定时任务兜底，删除已有的定时任务
+        if not self.cooldown_scheduled_task_var.get():
+            try:
+                utils.remove_cooldown_scheduled_task()
+            except Exception:
+                pass
 
         # 执行操作
         ops = []
@@ -1677,4 +1775,5 @@ class SettingsWindow:
         self.app.apply_auto_settings_from_window()
 
         messagebox.showinfo("提示", "设置已保存。")
+        utils.save_window_geometry(self.win, "settings_window_geometry")
         self.win.destroy()

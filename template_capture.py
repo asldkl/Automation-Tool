@@ -18,7 +18,6 @@ GLOBAL_TEXT_DEFAULTS = {
     "Produce_ToolBench": ("工作台产出项", "5.7x28mm SS190"),
     "Produce_ArmorStation": ("防具台产出项", "精英防弹背心"),
     "Produce_PharmacyStation": ("制药台产出项", "体能强化剂"),
-    "IMAGE_LOGIN_BTN": ("WeGame登录按钮", "快捷安全登录"),
     "DELTA_GAME_ICON": ("三角洲游戏图标", "三角洲行动"),
     "Hazard_Operations": ("烽火地带入口", "烽火地带"),
     "Special_Ops": ("特勤处入口", "特勤处"),
@@ -82,7 +81,6 @@ class TemplateCaptureWizard:
 
         self.win = tk.Toplevel(parent)
         self.win.title("模板上传向导")
-        self.win.geometry("550x700")
         self.win.resizable(True, True)
         self.win.minsize(300, 400)
         self.win.transient(parent)
@@ -90,17 +88,21 @@ class TemplateCaptureWizard:
         # 设置窗口图标
         utils.set_window_icon(self.win)
 
-        self._build_ui()
-        self._update_progress()
-        # 窗口居中
-        self.win.update_idletasks()
-        w = self.win.winfo_width()
-        h = self.win.winfo_height()
-        x = (self.win.winfo_screenwidth() - w) // 2
-        y = (self.win.winfo_screenheight() - h) // 2
-        self.win.geometry(f"{w}x{h}+{x}+{y}")
+        # 先显示窗口，再异步构建 UI（避免窗口打开卡顿）
+        self._build_header()
+        self.win.after(10, self._build_body)
+        # 恢复上次窗口大小和位置
+        utils.restore_window_geometry(self.win, "template_capture_geometry", "550x700", (300, 400))
+        # 关闭按钮保存窗口大小
+        self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _build_ui(self):
+    def _on_close(self):
+        """窗口关闭时保存大小和位置"""
+        utils.save_window_geometry(self.win, "template_capture_geometry")
+        self.win.destroy()
+
+    def _build_header(self):
+        """立即构建：标题、进度条、底部按钮（窗口打开时立即显示）"""
         # 标题
         header = ttk.Frame(self.win)
         header.pack(fill=tk.X, padx=30, pady=(15, 5))
@@ -108,7 +110,7 @@ class TemplateCaptureWizard:
         ttk.Label(header, text=f"当前分辨率：{self.resolution_key}",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.RIGHT)
 
-        ttk.Label(self.win, text="请按照提示逐个上传模板图片。点击「上传」后，从本地选择对应的图片文件。",
+        ttk.Label(self.win, text="请按照提示逐个截取模板图片。点击「截取」后，在屏幕上框选需要识别的区域。",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(padx=30, anchor='w')
 
         # 进度
@@ -118,6 +120,25 @@ class TemplateCaptureWizard:
         self.progress_label.pack(side=tk.LEFT)
         self.progress_bar = ttk.Progressbar(prog_frame, length=200, mode='determinate')
         self.progress_bar.pack(side=tk.RIGHT)
+
+        # 底部按钮（先 pack 到底部，确保始终可见）
+        btn_frame = ttk.Frame(self.win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(5, 15))
+        ttk.Button(btn_frame, text="一键重置", command=self._reset_all_templates, width=12).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="完成", command=self._finish, width=12).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
+
+        # 加载中提示
+        self._loading_label = ttk.Label(self.win, text="正在加载模板列表...",
+                                        font=('Microsoft YaHei UI', 10), foreground='#999')
+        self._loading_label.pack(expand=True)
+
+    def _build_body(self):
+        """延迟构建：滚动列表和模板行（窗口显示后再填充）"""
+        # 移除加载提示
+        if hasattr(self, '_loading_label') and self._loading_label:
+            self._loading_label.destroy()
+            self._loading_label = None
 
         # 滚动列表
         list_frame = ttk.Frame(self.win)
@@ -146,13 +167,12 @@ class TemplateCaptureWizard:
         # 分组定义：(标题, 起始变量名集合)
         section_headers = {
             "Produce_TechCenter": "产出项设置",
-            "IMAGE_LOGIN_BTN": "WeGame 登录",
+            "DELTA_GAME_ICON": "WeGame 登录",
             "Hazard_Operations": "游戏内导航",
             "Tech_Center": "设施操作",
             "MAKE": "制造操作",
             "Warehouse": "一键出售",
             "EMAIL_MAIL": "邮箱货币",
-            "QQ_ACCOUNT_SELECT": "QQ 登录",
         }
         produce_vars = {"Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"}
         produce_order = ["Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"]
@@ -167,6 +187,7 @@ class TemplateCaptureWizard:
                       foreground='#2c3e50').pack(side=tk.LEFT)
             ttk.Separator(self.scroll_frame, orient='horizontal').pack(fill=tk.X, pady=(0, 4), padx=2)
 
+        seq_num = 0  # 序号计数器
         for i, (var_name, rel_path, name, hint) in enumerate(self.capture_list):
             # 在每个分组开始前添加标题
             if var_name in section_headers:
@@ -181,13 +202,24 @@ class TemplateCaptureWizard:
                 row = ttk.Frame(self.scroll_frame)
                 row.pack(fill=tk.X, pady=2)
 
+            # 序号
+            seq_num += 1
+            if is_produce:
+                seq_lbl = tk.Label(row, text=f"{seq_num}.", width=3, font=('Microsoft YaHei UI', 9),
+                                   bg='#FFF8F0', fg='#B8860B', anchor='e')
+            else:
+                seq_lbl = ttk.Label(row, text=f"{seq_num}.", width=3, font=('Microsoft YaHei UI', 9),
+                                   foreground='#999999', anchor='e')
+            seq_lbl.pack(side=tk.LEFT, padx=(2, 2))
+
             # 状态图标
             if is_produce:
                 status_lbl = tk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
-                                      bg='#FFF8F0', fg='#FF8C00')
+                                      bg='#FFF8F0', fg='#FF8C00', anchor='center')
             else:
-                status_lbl = ttk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10))
-            status_lbl.pack(side=tk.LEFT, padx=(0, 5))
+                status_lbl = ttk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
+                                      anchor='center')
+            status_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
             # 名称和提示
             if is_produce:
@@ -221,16 +253,9 @@ class TemplateCaptureWizard:
 
         # 售卖物品提示（已移至设置 → 售卖物品 Tab）
         sell_sep = ttk.Separator(self.win, orient='horizontal')
-        sell_sep.pack(fill=tk.X, padx=30, pady=(5, 5))
+        sell_sep.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(5, 5))
         ttk.Label(self.win, text="售卖物品请在 设置 → 售卖物品 中管理",
-                  font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(pady=(0, 5))
-
-        # 底部按钮
-        btn_frame = ttk.Frame(self.win)
-        btn_frame.pack(fill=tk.X, padx=30, pady=(5, 15))
-        ttk.Button(btn_frame, text="一键重置", command=self._reset_all_templates, width=12).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text="完成", command=self._finish, width=12).pack(side=tk.RIGHT, padx=(0, 8))
-        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
+                  font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.BOTTOM, pady=(0, 5))
 
     def _refresh_status_from_ocr_configs(self):
         """根据 ocr_configs 和 global_ocr_texts 刷新所有模板的状态图标"""
@@ -256,17 +281,75 @@ class TemplateCaptureWizard:
         self.progress_bar['value'] = done
 
     def _start_upload(self, var_name, rel_path):
-        """打开文件对话框让用户选择模板图片"""
-        filetypes = [("图片文件", "*.png;*.jpg;*.jpeg;*.bmp"), ("所有文件", "*.*")]
-        src = filedialog.askopenfilename(title="选择模板图片", filetypes=filetypes)
-        if not src:
+        """截取屏幕区域作为模板图片"""
+        import pyautogui
+        import tkinter as tk_overlay
+
+        # 最小化向导窗口
+        self.win.withdraw()
+        time.sleep(0.3)
+
+        # 全屏覆盖层
+        overlay = tk_overlay.Toplevel(self.win)
+        overlay.attributes('-fullscreen', True)
+        overlay.attributes('-alpha', 0.3)
+        overlay.attributes('-topmost', True)
+        overlay.configure(bg='black')
+        overlay.config(cursor="crosshair")
+
+        canvas = tk_overlay.Canvas(overlay, highlightthickness=0, bg='black')
+        canvas.pack(fill=tk.BOTH, expand=True)
+
+        hint = tk_overlay.Label(overlay, text="请拖动鼠标框选要识别的区域，按 Esc 取消",
+                                font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
+        hint.place(relx=0.5, rely=0.05, anchor='center')
+
+        rect_id = None
+        start_x = start_y = 0
+        result = None
+
+        def on_press(event):
+            nonlocal start_x, start_y, rect_id
+            start_x, start_y = event.x, event.y
+            if rect_id:
+                canvas.delete(rect_id)
+            rect_id = canvas.create_rectangle(start_x, start_y, start_x, start_y,
+                                              outline='red', width=2)
+
+        def on_drag(event):
+            if rect_id:
+                canvas.coords(rect_id, start_x, start_y, event.x, event.y)
+
+        def on_release(event):
+            nonlocal result
+            x1, y1 = min(start_x, event.x), min(start_y, event.y)
+            x2, y2 = max(start_x, event.x), max(start_y, event.y)
+            if x2 - x1 > 10 and y2 - y1 > 10:
+                result = [x1, y1, x2 - x1, y2 - y1]
+            overlay.destroy()
+
+        def on_escape(event):
+            overlay.destroy()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+        overlay.bind("<Escape>", on_escape)
+
+        self.win.wait_window(overlay)
+        self.win.deiconify()
+
+        if not result:
             return
 
+        # 截图并保存
         try:
+            x, y, w, h = result
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
             os.makedirs(config.USER_TEMPLATE_DIR, exist_ok=True)
             save_path = config.user_template_path(os.path.basename(rel_path))
-            with open(src, "rb") as f_in, open(save_path, "wb") as f_out:
-                f_out.write(f_in.read())
+            screenshot.save(save_path)
+            screenshot.close()
 
             # 更新状态
             self.status[var_name] = "done"
@@ -274,7 +357,7 @@ class TemplateCaptureWizard:
                 status_lbl, _ = self.rows[var_name]
                 status_lbl.config(text="✅")
         except Exception as e:
-            messagebox.showerror("错误", f"上传失败：{e}")
+            messagebox.showerror("错误", f"截图失败：{e}")
 
         self._update_progress()
         utils_clear_cache()
@@ -396,16 +479,13 @@ class TemplateCaptureWizard:
         # 弹出输入对话框获取目标文本
         dialog = tk.Toplevel(self.win)
         dialog.title(f"OCR 识别设置 - {name}")
-        dialog.geometry("350x240")
-        dialog.resizable(False, False)
+        dialog.resizable(True, True)
+        dialog.minsize(320, 200)
         dialog.transient(self.win)
         dialog.grab_set()
         self._set_dialog_icon(dialog)
-        # 居中
-        dialog.update_idletasks()
-        dx = (dialog.winfo_screenwidth() - 350) // 2
-        dy = (dialog.winfo_screenheight() - 240) // 2
-        dialog.geometry(f"350x240+{dx}+{dy}")
+        # 恢复窗口大小 + 关闭时自动保存
+        utils.bind_window_geometry(dialog, "ocr_template_setting_geometry", "350x240", (320, 200))
 
         ttk.Label(dialog, text=f"模板：{name}", font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(15, 5))
         if global_enabled and global_region[2] > 0 and global_region[3] > 0:
@@ -466,16 +546,13 @@ class TemplateCaptureWizard:
 
         dialog = tk.Toplevel(self.win)
         dialog.title("全局 OCR 设置")
-        dialog.geometry("500x420")
-        dialog.resizable(False, False)
+        dialog.resizable(True, True)
+        dialog.minsize(450, 350)
         dialog.transient(self.win)
         dialog.grab_set()
         self._set_dialog_icon(dialog)
-        # 居中
-        dialog.update_idletasks()
-        dx = (dialog.winfo_screenwidth() - 500) // 2
-        dy = (dialog.winfo_screenheight() - 420) // 2
-        dialog.geometry(f"500x420+{dx}+{dy}")
+        # 恢复窗口大小 + 关闭时自动保存
+        utils.bind_window_geometry(dialog, "global_ocr_geometry", "500x420", (450, 350))
 
         ttk.Label(dialog, text="全局 OCR 设置", font=('Microsoft YaHei UI', 12, 'bold')).pack(pady=(15, 10))
 
@@ -649,16 +726,13 @@ class TemplateCaptureWizard:
 
         win = tk.Toplevel(parent_dialog)
         win.title("全局文本配置")
-        win.geometry("540x620")
-        win.resizable(False, True)
+        win.resizable(True, True)
+        win.minsize(480, 400)
         win.transient(parent_dialog)
         win.grab_set()
         self._set_dialog_icon(win)
-        # 居中
-        win.update_idletasks()
-        dx = (win.winfo_screenwidth() - 540) // 2
-        dy = (win.winfo_screenheight() - 620) // 2
-        win.geometry(f"540x620+{dx}+{dy}")
+        # 恢复窗口大小 + 关闭时自动保存
+        utils.bind_window_geometry(win, "global_text_config_geometry", "540x620", (480, 400))
 
         # 标题
         ttk.Label(win, text="全局文本配置", font=('Microsoft YaHei UI', 12, 'bold')).pack(pady=(10, 5))
@@ -906,7 +980,7 @@ class TemplateCaptureWizard:
         if ocr_default[1] is not None:
             ttk.Button(btn_frame, text=f"OCR识别 {ocr_status}", command=do_ocr, width=20).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="上传", command=do_upload, width=8).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.LEFT)
 
         # 居中
         win.update_idletasks()
@@ -968,6 +1042,8 @@ class TemplateCaptureWizard:
         if remaining > 0:
             if not messagebox.askyesno("确认跳过", f"还有 {remaining} 个模板未上传，确定跳过吗？"):
                 return
+        # 保存窗口大小和位置
+        utils.save_window_geometry(self.win, "template_capture_geometry")
         # 保存上传状态（保留已完成的标记，方便下次查看）
         self._save_status()
         # 更新分辨率记录（即使跳过也记录当前分辨率，避免重复提示）
@@ -982,6 +1058,8 @@ class TemplateCaptureWizard:
             remaining = total - done
             if not messagebox.askyesno("确认完成", f"还有 {remaining} 个模板未上传。确定完成吗？\n未上传的模板将使用旧图片，可能识别失败。"):
                 return
+        # 保存窗口大小和位置
+        utils.save_window_geometry(self.win, "template_capture_geometry")
         # 保存上传状态
         self._save_status()
         # 保存新分辨率并清除模板缓存

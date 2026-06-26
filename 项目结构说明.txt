@@ -1,6 +1,6 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.3.0
+版本: v1.3.2
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
@@ -18,6 +18,28 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 v1.2.0 新增：WeGame 直接登录（Interception 驱动级键盘输入）、代码重构（合并 find_and_click、缓存 settings、消除冗余颜色转换）、截图对象关闭、prevent_sleep 线程安全。新增 interception_keyboard.py 模块。
 v1.2.1 新增：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护、SMTP 不加密、冷却到期优先运行+10分钟等待、删除 QQ 无效设置、售卖物品元数据原子写入+备份保护。
 v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设置明文读写；代码质量优化（冷却线程安全锁、_IMAGE_TO_VAR 自动生成、模板 LRU 缓存、OCR 按 var_name 失败跟踪自动恢复、点击坐标边界校验）；降价逻辑优化（首次识别后原地点击剩余次数）；截图 close() 安全（try/finally）。
+v1.3.2 (2026-06-24)：
+   - 代码审查全面修复（18 项）：save_settings 原子写入、cooldown_manager 线程安全锁、RedirectText 后台线程安全、_last_account_error 跨账号清除、_launch_game 区分中断/失败、delete_account 清理冷却、move_up/down 持久化、编辑账号迁移冷却、模板缓存和 OCR 锁、登录后验证、关闭游戏激活窗口、菜单标签动态查找、边界检查、清理死代码
+
+v1.3.1 (2026-06-24)：
+   - 新增冷却到期定时任务兜底机制：Windows 任务计划程序 + 信号文件双重保障
+   - 设置界面新增「定时任务兜底」开关（自动任务选项卡）
+   - WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，超时从15秒降至10秒
+   - cooldown_manager.record_run 时自动创建定时任务（最早到期时间）
+   - gui_app 主界面每30秒检查信号文件，检测到即触发运行
+   - 修复冷却 key 匹配 bug：新增 _get_cooldown_key 统一短名称优先，解决 account: 前缀导致的冷却状态不同步
+   - 冷却触发时额外检查 10 分钟内到期账号并等待执行
+   - 暂停账号正确跳过（is_account_paused 检查修复）
+   - 定时任务静默执行（VBScript 包装，无 cmd 窗口弹出）
+   - 删除未使用的图片资源（qq_login、Department_Bullets、background.jpg 等）
+   - 模板上传向导改用截取方式（屏幕框选替代文件上传）
+   - 全局 OCR 窗口可调节大小
+   - 自定义冷却时间支持分钟（小时+分钟双 Spinbox）
+   - 所有弹出窗口大小记忆（关闭时保存，下次恢复）
+   - 删除屏幕唤醒鼠标移动功能
+   - 修复停止按钮关闭子窗口问题
+   - 开机自启动设置移至自动任务选项卡
+   - 模板上传向导序号显示
 
 【核心文件】
 
@@ -52,18 +74,21 @@ v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设�
 │     - 输入前检查 WeGame 窗口聚焦（v1.2.1）
 │     - 图像识别点击 Sign-in 登录
 │     - 失败时记录具体错误到 app._last_account_error（v1.2.1）
+│   - _get_cooldown_key()：统一冷却 key 匹配（优先短名称，兼容 account: 前缀，v1.3.1 新增）
 │   - _recognize_asset()：资产识别（RapidOCR 缓存引擎，直接 numpy 数组，无 BGR 转换）
 │   - 资产识别后自动调用 asset_db.record_asset() 写入 SQLite
 │   - game_operations_wrapper()：委托 automation.game_operations() 执行游戏操作（含 asset_db 钩子）
 │   - sell_operations_wrapper()：委托 automation.sell_operations() 执行一键出售
 │   - _wait_and_run_nearby_cooldowns()：先运行已到期账号，再等待 10 分钟内到期的账号（v1.2.1）
+│     - run_script_main 开始前和结束后均调用（v1.3.1）
+│   - _run_single_account()：从冷却等待中调用的单账号运行（v1.3.1 使用 _get_cooldown_key）
 │   - on_finish()：任务完成后清空残余状态（进度条、状态标签）、刷新账号列表、延迟关机（可选 0-5 分钟）；手动终止时跳过邮件通知
 │   - update_ui() / set_operation()：UI 更新辅助
 │   - get_account_next_run() / build_accounts_html()：账号信息构建
 │
 ├── scheduler.py                # 调度模块（v1.1.4 精简，约 100 行）
-│   - set_next_wake_timer()：计算冷却到期时间，设置唤醒定时器
-│   - update_cooldown_wake_timer()：冷却监听专用唤醒定时器更新
+│   - set_next_wake_timer()：计算冷却到期时间，设置唤醒定时器（v1.3.1 使用 _get_cooldown_key 统一 key）
+│   - update_cooldown_wake_timer()：冷却监听专用唤醒定时器更新（v1.3.1 使用 _get_cooldown_key）
 │   - apply_auto_settings()：应用冷却执行设置
 │
 ├── account_manager.py          # 账号管理模块（v1.1.0 拆分，约 738 行）
@@ -90,9 +115,9 @@ v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设�
 │
 ├── cooldown_watcher.py         # 冷却监听模块（v1.1.0 拆分，约 160 行）
 │   - start_cooldown_watcher() / stop_cooldown_watcher()：启动/停止监听
-│   - restart_cooldown_watcher()：重启监听
-│   - cooldown_watcher_loop()：监听主循环（每 60 秒检查）
-│   - check_any_account_ready()：检查是否有账号冷却到期
+│   - restart_cooldown_watcher()：重启监听（含 hasattr 保护，v1.3.1）
+│   - cooldown_watcher_loop()：监听主循环（每 30 秒检查）
+│   - check_any_account_ready()：检查是否有账号冷却到期（排除暂停账号，v1.3.1 使用 _get_cooldown_key 统一 key）
 │
 ├── server_client.py            # 服务器通信模块（v1.1.0 拆分，约 117 行）
 │   - validate_with_server()：服务器验证（机器指纹+有效期）
@@ -146,7 +171,7 @@ v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设�
 │   - TEMPLATE_CAPTURE_LIST：所有模板图片定义（变量名、路径、中文描述）
 │   - WeGame 路径自动检测（Windows 注册表）
 │   - 屏幕分辨率检测与模板分辨率记录
-│   - WeGame 登录模板路径：IMAGE_LOGIN_BTN（快捷安全登录按钮）
+│   - WeGame 登录模板路径
 │
 ├── machine_fingerprint.py      # 机器指纹模块（v1.0.3 新增）
 │   - get_machine_id()：获取本机 SHA256 指纹（32位十六进制）
@@ -185,9 +210,12 @@ v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设�
 │     - prevent_sleep() / allow_sleep()：防休眠
 │     - set_wake_timer() / cancel_wake_timer()：定时唤醒
 │     - schedule_shutdown() / cancel_shutdown()：自动关机
-│     - wake_display()：唤醒显示器
 │   - Windows 任务计划：
 │     - schedule_startup_task() / remove_startup_task()
+│     - write_cooldown_signal()：写入冷却触发信号文件（定时任务触发时通知已有实例）
+│     - check_cooldown_signal()：检查并消费信号文件
+│     - create_cooldown_scheduled_task()：创建一次性定时任务（到期写信号文件+启动程序）
+│     - remove_cooldown_scheduled_task()：删除冷却到期定时任务
 │   - 邮件发送：
 │     - send_email_notification()：QQ 邮箱 SMTP 发送
 │   - 共享工具（v1.1.4 新增）：
@@ -278,8 +306,7 @@ v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设�
 │   ├── Navigation/             # 导航图标（烽火地带、特勤处）
 │   ├── One_Click_Sell/         # 出售流程模板（仓库、出售、上架、降价、确认上架）
 │   ├── email/                  # 邮箱货币模板（邮箱、交易中心、全部领取、领取完成）
-│   ├── wegame_login/           # WeGame 登录模板（login_btn、account_select、Input、Sign-in、delta_game_icon、delta_launch_btn）
-│   ├── qq_login/               # QQ 登录模板（已弃用，v1.2.0 改用 WeGame 直接登录）
+│   ├── wegame_login/           # WeGame 登录模板（account_select、Input、Sign-in、delta_game_icon、delta_launch_btn、login_again）
 │   └── produce/                # 生产设施模板（各设施产出项截图）
 
 【用户数据目录】(~/.delta_auto_*)
@@ -342,6 +369,7 @@ gui_app.py (入口层)
 | ocr_configs                 | 每模板 OCR 配置（var_name→配置）   | {}                           |
 | enable_asset_recognition    | 启用资产识别                       | False                        |
 | asset_region                | 资产识别屏幕区域 [x,y,w,h]        | [0, 0, 0, 0]                 |
+| cooldown_scheduled_task_enabled | 冷却到期定时任务兜底           | True                         |
 
 【运行流程】
 

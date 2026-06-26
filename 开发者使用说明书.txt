@@ -2,8 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.3.0
-日期: 2026-06-19
+版本: v1.3.2
+日期: 2026-06-24
 （Interception 驱动文档更新: 2026-06-19）
 作者: 开发团队
 
@@ -66,7 +66,9 @@
 ├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
 
 ├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
+├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
 ├── interception.dll         # Interception 驱动通信 DLL（打包时自动嵌入 exe）
+├── interception.sys         # Interception 内核驱动文件（安装到系统目录）
 ├── test_all_features.py     # 全功能测试套件（52 项）
 ├── test_core_modules.py     # 核心模块单元测试（v1.1.4 新增，35 项）
 ├── README.md                # 用户说明文档
@@ -78,15 +80,13 @@
 ├── 图形化可视管理后台代码.txt # 管理后台前端代码
 ├── picture/                 # 图片资源目录
 │   ├── icon/                # 程序图标
-│   │   ├── icon.ico
-│   │   └── background.jpg
+│   │   └── icon.ico
 │   ├── Facility_Controls/   # 设施图标
 │   ├── Crafting_Controls/   # 制造按钮
 │   ├── Navigation/          # 导航图标
 │   ├── One_Click_Sell/      # 一键出售模板
 │   ├── email/               # 邮箱货币模板
-│   ├── wegame_login/        # WeGame 登录模板（login_btn 快捷安全登录）
-│   ├── qq_login/            # QQ 登录模板（Account Sign-in、QQ_account_select、Remove、Input、Accept、QQ_login_btn）
+│   ├── wegame_login/        # WeGame 登录模板（account_select、Input、Sign-in、delta_game_icon、delta_launch_btn、login_again）
 │   └── produce/             # 生产设施模板
 ├── build/                   # PyInstaller 构建临时目录
 ├── dist/                    # PyInstaller 打包输出目录
@@ -137,9 +137,12 @@ gui_app.py（入口层，约 900 行）
 
 automation_runner.py（约 596 行）
     - start_run / stop_run：启动/停止自动化任务
-    - run_script_main：主自动化循环
+    - run_script_main：主自动化循环（开始前和结束后均检查 10 分钟内到期账号）
     - _login_account：WeGame 直接登录（Interception 驱动级键盘输入账号密码，图像识别点击登录按钮）
     - _launch_game：查找三角洲图标、资产识别、启动游戏
+    - _get_cooldown_key：统一冷却 key 匹配（优先短名称，兼容 account: 前缀）
+    - _wait_and_run_nearby_cooldowns：检查并等待 10 分钟内到期的账号
+    - _run_single_account：从冷却等待中调用的单账号运行
     - game_operations_wrapper / sell_operations_wrapper
     - on_finish：任务完成后处理（延迟关机等）
 
@@ -164,8 +167,8 @@ email_notifier.py（约 250 行）
 
 cooldown_watcher.py（约 160 行）
     - start/stop/restart_cooldown_watcher
-    - cooldown_watcher_loop：每 60 秒检查冷却到期
-    - check_any_account_ready
+    - cooldown_watcher_loop：每 30 秒检查冷却到期
+    - check_any_account_ready：检查是否有账号冷却到期（排除暂停账号，使用 _get_cooldown_key 统一 key）
 
 server_client.py（约 117 行）
     - validate_with_server：启动验证
@@ -305,6 +308,12 @@ interception_keyboard.py（约 150 行）
     - 字符→扫描码映射表：支持字母、数字、常用符号、Shift 组合键
     - DLL 搜索路径：项目目录 → Interception-master/library/ → System32 → sys._MEIPASS
     - 无降级方案：Interception 不可用时返回 False，由调用方处理失败
+
+utils.py 新增函数（冷却定时任务兜底）：
+    - write_cooldown_signal()：写入冷却触发信号文件
+    - check_cooldown_signal()：检查并消费信号文件
+    - create_cooldown_scheduled_task(trigger_time)：创建一次性定时任务
+    - remove_cooldown_scheduled_task()：删除冷却到期定时任务
 
 automation_runner._login_account()
     - WeGame 直接登录流程：
@@ -679,6 +688,48 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 13. 更新日志
 ================================================================================
+
+----------------------------------------
+v1.3.2 (2026-06-24)
+----------------------------------------
+
+- 代码审查全面修复：
+  - save_settings 改为原子写入（tmp + os.replace），防止崩溃丢设置
+  - cooldown_manager 线程安全：is_cooling_down、get_all_cooldowns 全部操作移入锁内
+  - RedirectText 后台线程安全：改为 root.after(0, ...) 在主线程更新 UI
+  - _last_account_error 每个账号开始前清空，防止邮件报告错误的失败原因
+  - _launch_game 区分"中断"和"失败"返回值，成功但被停止不再误判为失败
+  - delete_account 清理冷却数据（两种 key 格式都清理）
+  - move_up/move_down 调用后持久化排序
+  - 编辑账号 key 时迁移冷却数据和暂停状态
+  - _template_cache 和 _ocr_failures 添加线程锁
+  - _check_cooldown_signal 关闭时不再重新调度（_shutdown 标志）
+  - _recognize_and_store_asset 改用 app.settings 而非磁盘读取
+  - _run_single_account 显示实际账号序号而非 "1/N"
+  - build_accounts_html 用 rsplit 避免误伤含括号的账号名
+  - _login_account 点击 Sign-in 后检测 login_again 验证登录
+  - _close_game 先激活游戏窗口再发 Alt+F4，避免关闭错误窗口
+  - 右键菜单暂停/恢复标签改为动态查找，不再硬编码索引
+  - test_recognition/crop_account_image 添加索引边界检查
+  - 删除 _account_key 死代码和 _login_account 中多余 import
+- 模板上传向导序号显示
+- 模板上传向导改用截取方式（屏幕框选替代文件上传）
+
+v1.3.1 (2026-06-24)
+----------------------------------------
+
+- 新增冷却到期定时任务兜底机制：
+  - 每次 record_run 时自动创建 Windows 一次性定时任务（最早冷却到期时间）
+  - 定时任务触发时写入信号文件 + 尝试启动程序
+  - gui_app 主界面每 30 秒检查信号文件，检测到即触发运行
+  - 三条触发路径覆盖所有场景（监听线程正常/程序未运行/监听线程异常）
+  - 设置界面新增「定时任务兜底」开关（默认开启）
+- WeGame 登录失败检测优化：
+  - 每次查找游戏图标失败后立即检测 login_again（原来等 3 次全部失败才检测）
+  - login_again 超时从 5 秒降至 3 秒
+  - 游戏图标查找超时从 15 秒降至 10 秒
+  - login_again 没找到后不再等待，直接重试
+  - 检测到 login_again 后立即重新登录，不再等待 3 秒
 
 ----------------------------------------
 v1.2.1 (2026-06-17)
@@ -1092,4 +1143,4 @@ A:
 
 如有问题，请联系开发团队。
 
-最后更新: 2026-06-13
+最后更新: 2026-06-24

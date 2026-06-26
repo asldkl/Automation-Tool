@@ -165,6 +165,22 @@ DEFAULT_SETTINGS = {
     "cooldown_hours": 8,              # 冷却小时数（默认8小时）
     "cooldown_delay_minutes": 1,      # 账号间隔时间（0-5分钟，默认1）
     "cooldown_run_immediately": False, # 冷却完立即运行
+    "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
+    "window_geometry": "",                   # 主窗口大小和位置（自动保存/恢复）
+    "settings_window_geometry": "",          # 设置窗口大小和位置
+    "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
+    "asset_history_geometry": "",            # 资产记录窗口大小和位置
+    "asset_monitor_geometry": "",            # 资产监测窗口大小和位置
+    "dev_test_geometry": "",                 # 开发者测试窗口大小和位置
+    "ocr_test_geometry": "",                 # 文本识别测试窗口大小和位置
+    "log_window_geometry": "",               # 日志窗口大小和位置
+    "global_ocr_geometry": "",               # 全局OCR设置窗口大小和位置
+    "account_info_geometry": "",             # 账号信息设置窗口大小和位置
+    "ocr_template_setting_geometry": "",     # 模板OCR设置窗口大小和位置
+    "confidence_test_geometry": "",          # 置信度测试窗口大小和位置
+    "global_text_config_geometry": "",       # 全局文本配置窗口大小和位置
+    "custom_cooldown_geometry": "",          # 自定义冷却时间窗口大小和位置
+    "cooldown_window_geometry": "",          # 账号冷却状态窗口大小和位置
     "cooldown_email_enabled": False,  # 冷却结束后发送邮件提醒
     # 模板分辨率记录
     "template_resolution": "",        # 模板截图时的屏幕分辨率
@@ -221,17 +237,24 @@ def load_settings():
             return dict(_settings_cache)
 
 def save_settings(settings):
-    """保存用户设置到 JSON 文件（线程安全）"""
+    """保存用户设置到 JSON 文件（原子写入，线程安全）"""
     global _settings_cache, _settings_cache_mtime
     with _settings_lock:
+        tmp_path = SETTINGS_JSON_PATH + ".tmp"
         try:
-            with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(settings, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, SETTINGS_JSON_PATH)
             # 保存后立即更新缓存
             _settings_cache = dict(settings)
             _settings_cache_mtime = os.path.getmtime(SETTINGS_JSON_PATH)
         except Exception as e:
             print(f"⚠️ 保存设置失败：{e}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
 # ==================== 自动获取 WeGame 路径 ====================
 def get_wegame_path_from_reg():
@@ -274,7 +297,6 @@ APP_SETTINGS = {}
 
 # ==================== 图片资源路径（固定） ====================
 # WeGame 登录
-IMAGE_LOGIN_BTN      = resource_path("picture/wegame_login/login_btn.png")
 DELTA_GAME_ICON     = resource_path("picture/wegame_login/delta_game_icon.png")
 DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
 LOGIN_AGAIN         = resource_path("picture/wegame_login/login_again.png")
@@ -366,7 +388,6 @@ TEMPLATE_CAPTURE_LIST = [
     ("Produce_ToolBench",    "picture/produce/produce_tool_bench.png",     "工作台产出项",   "在工作台制造列表，截取要生产的物品"),
     ("Produce_ArmorStation", "picture/produce/produce_armor_station.png",  "防具台产出项",   "在防具台制造列表，截取要生产的物品"),
     ("Produce_PharmacyStation","picture/produce/produce_pharmacy_station.png","制药台产出项","在制药台制造列表，截取要生产的物品"),
-    ("IMAGE_LOGIN_BTN",      "picture/wegame_login/login_btn.png",      "WeGame 登录按钮",     "在 WeGame 登录界面，截取「登录」按钮"),
     ("DELTA_GAME_ICON",      "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",     "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
     ("LOGIN_AGAIN",          "picture/wegame_login/login_again.png",   "重新登录按钮",       "在 WeGame 登录失败后，截取「重新登录」按钮"),

@@ -1,7 +1,11 @@
+; 三角洲行动自动化工具 安装脚本
+; Inno Setup 6 编译
+; 更新日期: 2026-06-24
+
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName=三角洲行动自动化工具
-AppVersion=1.1.2
+AppVersion=1.3.1
 AppPublisher=三角洲自动化工具
 AppPublisherURL=
 DefaultDirName={autopf}\三角洲行动自动化工具
@@ -16,19 +20,25 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+UninstallDisplayName=三角洲行动自动化工具
 UninstallDisplayIcon={app}\三角洲自动工具.exe
-VersionInfoVersion=1.0.4.0
+VersionInfoVersion=1.3.1.0
 VersionInfoDescription=三角洲行动自动化工具安装程序
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Files]
+Source: "dist\三角洲自动工具.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "interception.sys"; DestDir: "{app}"; Flags: ignoreversion
+Source: "install_interception.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Interception安装使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标:"
 Name: "startupicon"; Description: "开机自动启动"; GroupDescription: "其他选项:"
-
-[Files]
-Source: "dist_nuitka_standalone\main.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Name: "install_driver"; Description: "安装 Interception 键盘驱动（WeGame 直接登录需要，需重启）"; GroupDescription: "其他选项:"; Flags: checkedonce
 
 [Icons]
 Name: "{group}\三角洲行动自动化工具"; Filename: "{app}\三角洲自动工具.exe"
@@ -37,4 +47,66 @@ Name: "{autodesktop}\三角洲行动自动化工具"; Filename: "{app}\三角洲
 Name: "{userstartup}\三角洲行动自动化工具"; Filename: "{app}\三角洲自动工具.exe"; Tasks: startupicon
 
 [Run]
-Filename: "{app}\三角洲自动工具.exe"; Description: "启动三角洲行动自动化工具"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\三角洲自动工具.exe"; Description: "启动程序"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "sc.exe"; Parameters: "stop interception"; Flags: runhidden
+Filename: "sc.exe"; Parameters: "delete interception"; Flags: runhidden
+
+[UninstallDelete]
+Type: files; Name: "{app}\interception.sys"
+Type: files; Name: "{app}\install_interception.bat"
+Type: filesandordirs; Name: "{app}"
+
+[Code]
+function IsInterceptionInstalled(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if Exec('sc.exe', 'query interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+      Result := True;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if IsTaskSelected('install_driver') and (not IsInterceptionInstalled) then
+    begin
+      FileCopy(ExpandConstant('{app}\interception.sys'),
+               ExpandConstant('{sys}\drivers\interception.sys'), False);
+      Exec('sc.exe', 'create interception type= kernel binPath= "' +
+           ExpandConstant('{sys}\drivers\interception.sys') + '"',
+           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      if MsgBox('Interception driver installed. Reboot required.' + #13#10 +
+                'Reboot now?' + #13#10 + #13#10 +
+                '(Without reboot, driver will not be available)',
+                mbConfirmation, MB_YESNO) = IDYES then
+      begin
+        Exec('shutdown.exe', '/r /t 5 /c "Reboot to load Interception driver"',
+             '', SW_HIDE, ewNoWait, ResultCode);
+      end;
+    end;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    if IsInterceptionInstalled then
+    begin
+      Exec('sc.exe', 'stop interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'delete interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      DeleteFile(ExpandConstant('{sys}\drivers\interception.sys'));
+    end;
+  end;
+end;

@@ -40,19 +40,18 @@ ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts
 
 
 class RedirectText:
-    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件"""
-    def __init__(self, text_widget, log_path=None):
+    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件（线程安全）"""
+    def __init__(self, text_widget, root, log_path=None):
         self.text_widget = text_widget
+        self.root = root
         self.log_path = log_path
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     def write(self, message):
         try:
-            self.text_widget.configure(state='normal')
-            self.text_widget.insert(tk.END, message)
-            self.text_widget.see(tk.END)
-            self.text_widget.configure(state='disabled')
+            # 从后台线程安全地更新 UI
+            self.root.after(0, self._insert_text, message)
         except Exception:
             pass
         if self.log_path and message.strip():
@@ -61,6 +60,16 @@ class RedirectText:
                     f.write(message)
             except Exception:
                 pass
+
+    def _insert_text(self, message):
+        """在主线程中插入文本到文本框"""
+        try:
+            self.text_widget.configure(state='normal')
+            self.text_widget.insert(tk.END, message)
+            self.text_widget.see(tk.END)
+            self.text_widget.configure(state='disabled')
+        except Exception:
+            pass
 
     def flush(self):
         pass
@@ -73,6 +82,7 @@ class App:
         self.root.resizable(True, True)
         self.root.minsize(500, 600)
         self.running_event = threading.Event()
+        self._shutdown = False
         self.qq_account_images = []
         self._account_assets = {}
         self._asset_history = {}
@@ -87,13 +97,10 @@ class App:
         self._ignore_cooldown_this_run = False
         self._is_boot_startup = False
         self._user_stopped_cooldown = False
-        # 窗口图标
-        try:
-            icon_path = config.resource_path("picture/icon/icon.ico")
-            if os.path.exists(icon_path):
-                self.root.iconbitmap(icon_path)
-        except Exception:
-            pass
+        # 窗口图标（延迟设置，避免首次加载失败）
+        self._icon_photo = None
+        self._set_window_icon()
+        self.root.after(500, self._set_window_icon)
 
         # 加载设置
         self.settings = config.APP_SETTINGS
@@ -216,6 +223,10 @@ class App:
                 print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
                       f"账号数={len(self.qq_account_images)})")
 
+        # 冷却到期信号文件检查（定时任务兜底机制）
+        # 启动时立即检查一次（不等 30 秒），之后每 30 秒检查
+        self.root.after(2000, self._check_cooldown_signal)
+
         # 关闭按钮 → 最小化到托盘
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -223,6 +234,17 @@ class App:
     @property
     def running(self):
         return self.running_event.is_set()
+
+    def _set_window_icon(self):
+        """设置窗口图标（支持重试）"""
+        try:
+            icon_path = config.resource_path("picture/icon/icon.ico")
+            if os.path.exists(icon_path):
+                from PIL import Image, ImageTk
+                self._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+                self.root.iconphoto(False, self._icon_photo)
+        except Exception:
+            pass
 
     @running.setter
     def running(self, value):
@@ -324,6 +346,9 @@ class App:
         style.configure('Accent.Horizontal.TProgressbar', background=ACCENT,
                         troughcolor=BG_SURFACE, bordercolor=BORDER,
                         lightcolor=ACCENT, darkcolor=ACCENT)
+        # 滑块（确保可拖动）
+        style.configure('TScale', background=BG, troughcolor=BG_SURFACE,
+                        bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
         # 复选框
         style.configure('TCheckbutton', background=BG, foreground=TEXT_DARK,
                         font=('Microsoft YaHei UI', 9))
@@ -344,7 +369,7 @@ class App:
         # Treeview
         style.configure('Treeview', background=CARD_BG, foreground=TEXT_DARK,
                         fieldbackground=CARD_BG, bordercolor=BORDER,
-                        font=('Microsoft YaHei UI', 9))
+                        font=('Microsoft YaHei UI', 9), rowheight=28)
         style.configure('Treeview.Heading', background=BG_SURFACE, foreground=TEXT_DARK,
                         bordercolor=BORDER, font=('Microsoft YaHei UI', 9, 'bold'))
         style.map('Treeview',
@@ -491,6 +516,23 @@ class App:
             self._quit_all()
 
     def _quit_all(self):
+        self._shutdown = True
+        # 保存窗口大小和位置（最小化/托盘状态时先恢复再保存）
+        try:
+            if self.root.state() == 'iconic' or self.root.state() == 'withdrawn':
+                self.root.deiconify()
+                self.root.update_idletasks()
+            geo = self.root.geometry()
+            # 过滤掉退化的 1x1 尺寸
+            if geo and "x" in geo:
+                parts = geo.split("x")
+                w = int(parts[0])
+                if w > 100:
+                    settings = config.load_settings()
+                    settings["window_geometry"] = geo
+                    config.save_settings(settings)
+        except Exception:
+            pass
         self._close_log_window()
         self.stop()
         server_client.stop_heartbeat(self)
@@ -660,6 +702,26 @@ class App:
 
     def _check_any_account_ready(self):
         return cooldown_watcher.check_any_account_ready(self)
+
+    def _check_cooldown_signal(self):
+        """每 30 秒检查冷却触发信号文件（定时任务兜底机制）"""
+        try:
+            if utils.check_cooldown_signal():
+                if not self.running and self.qq_account_images:
+                    # 检查是否有非暂停的账号就绪
+                    has_ready = cooldown_watcher.check_any_account_ready(self)
+                    if has_ready:
+                        print("📡 检测到冷却触发信号，自动执行任务...")
+                        self.start()
+                    else:
+                        print("📡 检测到冷却触发信号，但所有账号都暂停或冷却中，忽略")
+                else:
+                    print("📡 检测到冷却触发信号，但程序正在运行或无账号，忽略")
+        except Exception as e:
+            print(f"⚠️ 检查冷却信号文件异常: {e}")
+        # 关闭时不重新调度
+        if not self._shutdown:
+            self.root.after(30000, self._check_cooldown_signal)
 
     # --- 运行控制 ---
     def start(self):
@@ -879,8 +941,8 @@ class App:
             pass
 
         # 重定向输出到新窗口
-        sys.stdout = RedirectText(log_area, self._log_file_path)
-        sys.stderr = RedirectText(log_area, self._log_file_path)
+        sys.stdout = RedirectText(log_area, self.root, self._log_file_path)
+        sys.stderr = RedirectText(log_area, self.root, self._log_file_path)
 
         # 主窗口移动时，日志窗口跟随
         def _follow_main(event=None):
@@ -923,12 +985,12 @@ class App:
         self._log_win = None
         self._log_area_widget = None
         # 恢复输出到主窗口的隐藏 log_area
-        sys.stdout = RedirectText(self.log_area, self._log_file_path)
-        sys.stderr = RedirectText(self.log_area, self._log_file_path)
+        sys.stdout = RedirectText(self.log_area, self.root, self._log_file_path)
+        sys.stderr = RedirectText(self.log_area, self.root, self._log_file_path)
 
     def _redirect_output(self):
-        sys.stdout = RedirectText(self.log_area, self._log_file_path)
-        sys.stderr = RedirectText(self.log_area, self._log_file_path)
+        sys.stdout = RedirectText(self.log_area, self.root, self._log_file_path)
+        sys.stderr = RedirectText(self.log_area, self.root, self._log_file_path)
 
 
 def main():
@@ -936,9 +998,9 @@ def main():
     config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
     config.CONFIDENCE = config.APP_SETTINGS["confidence"]
 
-    # 预加载 OCR 引擎（在后台初始化，避免使用时等待）
+    # 预加载 OCR 引擎（后台线程，不阻塞启动）
     import utils
-    utils.init_ocr_engine()
+    threading.Thread(target=utils.init_ocr_engine, daemon=True).start()
 
     root = tk.Tk()
     root.title("三角洲行动自动化工具")
@@ -966,12 +1028,17 @@ def main():
     def _init_app():
         progress.stop()
         loading_frame.destroy()
-        root.geometry("550x800")
-        root.update_idletasks()
-        mw, mh = 550, 800
-        mx = (root.winfo_screenwidth() - mw) // 2
-        my = (root.winfo_screenheight() - mh) // 2
-        root.geometry(f"{mw}x{mh}+{mx}+{my}")
+        # 恢复上次窗口大小和位置
+        saved_geo = config.APP_SETTINGS.get("window_geometry", "")
+        if saved_geo and "x" in saved_geo:
+            try:
+                root.geometry(saved_geo)
+            except Exception:
+                root.geometry("550x800")
+                _center_window(root, 550, 800)
+        else:
+            root.geometry("550x800")
+            _center_window(root, 550, 800)
         _check_resolution_on_startup(root)
         App(root)
         root.after(50, lambda: (root.lift(), root.focus_force()))
@@ -980,6 +1047,13 @@ def main():
 
     root.after(300, _init_app)
     root.mainloop()
+
+
+def _center_window(win, w, h):
+    """将窗口居中显示"""
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
 
 
 def _check_resolution_on_startup(root):

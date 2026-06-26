@@ -118,7 +118,6 @@ def send_heartbeat(app, server_url, client_key, machine_id):
             print("📡 收到远程执行指令，正在启动任务...")
             import utils
             utils.prevent_sleep()
-            utils.wake_display()
             app.root.after(0, app.start)
 
 

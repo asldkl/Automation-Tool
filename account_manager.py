@@ -26,6 +26,22 @@ def _account_key_from_path(path):
     return os.path.splitext(name)[0]
 
 
+def _get_cooldown_key(img_path):
+    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
+    import cooldown_manager
+    cd_data = cooldown_manager._load_data()
+    basename = os.path.basename(img_path)
+    short_name = basename.split(":")[-1] if ":" in basename else basename
+    # 优先用短名称（暂停状态通常记录在短名称上）
+    if short_name in cd_data:
+        return short_name
+    if img_path in cd_data:
+        return img_path
+    if basename in cd_data:
+        return basename
+    return short_name
+
+
 # ---------- 账号持久化 ----------
 def save_accounts(app):
     try:
@@ -33,10 +49,17 @@ def save_accounts(app):
                 "assets": app._account_assets,
                 "asset_history": app._asset_history,
                 "notes": app._account_notes}
-        with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
+        tmp_path = ACCOUNTS_JSON_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, ACCOUNTS_JSON_PATH)
     except Exception as e:
         print(f"⚠️ 保存账号列表失败：{e}")
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
 
 
 def load_accounts(app):
@@ -49,8 +72,7 @@ def load_accounts(app):
         if isinstance(data, list):
             app.qq_account_images = []
         else:
-            app.qq_account_images = [p for p in data.get("qq", [])
-                                     if p.startswith("account:") or os.path.exists(p)]
+            app.qq_account_images = list(data.get("qq", []))
             # 只保留当前存在的账号对应的资产和备注数据
             current_names = {_account_key_from_path(p) for p in app.qq_account_images}
             app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
@@ -76,19 +98,14 @@ def _open_account_info_window(app, account_key=None):
 
     win = tk.Toplevel(app.root)
     win.title("账号信息设置")
-    win.geometry("400x350")
     win.resizable(True, True)
     win.minsize(350, 300)
     win.transient(app.root)
     win.grab_set()
     utils.set_window_icon(win)
 
-    # 窗口居中
-    win.update_idletasks()
-    w, h = 400, 350
-    x = (win.winfo_screenwidth() - w) // 2
-    y = (win.winfo_screenheight() - h) // 2
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    # 恢复窗口大小 + 关闭时自动保存
+    utils.bind_window_geometry(win, "account_info_geometry", "400x350", (350, 300))
 
     # 解析已有数据
     if not is_new and account_key:
@@ -210,6 +227,14 @@ def _open_account_info_window(app, account_key=None):
                 # 迁移资产数据
                 app._account_assets[new_key] = app._account_assets.pop(account_key, "0")
                 app._asset_history[new_key] = app._asset_history.pop(account_key, [])
+                # 迁移冷却数据
+                old_cd = cooldown_manager.get_all_cooldowns().get(account_key)
+                if old_cd:
+                    cooldown_manager.reset_cooldown(account_key)
+                    if old_cd.get("next_run_time"):
+                        cooldown_manager.set_custom_cooldown(new_key, old_cd["next_run_time"])
+                    if old_cd.get("account_paused"):
+                        cooldown_manager.set_account_paused(new_key, True)
                 account_key = new_key
 
         # 保存备注
@@ -220,35 +245,60 @@ def _open_account_info_window(app, account_key=None):
             "note": note_text,
         }
 
-        # 新建账号默认暂停
-        if is_new:
-            cooldown_manager.set_account_paused(account_key, True)
-
+        # 立即刷新 UI（不等待磁盘 I/O）
         refresh_account_tree(app)
         update_account_count(app)
-        save_accounts(app)
-        messagebox.showinfo("已保存", f"账号「{user_text}」已保存。", parent=win)
+
+        # 保存当前 key 供闭包使用（避免 nonlocal 问题）
+        saved_key = account_key
+
+        # 磁盘操作放到后台线程，避免卡 UI
+        def _save_to_disk():
+            try:
+                if is_new:
+                    cooldown_manager.set_account_paused(saved_key, True)
+                save_accounts(app)
+            except Exception as e:
+                print(f"⚠️ 保存账号数据失败: {e}")
+
+        import threading
+        threading.Thread(target=_save_to_disk, daemon=True).start()
+
+        # 关闭窗口后再弹提示（避免模态窗口遮挡）
+        utils.save_window_geometry(win, "account_info_geometry")
+        win.destroy()
+        messagebox.showinfo("已保存", f"账号「{user_text}」已保存。", parent=app.root)
+
+    def _close():
+        utils.save_window_geometry(win, "account_info_geometry")
         win.destroy()
 
     ttk.Button(btn_frame, text="保存", style='Success.TButton',
                command=_save, width=10).pack(side=tk.LEFT)
     ttk.Button(btn_frame, text="取消", style='TButton',
-               command=win.destroy, width=10).pack(side=tk.LEFT, padx=(8, 0))
+               command=_close, width=10).pack(side=tk.LEFT, padx=(8, 0))
 
 
 def delete_account(app):
+    import cooldown_manager
     sel = app.account_tree.selection()
     if sel:
         if "separator" in app.account_tree.item(sel[0], "tags"):
             return
         idx = _tree_idx_to_account_idx(app, sel[0])
-        # 在删除前获取账号名称，用于清理资产数据
-        account_name = _account_key_from_path(app.qq_account_images[idx])
+        img_path = app.qq_account_images[idx]
+        account_name = _account_key_from_path(img_path)
+        # 同时用两种 key 清理冷却数据
+        cd_key = _get_cooldown_key(img_path)
         del app.qq_account_images[idx]
         # 清理该账号的资产和备注数据
         app._account_assets.pop(account_name, None)
         app._asset_history.pop(account_name, None)
         app._account_notes.pop(account_name, None)
+        # 清理冷却数据
+        cooldown_manager.reset_cooldown(account_name)
+        if cd_key != account_name:
+            cooldown_manager.reset_cooldown(cd_key)
         # 清理 SQLite 中的资产记录
         try:
             asset_db.delete_account_records(account_name)
@@ -263,6 +313,7 @@ def clear_accounts(app):
     app.qq_account_images.clear()
     app._account_assets.clear()
     app._asset_history.clear()
+    app._account_notes.clear()
     refresh_account_tree(app)
     update_account_count(app)
     save_accounts(app)
@@ -283,6 +334,7 @@ def move_up(app):
         if idx > 0:
             app.qq_account_images[idx], app.qq_account_images[idx-1] = app.qq_account_images[idx-1], app.qq_account_images[idx]
             refresh_account_tree(app)
+            save_accounts(app)
 
 
 def move_down(app):
@@ -294,6 +346,7 @@ def move_down(app):
         if idx < len(app.qq_account_images) - 1:
             app.qq_account_images[idx], app.qq_account_images[idx+1] = app.qq_account_images[idx+1], app.qq_account_images[idx]
             refresh_account_tree(app)
+            save_accounts(app)
 
 
 def _tree_idx_to_account_idx(app, tree_item):
@@ -325,6 +378,7 @@ def refresh_account_tree(app):
     seq = 0
     for i, p in enumerate(app.qq_account_images):
         name = _account_key_from_path(p)
+        cd_name = _get_cooldown_key(p)
         note_data = app._account_notes.get(name, {})
         if isinstance(note_data, dict) and note_data.get("account"):
             display_name = note_data["account"]
@@ -344,8 +398,8 @@ def refresh_account_tree(app):
         if cooldown_manager.is_account_paused(name):
             next_run_str = "已暂停"
             tag = "paused"
-        elif name in all_cooldowns:
-            cd_info = all_cooldowns[name]
+        elif cd_name in all_cooldowns:
+            cd_info = all_cooldowns[cd_name]
             paused = cd_info.get("paused", False)
             next_time = cd_info.get("next_run_time", "")
             if paused:
@@ -381,7 +435,6 @@ def refresh_account_tree(app):
             if vals and vals[0] == selected_name and "separator" not in app.account_tree.item(child, "tags"):
                 app.account_tree.selection_set(child)
                 break
-    save_accounts(app)
 
 
 # ---------- 账号右键菜单 ----------
@@ -392,16 +445,22 @@ def show_account_menu(app, event):
     if "separator" in app.account_tree.item(item, "tags"):
         return
     app.account_tree.selection_set(item)
-    # 动态更新"暂停账号"/"恢复账号"菜单标签（使用固定索引，避免标签变化后找不到）
+    # 动态更新"暂停账号"/"恢复账号"菜单标签
     import cooldown_manager
     idx = _tree_idx_to_account_idx(app, item)
     if idx < len(app.qq_account_images):
         name = _account_key_from_path(app.qq_account_images[idx])
         is_paused = cooldown_manager.is_account_paused(name)
-        if is_paused:
-            app.account_menu.entryconfigure(8, label="恢复账号")
-        else:
-            app.account_menu.entryconfigure(8, label="暂停账号")
+        new_label = "恢复账号" if is_paused else "暂停账号"
+        # 遍历菜单项找到"暂停账号"或"恢复账号"并更新
+        for i in range(app.account_menu.index(tk.END) + 1):
+            try:
+                current = app.account_menu.entrycget(i, "label")
+                if current in ("暂停账号", "恢复账号"):
+                    app.account_menu.entryconfigure(i, label=new_label)
+                    break
+            except tk.TclError:
+                continue
     app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
@@ -415,7 +474,8 @@ def manual_add_cooldown(app, event):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    account_name = _account_key_from_path(app.qq_account_images[idx])
+    img_path = app.qq_account_images[idx]
+    account_name = _get_cooldown_key(img_path)
 
     if not app.settings.get("enable_cooldown", False):
         messagebox.showinfo("提示",
@@ -461,7 +521,8 @@ def reset_selected_cooldown(app):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    account_name = _account_key_from_path(app.qq_account_images[idx])
+    img_path = app.qq_account_images[idx]
+    account_name = _get_cooldown_key(img_path)
     cooling, next_time = cooldown_manager.is_cooling_down(account_name)
     if not cooling:
         messagebox.showinfo("提示", f"「{account_name}」当前没有在冷却中。", parent=app.root)
@@ -484,37 +545,50 @@ def custom_cooldown_time(app):
     idx = _tree_idx_to_account_idx(app, sel[0])
     if idx >= len(app.qq_account_images):
         return
-    account_name = _account_key_from_path(app.qq_account_images[idx])
+    img_path = app.qq_account_images[idx]
+    account_name = _get_cooldown_key(img_path)
 
     # 弹出输入对话框
     dialog = tk.Toplevel(app.root)
     dialog.title("自定义冷却时间")
-    dialog.geometry("300x170")
-    dialog.resizable(False, False)
+    dialog.resizable(True, True)
+    dialog.minsize(320, 200)
     dialog.transient(app.root)
     dialog.grab_set()
-    # 居中
-    dialog.update_idletasks()
-    dx = (dialog.winfo_screenwidth() - 300) // 2
-    dy = (dialog.winfo_screenheight() - 170) // 2
-    dialog.geometry(f"300x170+{dx}+{dy}")
     utils.set_window_icon(dialog)
+    utils.bind_window_geometry(dialog, "custom_cooldown_geometry", "360x220", (320, 200))
 
-    ttk.Label(dialog, text=f"账号：{account_name}").pack(pady=(15, 5))
-    ttk.Label(dialog, text="冷却小时数：").pack()
+    ttk.Label(dialog, text=f"账号：{account_name}", font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(15, 10))
+
+    # 小时 + 分钟
+    time_frame = ttk.Frame(dialog)
+    time_frame.pack(pady=5)
+
+    ttk.Label(time_frame, text="冷却时间：", font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT, padx=(0, 8))
     hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
-    spin = ttk.Spinbox(dialog, from_=1, to=72, textvariable=hours_var, width=10)
-    spin.pack(pady=5)
+    minutes_var = tk.IntVar(value=0)
+    hours_spin = ttk.Spinbox(time_frame, from_=0, to=72, textvariable=hours_var, width=5, font=('Microsoft YaHei UI', 11))
+    hours_spin.pack(side=tk.LEFT, padx=(0, 4))
+    ttk.Label(time_frame, text="小时", font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT, padx=(0, 12))
+    minutes_spin = ttk.Spinbox(time_frame, from_=0, to=59, increment=5, textvariable=minutes_var, width=5, font=('Microsoft YaHei UI', 11))
+    minutes_spin.pack(side=tk.LEFT, padx=(0, 4))
+    ttk.Label(time_frame, text="分钟", font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT)
 
     def confirm():
         hours = hours_var.get()
-        cooldown_manager.record_run(account_name, hours)
+        minutes = minutes_var.get()
+        if hours <= 0 and minutes <= 0:
+            messagebox.showwarning("提示", "冷却时间不能为 0", parent=dialog)
+            return
+        total_hours = hours + minutes / 60.0
+        cooldown_manager.record_run(account_name, total_hours)
         refresh_account_tree(app)
         _, new_next = cooldown_manager.is_cooling_down(account_name)
-        messagebox.showinfo("已设置", f"「{account_name}」冷却 {hours} 小时。\n下次运行：{new_next or '未知'}", parent=app.root)
+        time_text = f"{hours}小时" if minutes == 0 else f"{hours}小时{minutes}分钟" if hours > 0 else f"{minutes}分钟"
+        messagebox.showinfo("已设置", f"「{account_name}」冷却 {time_text}。\n下次运行：{new_next or '未知'}", parent=dialog)
         dialog.destroy()
 
-    ttk.Button(dialog, text="确认", command=confirm).pack(pady=10)
+    ttk.Button(dialog, text="确认", command=confirm).pack(pady=15)
 
 
 def reset_all_cooldowns(app):
@@ -567,6 +641,8 @@ def test_recognition(app):
     if "separator" in app.account_tree.item(sel[0], "tags"):
         return
     idx = _tree_idx_to_account_idx(app, sel[0])
+    if idx >= len(app.qq_account_images):
+        return
     img_path = app.qq_account_images[idx]
     if not os.path.exists(img_path):
         messagebox.showerror("错误", "截图文件不存在")
@@ -634,6 +710,8 @@ def crop_account_image(app):
     if "separator" in app.account_tree.item(sel[0], "tags"):
         return
     idx = _tree_idx_to_account_idx(app, sel[0])
+    if idx >= len(app.qq_account_images):
+        return
     img_path = app.qq_account_images[idx]
     if not os.path.exists(img_path):
         messagebox.showerror("错误", "截图文件不存在", parent=app.root)
@@ -780,15 +858,12 @@ def show_cooldown_window(app):
     """弹出冷却状态查看窗口"""
     win = tk.Toplevel(app.root)
     win.title("账号冷却状态")
-    win.geometry("700x480")
-    win.resizable(False, False)
+    win.resizable(True, True)
+    win.minsize(500, 350)
     win.transient(app.root)
     win.grab_set()
-    # 居中
-    win.update_idletasks()
-    x = (win.winfo_screenwidth() - 700) // 2
-    y = (win.winfo_screenheight() - 480) // 2
-    win.geometry(f"700x480+{x}+{y}")
+    utils.set_window_icon(win)
+    utils.bind_window_geometry(win, "cooldown_window_geometry", "700x480", (500, 350))
     # 图标
     utils.set_window_icon(win)
 
@@ -886,15 +961,12 @@ def show_cooldown_window(app):
         # 弹出输入对话框
         dialog = tk.Toplevel(win)
         dialog.title("自定义冷却时间")
-        dialog.geometry("350x180")
-        dialog.resizable(False, False)
+        dialog.resizable(True, True)
+        dialog.minsize(300, 150)
         dialog.transient(win)
         dialog.grab_set()
-        # 居中
-        dialog.update_idletasks()
-        dx = (dialog.winfo_screenwidth() - 350) // 2
-        dy = (dialog.winfo_screenheight() - 180) // 2
-        dialog.geometry(f"350x180+{dx}+{dy}")
+        utils.set_window_icon(dialog)
+        utils.bind_window_geometry(dialog, "custom_cooldown_geometry", "350x180", (300, 150))
 
         ttk.Label(dialog, text=f"为「{account_name}」设置冷却结束时间",
                   font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(15, 5))
@@ -1022,7 +1094,6 @@ def show_asset_history(app):
     # 创建弹窗
     win = tk.Toplevel(app.root)
     win.title(f"资产记录 - {account_name}")
-    win.geometry("420x400")
     win.minsize(350, 300)
     win.resizable(True, True)
     win.transient(app.root)
@@ -1031,12 +1102,8 @@ def show_asset_history(app):
     # 设置图标
     utils.set_window_icon(win)
 
-    # 窗口居中
-    win.update_idletasks()
-    w, h = 420, 400
-    x = (win.winfo_screenwidth() - w) // 2
-    y = (win.winfo_screenheight() - h) // 2
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    # 恢复窗口大小 + 关闭时自动保存
+    utils.bind_window_geometry(win, "asset_history_geometry", "420x400", (350, 300))
 
     # 标题
     ttk.Label(win, text=f"账号：{account_name}", font=('Microsoft YaHei UI', 11, 'bold')).pack(padx=15, pady=(12, 5), anchor='w')
@@ -1187,7 +1254,6 @@ def show_asset_monitor(app):
     """弹出资产监测窗口：上半部分显示所有账号当前资产，下半部分按时间段统计变化"""
     win = tk.Toplevel(app.root)
     win.title("资产监测")
-    win.geometry("400x400")
     win.resizable(True, True)
     win.minsize(200, 200)
     win.transient(app.root)
@@ -1196,12 +1262,8 @@ def show_asset_monitor(app):
     # 设置图标
     utils.set_window_icon(win)
 
-    # 窗口居中
-    win.update_idletasks()
-    w, h = 400, 400
-    x = (win.winfo_screenwidth() - w) // 2
-    y = (win.winfo_screenheight() - h) // 2
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    # 恢复窗口大小
+    utils.restore_window_geometry(win, "asset_monitor_geometry", "400x400", (200, 200))
 
     # ===== 上半部分：当前状态 =====
     status_frame = ttk.LabelFrame(win, text=" 当前资产状态 ", padding=10)
@@ -1248,6 +1310,7 @@ def show_asset_monitor(app):
                 pass
     app._asset_monitor_refresh = _refresh_all
     def _on_monitor_close():
+        utils.save_window_geometry(win, "asset_monitor_geometry")
         app._asset_monitor_refresh = None
         app._asset_monitor_refresh_stats = None
         win.destroy()
