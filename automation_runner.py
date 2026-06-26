@@ -136,6 +136,7 @@ def start_run(app):
     app.stats_label.config(text="")
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
     app._last_account_error = ""
+    app._consecutive_failures = {}  # 重置连续失败计数
     app.start_btn.config(state='disabled')
     app.stop_btn.config(state='normal')
     app.log_area.configure(state='normal')
@@ -209,12 +210,17 @@ def _validate_daily(app):
 
 
 def _cleanup_processes(app):
-    """运行前清理 QQ、WeGame 和三角洲行动进程"""
+    """运行前清理 QQ、WeGame 和三角洲行动进程（并行杀进程，减少等待）"""
     print("🧹 运行前清理：退出 QQ、WeGame 和三角洲行动...")
     set_operation(app, "清理进程")
-    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
-    utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
-    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+    import threading
+    threads = []
+    for proc_name in [config.DELTA_PROCESS, config.QQ_PROCESS, config.WEGAME_PROCESS]:
+        t = threading.Thread(target=utils.kill_process, args=(proc_name,), kwargs={"wait_exit": True, "max_wait": 10}, daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join(timeout=12)
     time.sleep(2)
 
 
@@ -366,11 +372,22 @@ def _login_account(app, account_name, i, total, processed_accounts):
             print(f"⚠️ 未找到登录确认按钮，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已点击登录确认按钮")
-        time.sleep(5)
 
-        # 检查登录是否成功：检测 login_again 按钮（登录失败）或三角洲图标（登录成功）
-        if utils.find_and_click_smart(config.LOGIN_AGAIN, timeout=3):
-            print(f"⚠️ 检测到重新登录按钮，登录失败，重试...")
+        # 轮询检查登录结果（最多 8 秒，每 2 秒检查一次）
+        login_ok = False
+        for _ in range(4):
+            time.sleep(2)
+            if utils.find_and_click_smart(config.LOGIN_AGAIN, timeout=2):
+                print(f"⚠️ 检测到重新登录按钮，登录失败，重试...")
+                break
+            if utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=2):
+                login_ok = True
+                break
+        else:
+            # 4 次检查都没发现异常，假设登录成功
+            login_ok = True
+
+        if not login_ok:
             continue
         print(f"✅ 账号 {account_name} WeGame 登录成功")
         return True
@@ -553,6 +570,12 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         if not app._user_stopped_cooldown:
             error_msg = getattr(app, '_last_account_error', '未知错误')
             email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts, error_msg)
+        # 连续失败计数
+        app._consecutive_failures[account_name] = app._consecutive_failures.get(account_name, 0) + 1
+        if app._consecutive_failures[account_name] >= 2:
+            cooldown_manager.set_account_paused(account_name, True)
+            print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，已自动暂停")
+            processed_accounts[-1] = f"{account_name} (失败-自动暂停)"
     else:
         if app.settings.get("enable_cooldown", False):
             cd_hours = app.settings.get("cooldown_hours", 8)
@@ -560,6 +583,8 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         app.run_stats["success"] += 1
         processed_accounts.append(f"{account_name} (成功)")
         server_client.update_account_status(app, account_name, "success")
+        # 成功则重置连续失败计数
+        app._consecutive_failures.pop(account_name, None)
 
 
 def _wait_and_run_nearby_cooldowns(app, processed_accounts):

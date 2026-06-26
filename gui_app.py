@@ -40,13 +40,19 @@ ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts
 
 
 class RedirectText:
-    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件（线程安全）"""
+    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件（线程安全，缓冲写入）"""
     def __init__(self, text_widget, root, log_path=None):
         self.text_widget = text_widget
         self.root = root
         self.log_path = log_path
+        self._log_buffer = []
+        self._log_file = None
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            try:
+                self._log_file = open(log_path, 'a', encoding='utf-8')
+            except Exception:
+                pass
 
     def write(self, message):
         try:
@@ -54,12 +60,21 @@ class RedirectText:
             self.root.after(0, self._insert_text, message)
         except Exception:
             pass
-        if self.log_path and message.strip():
+        if self._log_file and message.strip():
             try:
-                with open(self.log_path, 'a', encoding='utf-8') as f:
-                    f.write(message)
+                self._log_file.write(message)
+                self._log_file.flush()
             except Exception:
                 pass
+
+    def close(self):
+        """关闭日志文件"""
+        if self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
 
     def _insert_text(self, message):
         """在主线程中插入文本到文本框"""
@@ -83,6 +98,7 @@ class App:
         self.root.minsize(500, 600)
         self.running_event = threading.Event()
         self._shutdown = False
+        self._consecutive_failures = {}  # 账号名 -> 连续失败次数
         self.qq_account_images = []
         self._account_assets = {}
         self._asset_history = {}
@@ -97,10 +113,10 @@ class App:
         self._ignore_cooldown_this_run = False
         self._is_boot_startup = False
         self._user_stopped_cooldown = False
-        # 窗口图标（延迟设置，避免首次加载失败）
+        # 窗口图标（失败时重试一次）
         self._icon_photo = None
-        self._set_window_icon()
-        self.root.after(500, self._set_window_icon)
+        if not self._set_window_icon():
+            self.root.after(500, self._set_window_icon)
 
         # 加载设置
         self.settings = config.APP_SETTINGS
@@ -190,7 +206,6 @@ class App:
         # 快捷键
         root.bind("<F1>", lambda e: self.start())
         root.bind("<F2>", lambda e: self.stop())
-        root.bind_all("<space>", lambda e: "break")
 
         self._build_ui()
         self._redirect_output()
@@ -236,15 +251,17 @@ class App:
         return self.running_event.is_set()
 
     def _set_window_icon(self):
-        """设置窗口图标（支持重试）"""
+        """设置窗口图标，返回 True=成功"""
         try:
             icon_path = config.resource_path("picture/icon/icon.ico")
             if os.path.exists(icon_path):
                 from PIL import Image, ImageTk
                 self._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
                 self.root.iconphoto(False, self._icon_photo)
+                return True
         except Exception:
             pass
+        return False
 
     @running.setter
     def running(self, value):

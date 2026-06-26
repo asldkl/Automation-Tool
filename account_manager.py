@@ -26,13 +26,10 @@ def _account_key_from_path(path):
     return os.path.splitext(name)[0]
 
 
-def _get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
-    import cooldown_manager
-    cd_data = cooldown_manager._load_data()
+def _get_cooldown_key_from_data(img_path, cd_data):
+    """从已加载的冷却数据中获取 key（避免重复读磁盘）"""
     basename = os.path.basename(img_path)
     short_name = basename.split(":")[-1] if ":" in basename else basename
-    # 优先用短名称（暂停状态通常记录在短名称上）
     if short_name in cd_data:
         return short_name
     if img_path in cd_data:
@@ -40,6 +37,13 @@ def _get_cooldown_key(img_path):
     if basename in cd_data:
         return basename
     return short_name
+
+
+def _get_cooldown_key(img_path):
+    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
+    import cooldown_manager
+    cd_data = cooldown_manager._load_data()
+    return _get_cooldown_key_from_data(img_path, cd_data)
 
 
 # ---------- 账号持久化 ----------
@@ -245,18 +249,17 @@ def _open_account_info_window(app, account_key=None):
             "note": note_text,
         }
 
-        # 立即刷新 UI（不等待磁盘 I/O）
+        # 新建账号立即在内存中标记暂停（确保 UI 刷新时显示正确颜色）
+        if is_new:
+            cooldown_manager.set_account_paused(account_key, True)
+
+        # 立即刷新 UI
         refresh_account_tree(app)
         update_account_count(app)
-
-        # 保存当前 key 供闭包使用（避免 nonlocal 问题）
-        saved_key = account_key
 
         # 磁盘操作放到后台线程，避免卡 UI
         def _save_to_disk():
             try:
-                if is_new:
-                    cooldown_manager.set_account_paused(saved_key, True)
                 save_accounts(app)
             except Exception as e:
                 print(f"⚠️ 保存账号数据失败: {e}")
@@ -375,10 +378,12 @@ def refresh_account_tree(app):
     for item in app.account_tree.get_children():
         app.account_tree.delete(item)
     all_cooldowns = cooldown_manager.get_all_cooldowns()
+    # 预加载冷却原始数据（供 _get_cooldown_key 使用，避免重复读磁盘）
+    _cd_data_cache = cooldown_manager._load_data()
     seq = 0
     for i, p in enumerate(app.qq_account_images):
         name = _account_key_from_path(p)
-        cd_name = _get_cooldown_key(p)
+        cd_name = _get_cooldown_key_from_data(p, _cd_data_cache)
         note_data = app._account_notes.get(name, {})
         if isinstance(note_data, dict) and note_data.get("account"):
             display_name = note_data["account"]
