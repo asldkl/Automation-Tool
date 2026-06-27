@@ -1,6 +1,6 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.3.2
+版本: v1.3.1
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
@@ -18,23 +18,14 @@ v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 �
 v1.2.0 新增：WeGame 直接登录（Interception 驱动级键盘输入）、代码重构（合并 find_and_click、缓存 settings、消除冗余颜色转换）、截图对象关闭、prevent_sleep 线程安全。新增 interception_keyboard.py 模块。
 v1.2.1 新增：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护、SMTP 不加密、冷却到期优先运行+10分钟等待、删除 QQ 无效设置、售卖物品元数据原子写入+备份保护。
 v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设置明文读写；代码质量优化（冷却线程安全锁、_IMAGE_TO_VAR 自动生成、模板 LRU 缓存、OCR 按 var_name 失败跟踪自动恢复、点击坐标边界校验）；降价逻辑优化（首次识别后原地点击剩余次数）；截图 close() 安全（try/finally）。
-v1.3.2 (2026-06-24)：
-   - 代码审查全面修复（18 项）：save_settings 原子写入、cooldown_manager 线程安全锁、RedirectText 后台线程安全、_last_account_error 跨账号清除、_launch_game 区分中断/失败、delete_account 清理冷却、move_up/down 持久化、编辑账号迁移冷却、模板缓存和 OCR 锁、登录后验证、关闭游戏激活窗口、菜单标签动态查找、边界检查、清理死代码
-
-v1.3.1 (2026-06-24)：
-   - 新增冷却到期定时任务兜底机制：Windows 任务计划程序 + 信号文件双重保障
-   - 设置界面新增「定时任务兜底」开关（自动任务选项卡）
-   - WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，超时从15秒降至10秒
-   - cooldown_manager.record_run 时自动创建定时任务（最早到期时间）
-   - gui_app 主界面每30秒检查信号文件，检测到即触发运行
-   - 修复冷却 key 匹配 bug：新增 _get_cooldown_key 统一短名称优先，解决 account: 前缀导致的冷却状态不同步
-   - 冷却触发时额外检查 10 分钟内到期账号并等待执行
-   - 暂停账号正确跳过（is_account_paused 检查修复）
-   - 定时任务静默执行（VBScript 包装，无 cmd 窗口弹出）
-   - 删除未使用的图片资源（qq_login、Department_Bullets、background.jpg 等）
-   - 模板上传向导改用截取方式（屏幕框选替代文件上传）
-   - 全局 OCR 窗口可调节大小
-   - 自定义冷却时间支持分钟（小时+分钟双 Spinbox）
+v1.3.1 (2026-06-27)：
+   - 模块化重构：get_cooldown_key 提取到 cooldown_manager、_ensure_game_focused 统一、scheduler.py 简化
+   - 新增：删除 PyDirectInput 依赖、Interception 失败重启选项、右键运行单账号、游戏失败 1 天冷却、连续失败自动暂停
+   - 代码质量：save_settings 原子写入、Interception context 泄漏修复、reset_all_cooldowns 保留 game_failed、OCR 异步初始化、Treeview 列宽优化
+   - 冷却到期定时任务兜底机制：Windows 任务计划程序 + 信号文件双重保障
+   - 设置界面新增「定时任务兜底」和「Interception 失败重启」开关
+   - 模板上传向导改用截取方式、全局 OCR 窗口可调节、自定义冷却支持分钟
+   - 所有窗口大小记忆、删除未使用图片资源
    - 所有弹出窗口大小记忆（关闭时保存，下次恢复）
    - 删除屏幕唤醒鼠标移动功能
    - 修复停止按钮关闭子窗口问题
@@ -136,11 +127,11 @@ v1.3.1 (2026-06-24)：
 
 
 │
-├── driver_keyboard.py          # 驱动级键盘输入模块（v1.1.5 新增）
-│   - 使用 PyDirectInput，回退到 pyautogui
-│   - send_string()：发送字符串到指定窗口（剪贴板粘贴方式，QQ 密码框不兼容）
-│   - key_press() / key_down() / key_up()：按键操作
-│   - hold_key()：长按指定键（用于清空输入框）
+├── driver_keyboard.py          # 驱动级键盘输入模块（v1.3.1 重写）
+│   - 统一使用 Interception 驱动，不支持 PyDirectInput 回退
+│   - send_string()：通过 Interception 扫描码方式输入字符串
+│   - key_press()：发送单个按键
+│   - 所有操作委托给 interception_keyboard 模块
 │   - get_backend()：获取当前使用的后端名称
 │   - 注：登录流程已改用 Interception 驱动级键盘输入，此模块保留供其他场景使用
 │
@@ -242,17 +233,19 @@ v1.3.1 (2026-06-24)：
 │   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
 │   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
 │
-├── cooldown_manager.py         # 冷却管理
+├── cooldown_manager.py         # 冷却管理（v1.3.1 新增 get_cooldown_key 统一函数）
 │   - 数据存储：~/.delta_auto_cooldown.json
 │   - 内存缓存（v1.1.4）：mtime 校验，文件未变直接返回缓存，避免重复磁盘读取
+│   - get_cooldown_key()：统一冷却 key 解析（v1.3.1，消除 5 处重复代码）
+│   - find_earliest_cooldown()：查找最早冷却到期时间（v1.3.1 公开函数）
 │   - is_cooling_down()：检查账号是否在冷却中（含暂停状态判断）
 │   - record_run()：记录运行时间，计算下次可运行时间
-│   - reset_cooldown() / reset_all_cooldowns()：重置冷却
-│   - pause_cooldown() / resume_cooldown()：暂停/恢复冷却倒计时（v1.1.2 新增）
-│   - is_paused()：检查冷却是否处于暂停状态
-│   - set_account_paused() / is_account_paused()：账号暂停/恢复（v1.1.3 新增，独立于冷却）
-│   - get_all_cooldowns()：获取所有账号冷却信息（含 paused、account_paused 状态）
-│   - 线程安全（v1.3.0）：threading.Lock 包裹所有公共函数，防止并发读写
+│   - reset_cooldown() / reset_all_cooldowns()：重置冷却（保留暂停和 game_failed 状态）
+│   - pause_cooldown() / resume_cooldown()：暂停/恢复冷却倒计时
+│   - set_account_paused() / is_account_paused()：账号暂停/恢复
+│   - mark_game_failed() / clear_game_failed()：游戏失败标记（v1.3.1 新增）
+│   - get_all_cooldowns()：获取所有账号冷却信息
+│   - 线程安全：threading.Lock 包裹所有公共函数，is_cooling_down/get_all_cooldowns 全部操作移入锁内
 │   - 原子写入（.tmp + os.replace）
 │
 ├── template_capture.py         # 模板上传向导（约 986 行）

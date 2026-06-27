@@ -717,6 +717,23 @@ class App:
     def _cooldown_watcher_loop(self):
         cooldown_watcher.cooldown_watcher_loop(self)
 
+    def _run_single_account(self):
+        """右键菜单：单独运行选中的账号"""
+        import automation_runner
+        sel = self.account_tree.selection()
+        if not sel:
+            return
+        if "separator" in self.account_tree.item(sel[0], "tags"):
+            return
+        idx = account_manager._tree_idx_to_account_idx(self, sel[0])
+        if idx >= len(self.qq_account_images):
+            return
+        if self.running:
+            messagebox.showwarning("提示", "已有任务在运行中，请等待完成后再试。", parent=self.root)
+            return
+        img_path = self.qq_account_images[idx]
+        automation_runner.start_single_account_run(self, img_path)
+
     def _check_any_account_ready(self):
         return cooldown_watcher.check_any_account_ready(self)
 
@@ -821,10 +838,10 @@ class App:
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("next_run", text="下次运行时间")
         self.account_tree.heading("note", text="备注")
-        self.account_tree.column("name", width=50, minwidth=40, anchor=tk.W)
-        self.account_tree.column("asset", width=30, minwidth=20, anchor=tk.CENTER)
-        self.account_tree.column("next_run", width=50, minwidth=40, anchor=tk.CENTER)
-        self.account_tree.column("note", width=40, minwidth=30, anchor=tk.CENTER)
+        self.account_tree.column("name", width=120, minwidth=80, anchor=tk.W)
+        self.account_tree.column("asset", width=60, minwidth=40, anchor=tk.CENTER)
+        self.account_tree.column("next_run", width=100, minwidth=70, anchor=tk.CENTER)
+        self.account_tree.column("note", width=80, minwidth=50, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.account_tree.yview)
         self.account_tree.configure(yscrollcommand=scrollbar.set)
         self.account_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -833,6 +850,7 @@ class App:
         self.account_tree.tag_configure("cooling", foreground="#0078d4")   # 蓝色 - 冷却中
         self.account_tree.tag_configure("runnable", foreground="#4CAF50")  # 绿色 - 可运行
         self.account_tree.tag_configure("paused", foreground="#f44336")    # 红色 - 已暂停
+        self.account_tree.tag_configure("game_failed", foreground="#ff8c00")  # 黄色 - 游戏失败
         self.account_tree.tag_configure("separator", background="#e0e0e0")  # 分隔线
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
@@ -841,6 +859,7 @@ class App:
                   style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888').pack(side=tk.LEFT)
 
         self.account_menu = tk.Menu(self.root, tearoff=0)
+        self.account_menu.add_command(label="运行此账号", command=self._run_single_account)
         self.account_menu.add_command(label="查看资产记录", command=self._show_asset_history)
         self.account_menu.add_command(label="账号信息设置", command=self._show_account_note)
         self.account_menu.add_separator()

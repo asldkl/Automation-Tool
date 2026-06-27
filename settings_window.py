@@ -40,6 +40,7 @@ class SettingsWindow:
         # 自动任务设置变量
         self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
         self.cooldown_scheduled_task_var = tk.BooleanVar(value=app.settings.get("cooldown_scheduled_task_enabled", True))
+        self.restart_on_interception_fail_var = tk.BooleanVar(value=app.settings.get("restart_on_interception_fail", False))
 
         # 操作选择变量
         selected = app.settings.get("selected_operations", [])
@@ -357,6 +358,13 @@ class SettingsWindow:
         ttk.Checkbutton(cd_row4, text="定时任务兜底（冷却到期时自动启动程序）",
                        variable=self.cooldown_scheduled_task_var).pack(side=tk.LEFT, padx=5, pady=5)
         ttk.Label(cooldown_frame, text="开启后即使程序未运行，冷却到期也会通过系统定时任务自动启动程序执行",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
+        cd_row5 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row5.pack(fill=tk.X, pady=(4, 4))
+        ttk.Checkbutton(cd_row5, text="Interception 驱动失败时自动重启电脑",
+                       variable=self.restart_on_interception_fail_var).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Label(cooldown_frame, text="开启后运行时如果检测到 Interception 驱动不可用，将自动重启电脑重新加载驱动",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
         # ----- 开机自启动 -----
@@ -1699,6 +1707,7 @@ class SettingsWindow:
         # 冷却执行设置
         fresh["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
         fresh["cooldown_scheduled_task_enabled"] = self.cooldown_scheduled_task_var.get()
+        fresh["restart_on_interception_fail"] = self.restart_on_interception_fail_var.get()
 
         # 如果关闭了定时任务兜底，删除已有的定时任务
         if not self.cooldown_scheduled_task_var.get():

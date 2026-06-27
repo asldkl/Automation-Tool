@@ -209,6 +209,7 @@ def send_string(text, interval=0.02):
         print("[ERROR] Interception 不可用，无法输入")
         return False
 
+    ctx = None
     try:
         # FILTER_KEY_ALL = 0xFFFF
         ctx = _create_context()
@@ -230,32 +231,30 @@ def send_string(text, interval=0.02):
             if need_shift:
                 shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
                 if _send(ctx, keyboard_device, shift_down, 1) <= 0:
-                    _destroy_context(ctx)
                     return False
 
             key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
             if _send(ctx, keyboard_device, key_down, 1) <= 0:
-                _destroy_context(ctx)
                 return False
 
             key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
             if _send(ctx, keyboard_device, key_up, 1) <= 0:
-                _destroy_context(ctx)
                 return False
 
             if need_shift:
                 shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
                 if _send(ctx, keyboard_device, shift_up, 1) <= 0:
-                    _destroy_context(ctx)
                     return False
 
             time.sleep(interval)
 
-        _destroy_context(ctx)
         return True
     except Exception as e:
         print(f"[ERROR] Interception send_string 失败: {e}")
         return False
+    finally:
+        if ctx:
+            _destroy_context(ctx)
 
 
 def send_key(char, interval=0.02):
@@ -275,6 +274,7 @@ def send_key(char, interval=0.02):
         print("[ERROR] Interception 不可用，无法输入")
         return False
 
+    ctx = None
     try:
         ctx = _create_context()
         if not ctx:
@@ -289,29 +289,27 @@ def send_key(char, interval=0.02):
             if need_shift:
                 shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
                 if _send(ctx, keyboard_device, shift_down, 1) <= 0:
-                    _destroy_context(ctx)
                     return False
 
             key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
             if _send(ctx, keyboard_device, key_down, 1) <= 0:
-                _destroy_context(ctx)
                 return False
 
             key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
             if _send(ctx, keyboard_device, key_up, 1) <= 0:
-                _destroy_context(ctx)
                 return False
 
             if need_shift:
                 shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
                 if _send(ctx, keyboard_device, shift_up, 1) <= 0:
-                    _destroy_context(ctx)
                     return False
 
             time.sleep(interval)
 
-        _destroy_context(ctx)
         return True
     except Exception as e:
         print(f"[ERROR] Interception send_key 失败: {e}")
         return False
+    finally:
+        if ctx:
+            _destroy_context(ctx)

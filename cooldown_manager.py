@@ -9,6 +9,23 @@ import threading
 
 COOLDOWN_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown.json")
 
+
+def get_cooldown_key(img_path):
+    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）
+    统一函数，所有模块应使用此函数而非自行解析。
+    """
+    cd_data = _load_data()
+    basename = os.path.basename(img_path)
+    short_name = basename.split(":")[-1] if ":" in basename else basename
+    short_name = os.path.splitext(short_name)[0]
+    if short_name in cd_data:
+        return short_name
+    if img_path in cd_data:
+        return img_path
+    if basename in cd_data:
+        return basename
+    return short_name
+
 # 内存缓存：避免每次读操作都访问磁盘
 _cache = None
 _cache_mtime = 0.0
@@ -110,7 +127,7 @@ def record_run(account_name, cooldown_hours=8):
         import utils
         settings = config.load_settings()
         if settings.get("cooldown_scheduled_task_enabled", True):
-            earliest = _find_earliest_cooldown(data)
+            earliest = find_earliest_cooldown(data)
             if earliest:
                 # 延后 2 分钟，确保账号冷却已完全结束
                 earliest_with_buffer = earliest + datetime.timedelta(minutes=2)
@@ -119,7 +136,7 @@ def record_run(account_name, cooldown_hours=8):
         print(f"⚠️ 创建冷却定时任务失败: {e}")
 
 
-def _find_earliest_cooldown(data):
+def find_earliest_cooldown(data):
     """找到所有账号中最早的冷却到期时间，返回 datetime 对象或 None"""
     earliest = None
     for name, entry in data.items():
@@ -153,12 +170,12 @@ def reset_cooldown(account_name):
 
 
 def reset_all_cooldowns():
-    """重置所有账号的冷却（保留暂停状态的账号）"""
+    """重置所有账号的冷却（保留暂停状态和游戏失败状态的账号）"""
     with _lock:
         data = _load_data()
-        # 仅保留暂停状态的账号
-        paused_data = {k: v for k, v in data.items() if v.get("account_paused")}
-        _save_data(paused_data)
+        # 保留暂停状态和游戏失败状态的账号
+        preserved = {k: v for k, v in data.items() if v.get("account_paused") or v.get("game_failed")}
+        _save_data(preserved)
 
 
 def get_all_cooldowns():
@@ -300,6 +317,25 @@ def is_account_paused(account_name):
         if account_name not in data:
             return False
         return bool(data[account_name].get("account_paused"))
+
+
+def mark_game_failed(account_name):
+    """标记账号为游戏失败状态（黄色标签）"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            data[account_name] = {}
+        data[account_name]["game_failed"] = True
+        _save_data(data)
+
+
+def clear_game_failed(account_name):
+    """清除账号的游戏失败状态"""
+    with _lock:
+        data = _load_data()
+        if account_name in data and "game_failed" in data[account_name]:
+            del data[account_name]["game_failed"]
+            _save_data(data)
 
 
 def remove_expired_cooldowns():

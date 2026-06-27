@@ -27,24 +27,10 @@ import driver_keyboard
 import interception_keyboard
 
 # 三角洲行动窗口标题关键词
-DELTA_TITLES = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]
 
-
-def _get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（优先短名称，与 _account_key_from_path 一致）"""
-    cd_data = cooldown_manager._load_data()
-    basename = os.path.basename(img_path)
-    # 去掉 account: 前缀和 .png 后缀（与 _account_key_from_path 一致）
-    short_name = basename.split(":")[-1] if ":" in basename else basename
-    short_name = os.path.splitext(short_name)[0]
-    # 优先用短名称（暂停状态通常记录在短名称上）
-    if short_name in cd_data:
-        return short_name
-    if img_path in cd_data:
-        return img_path
-    if basename in cd_data:
-        return basename
-    return short_name
+# 统一使用 cooldown_manager.get_cooldown_key
+_get_cooldown_key = cooldown_manager.get_cooldown_key
 
 
 def _ensure_wegame_focused():
@@ -129,7 +115,7 @@ def start_run(app):
     app.running = True
     app._stop_event.clear()
     app._user_stopped_cooldown = False  # 新运行开始，清除停止标志
-    app._ignore_cooldown_this_run = False  # 手动启动时重置冷却跳过标志，确保冷却检查生效
+    # 不重置 _ignore_cooldown_this_run，由调用方（冷却监听/信号触发）设置
     app._is_boot_startup = False  # 手动启动时重置开机标志
     app.current_step = 0
     app.progress['value'] = 0
@@ -166,15 +152,116 @@ def stop_run(app):
     app.running = False
 
 
-def update_ui(app, step_increment=False, account_text=None, account_file=None):
-    """更新界面显示"""
-    if step_increment:
-        app.current_step += 1
-        app.progress['value'] = app.current_step
-    if account_text:
-        app.account_label.config(text=account_text)
-    if account_file:
-        app.current_account_file_label.config(text=account_file)
+def start_single_account_run(app, img_path):
+    """单独运行一个账号（右键菜单触发），运行完进入冷却，暂停账号保持暂停"""
+    if app.running:
+        return
+    file_name = _get_cooldown_key(img_path)
+    # 记录该账号是否原本暂停
+    was_paused = cooldown_manager.is_account_paused(file_name)
+    app._single_account_mode = True
+    app._single_account_was_paused = was_paused
+    app._single_account_img_path = img_path
+    # 启动运行（只跑这一个账号）
+    app.running = True
+    app._stop_event.clear()
+    app._user_stopped_cooldown = False
+    app._ignore_cooldown_this_run = False
+    app._is_boot_startup = False
+    app.current_step = 0
+    app.progress['value'] = 0
+    app.stats_label.config(text="")
+    app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
+    app._last_account_error = ""
+    app._consecutive_failures = {}
+    app.start_btn.config(state='disabled')
+    app.stop_btn.config(state='normal')
+    app.log_area.configure(state='normal')
+    app.log_area.delete('1.0', tk.END)
+    app.log_area.configure(state='disabled')
+    utils.prevent_sleep()
+    server_client.start_heartbeat(app)
+    app.work_thread = threading.Thread(target=_run_single_account_main, args=(app, img_path), daemon=True)
+    app.work_thread.start()
+
+
+def _run_single_account_main(app, img_path):
+    """单账号运行主函数：登录 → 进入游戏 → 按 Tab → 结束（不退出游戏）"""
+    processed_accounts = []
+    try:
+        file_name = _get_cooldown_key(img_path)
+        total = len(app.qq_account_images)
+        print(f"🟢 单账号运行：{file_name}")
+
+        if not _validate_daily(app):
+            return
+
+        _cleanup_processes(app)
+
+        # 关闭前台窗口，防止影响自动化
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                win32gui.PostMessage(hwnd, 0x0010, 0, 0)
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+        account_failed = False
+        account_interrupted = False
+
+        # 步骤1：登录
+        if not _login_account(app, file_name, 0, total, processed_accounts):
+            account_failed = True
+
+        # 步骤2：启动游戏
+        if not account_failed and not app._stop_event.is_set():
+            launch_result = _launch_game(app)
+            if launch_result == "relogin":
+                print("🔄 重新登录...")
+                if not _login_account(app, file_name, 0, total, processed_accounts):
+                    account_failed = True
+                else:
+                    launch_result = _launch_game(app)
+                    if launch_result is False or launch_result == "relogin":
+                        account_failed = True
+            elif launch_result is False:
+                account_failed = True
+
+        # 步骤3：登录成功后进入游戏，按 Tab，然后结束（不退出游戏）
+        if not account_failed and not app._stop_event.is_set():
+            print("✅ 登录成功，进入游戏...")
+            # 等待游戏窗口加载
+            time.sleep(8)
+            automation._ensure_game_focused()
+            print("✅ 游戏已就绪，用户可自行操作。程序不会退出游戏。")
+            processed_accounts.append(f"{file_name} (已登录)")
+
+        if app._stop_event.is_set():
+            account_interrupted = True
+
+        if account_failed:
+            processed_accounts.append(f"{file_name} (登录失败)")
+
+    except Exception as e:
+        print(f"❌ 运行出错: {e}")
+        traceback.print_exc()
+    finally:
+        app.run_stats["processed_accounts"] = processed_accounts
+        app.root.after(0, lambda: _on_single_account_finish(app))
+
+
+def _on_single_account_finish(app):
+    """单账号运行完成"""
+    if hasattr(app, '_single_account_img_path') and app._single_account_img_path:
+        file_name = _get_cooldown_key(app._single_account_img_path)
+        # 如果是暂停账号，保持暂停状态
+        if getattr(app, '_single_account_was_paused', False):
+            cooldown_manager.set_account_paused(file_name, True)
+            print(f"⏸️ 账号 {file_name} 原为暂停状态，已恢复暂停")
+    app._single_account_mode = False
+    on_finish(app)
 
 
 def set_operation(app, text):
@@ -263,6 +350,19 @@ def _login_account(app, account_name, i, total, processed_accounts):
 
     kb_backend = interception_keyboard.get_backend()
     print(f"⌨️ 键盘后端: {kb_backend}")
+
+    # 检查 Interception 驱动是否可用，不可用时根据设置决定是否重启
+    if not interception_keyboard.is_available():
+        if app.settings.get("restart_on_interception_fail", False):
+            print("❌ Interception 驱动不可用，正在重启电脑...")
+            import subprocess
+            subprocess.run(["shutdown", "/r", "/t", "10", "/c", "Interception 驱动不可用，自动重启以重新加载驱动"], capture_output=True)
+            app.root.after(0, lambda: messagebox.showinfo("提示", "Interception 驱动不可用，系统将在 10 秒后自动重启以重新加载驱动。"))
+            return False
+        else:
+            print("❌ Interception 驱动不可用，请安装驱动或在设置中开启「Interception 失败时自动重启电脑」")
+            app._last_account_error = "Interception 驱动不可用"
+            return False
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -471,7 +571,13 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
-    if not game_operations_wrapper(app):
+    ops_result = game_operations_wrapper(app)
+    if ops_result == "game_failed":
+        msg = "游戏内操作失败（识别问题）"
+        print(f"❌ {msg}，跳过此账号")
+        app._last_account_error = msg
+        return "game_failed"
+    if not ops_result:
         if app._stop_event.is_set():
             return "interrupted"
         msg = "游戏内操作失败"
@@ -723,6 +829,18 @@ def _run_single_account(app, img_path, total, processed_accounts):
                 launch_result = _launch_game(app)
                 if launch_result is False or launch_result == "relogin":
                     account_failed = True
+        elif launch_result == "game_failed":
+            # 游戏内操作失败（识别问题），设置1天冷却，用户自行处理
+            print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
+            cooldown_manager.record_run(file_name, 24)  # 24小时冷却
+            cooldown_manager.set_account_paused(file_name, False)
+            # 标记为游戏失败
+            cooldown_manager.mark_game_failed(file_name)
+            processed_accounts.append(f"{file_name} (游戏失败-1天冷却)")
+            server_client.update_account_status(app, file_name, "failed")
+            _close_game(app)
+            _cleanup_account_processes(app)
+            return
         elif launch_result is False:
             if app._stop_event.is_set():
                 account_interrupted = True
@@ -761,6 +879,16 @@ def run_script_main(app):
     try:
         print(f"🟢 run_script_main() 已启动，ignore_cooldown={app._ignore_cooldown_this_run}")
         total = len(app.qq_account_images)
+
+        # 关闭前台窗口，防止影响自动化流程
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                win32gui.PostMessage(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+                time.sleep(0.5)
+        except Exception:
+            pass
 
         if not _validate_daily(app):
             return
@@ -835,6 +963,16 @@ def run_script_main(app):
                         launch_result = _launch_game(app)
                         if launch_result is False or launch_result == "relogin":
                             account_failed = True
+                elif launch_result == "game_failed":
+                    # 游戏内操作失败，设置1天冷却
+                    print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
+                    cooldown_manager.record_run(file_name, 24)
+                    cooldown_manager.mark_game_failed(file_name)
+                    processed_accounts.append(f"{file_name} (游戏失败-1天冷却)")
+                    server_client.update_account_status(app, file_name, "failed")
+                    _close_game(app)
+                    _cleanup_account_processes(app)
+                    break  # 跳过后续账号，进入等待冷却阶段
                 elif launch_result is False or launch_result == "interrupted":
                     if app._stop_event.is_set() or launch_result == "interrupted":
                         account_interrupted = True

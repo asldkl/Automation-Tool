@@ -2,9 +2,8 @@
                     三角洲行动自动化工具 - 开发者使用说明书
 ================================================================================
 
-版本: v1.3.2
-日期: 2026-06-24
-（Interception 驱动文档更新: 2026-06-19）
+版本: v1.3.1
+日期: 2026-06-27
 作者: 开发团队
 
 ================================================================================
@@ -690,24 +689,28 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
-v1.3.2 (2026-06-24)
+v1.3.1 (2026-06-27)
 ----------------------------------------
 
-- 代码审查全面修复：
-  - save_settings 改为原子写入（tmp + os.replace），防止崩溃丢设置
+- 模块化重构：
+  - get_cooldown_key 提取到 cooldown_manager.py 作为统一函数，消除 5 处重复代码
+  - _ensure_game_focused 统一到 automation.py，消除 automation_runner.py 中的副本
+  - scheduler.py 用 find_earliest_cooldown 替代内联循环，代码减半
+  - 游戏窗口标题列表统一为 5 个（补充 DeltaForce）
+- 新增功能：
+  - 删除 PyDirectInput 依赖，driver_keyboard.py 统一使用 Interception 驱动
+  - 设置界面新增「Interception 驱动失败时自动重启电脑」选项
+  - 右键账号新增「运行此账号」功能：登录后进入游戏按 Tab，不退出游戏供用户手动操作
+  - 游戏内操作失败自动设置 1 天冷却，账号显示黄色标签
+  - 连续失败 2 次自动暂停账号
+- 代码质量优化：
+  - save_settings 原子写入（tmp + os.replace）防崩溃丢设置
   - cooldown_manager 线程安全：is_cooling_down、get_all_cooldowns 全部操作移入锁内
   - RedirectText 后台线程安全：改为 root.after(0, ...) 在主线程更新 UI
-  - _last_account_error 每个账号开始前清空，防止邮件报告错误的失败原因
-  - _launch_game 区分"中断"和"失败"返回值，成功但被停止不再误判为失败
-  - delete_account 清理冷却数据（两种 key 格式都清理）
-  - move_up/move_down 调用后持久化排序
-  - 编辑账号 key 时迁移冷却数据和暂停状态
-  - _template_cache 和 _ocr_failures 添加线程锁
-  - _check_cooldown_signal 关闭时不再重新调度（_shutdown 标志）
-  - _recognize_and_store_asset 改用 app.settings 而非磁盘读取
-  - _run_single_account 显示实际账号序号而非 "1/N"
-  - build_accounts_html 用 rsplit 避免误伤含括号的账号名
-  - _login_account 点击 Sign-in 后检测 login_again 验证登录
+  - Interception send_string/send_key 改用 try/finally 确保 context 不泄漏
+  - reset_all_cooldowns 保留 game_failed 状态
+  - OCR 引擎异步初始化，加速程序启动
+  - Treeview 列宽从 50/30/50/40 增加到 120/60/100/80
   - _close_game 先激活游戏窗口再发 Alt+F4，避免关闭错误窗口
   - 右键菜单暂停/恢复标签改为动态查找，不再硬编码索引
   - test_recognition/crop_account_image 添加索引边界检查

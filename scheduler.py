@@ -24,26 +24,12 @@ def set_next_wake_timer(app):
         now = datetime.datetime.now()
         next_run = None
 
-        # 冷却完立即运行模式：取最早冷却到期时间（直接遍历冷却数据，避免 key 不一致）
+        # 冷却完立即运行模式：取最早冷却到期时间
         if app.settings.get("cooldown_run_immediately", False):
             cd_data = cooldown_manager._load_data()
-            for name, entry in cd_data.items():
-                if entry.get("paused") or entry.get("account_paused"):
-                    continue
-                short_name = name.split(":")[-1] if ":" in name else name
-                if short_name != name:
-                    short_entry = cd_data.get(short_name, {})
-                    if short_entry.get("paused") or short_entry.get("account_paused"):
-                        continue
-                next_time_str = entry.get("next_run_time", "")
-                if not next_time_str:
-                    continue
-                try:
-                    cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
-                    if cd_next > now and (next_run is None or cd_next < next_run):
-                        next_run = cd_next
-                except Exception:
-                    pass
+            earliest = cooldown_manager.find_earliest_cooldown(cd_data)
+            if earliest and earliest > now:
+                next_run = earliest
 
         if next_run:
             wake_time = next_run - datetime.timedelta(minutes=5)
@@ -66,28 +52,9 @@ def update_cooldown_wake_timer(app):
         return
     try:
         now = datetime.datetime.now()
-        earliest_next = None
-        # 直接遍历冷却数据，避免 key 不一致
         cd_data = cooldown_manager._load_data()
-        for name, entry in cd_data.items():
-            if entry.get("paused") or entry.get("account_paused"):
-                continue
-            short_name = name.split(":")[-1] if ":" in name else name
-            if short_name != name:
-                short_entry = cd_data.get(short_name, {})
-                if short_entry.get("paused") or short_entry.get("account_paused"):
-                    continue
-            next_time_str = entry.get("next_run_time", "")
-            if not next_time_str:
-                continue
-            try:
-                cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
-                if cd_next > now and (earliest_next is None or cd_next < earliest_next):
-                    earliest_next = cd_next
-            except Exception:
-                pass
-
-        if earliest_next:
+        earliest_next = cooldown_manager.find_earliest_cooldown(cd_data)
+        if earliest_next and earliest_next > now:
             wake_time = earliest_next - datetime.timedelta(minutes=5)
             min_gap = datetime.timedelta(seconds=60)
             if wake_time > now + min_gap:

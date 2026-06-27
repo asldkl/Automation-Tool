@@ -157,22 +157,24 @@ def check_any_account_ready(app):
         return False
     ready_accounts = []
     cd_data = cooldown_manager._load_data()
+    now = datetime.datetime.now()
     for img_path in app.qq_account_images:
-        file_name = os.path.basename(img_path)
-        short_name = file_name.split(":")[-1] if ":" in file_name else file_name
-        # 优先用短名称（暂停状态通常记录在短名称上）
-        if short_name in cd_data:
-            cd_name = short_name
-        elif img_path in cd_data:
-            cd_name = img_path
-        else:
-            cd_name = file_name
-        # 跳过暂停的账号
-        if cooldown_manager.is_account_paused(cd_name):
+        cd_name = cooldown_manager.get_cooldown_key(img_path)
+        # 直接用 cd_data 判断暂停状态（避免额外锁获取）
+        entry = cd_data.get(cd_name, {})
+        if entry.get("account_paused") or entry.get("paused"):
             continue
-        cooling, next_time = cooldown_manager.is_cooling_down(cd_name)
-        if not cooling:
+        # 检查冷却状态
+        next_run_str = entry.get("next_run_time", "")
+        if not next_run_str:
             ready_accounts.append(cd_name)
+            continue
+        try:
+            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+            if now >= next_run:
+                ready_accounts.append(cd_name)
+        except Exception:
+            pass
     # 只在状态变化时打印日志，避免重复输出
     ready_key = tuple(sorted(ready_accounts))
     if ready_accounts:

@@ -26,24 +26,10 @@ def _account_key_from_path(path):
     return os.path.splitext(name)[0]
 
 
-def _get_cooldown_key_from_data(img_path, cd_data):
-    """从已加载的冷却数据中获取 key（避免重复读磁盘）"""
-    basename = os.path.basename(img_path)
-    short_name = basename.split(":")[-1] if ":" in basename else basename
-    if short_name in cd_data:
-        return short_name
-    if img_path in cd_data:
-        return img_path
-    if basename in cd_data:
-        return basename
-    return short_name
-
-
+# 统一使用 cooldown_manager.get_cooldown_key
 def _get_cooldown_key(img_path):
     """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
-    import cooldown_manager
-    cd_data = cooldown_manager._load_data()
-    return _get_cooldown_key_from_data(img_path, cd_data)
+    return cooldown_manager.get_cooldown_key(img_path)
 
 
 # ---------- 账号持久化 ----------
@@ -378,12 +364,10 @@ def refresh_account_tree(app):
     for item in app.account_tree.get_children():
         app.account_tree.delete(item)
     all_cooldowns = cooldown_manager.get_all_cooldowns()
-    # 预加载冷却原始数据（供 _get_cooldown_key 使用，避免重复读磁盘）
-    _cd_data_cache = cooldown_manager._load_data()
     seq = 0
     for i, p in enumerate(app.qq_account_images):
         name = _account_key_from_path(p)
-        cd_name = _get_cooldown_key_from_data(p, _cd_data_cache)
+        cd_name = cooldown_manager.get_cooldown_key(p)
         note_data = app._account_notes.get(name, {})
         if isinstance(note_data, dict) and note_data.get("account"):
             display_name = note_data["account"]
@@ -406,6 +390,7 @@ def refresh_account_tree(app):
         elif cd_name in all_cooldowns:
             cd_info = all_cooldowns[cd_name]
             paused = cd_info.get("paused", False)
+            game_failed = cd_info.get("game_failed", False)
             next_time = cd_info.get("next_run_time", "")
             if paused:
                 remaining = cd_info.get("remaining_seconds", 0)
@@ -413,6 +398,12 @@ def refresh_account_tree(app):
                 minutes = int((remaining % 3600) // 60)
                 next_run_str = f"冷却暂停 {hours}h {minutes}m"
                 tag = "paused"
+            elif game_failed:
+                remaining = cd_info.get("remaining_seconds", 0)
+                hours = int(remaining // 3600)
+                minutes = int((remaining % 3600) // 60)
+                next_run_str = f"游戏失败 {hours}h {minutes}m"
+                tag = "game_failed"
             elif next_time:
                 from datetime import datetime
                 try:

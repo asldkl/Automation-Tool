@@ -126,6 +126,7 @@ sc start interception
 | `cooldown_delay_minutes` | 账号间隔时间（0-5分钟） |
 | `cooldown_run_immediately` | 冷却完立即运行 |
 | `cooldown_scheduled_task_enabled` | 冷却到期定时任务兜底（默认开启） |
+| `restart_on_interception_fail` | Interception 驱动失败时自动重启电脑（默认关闭） |
 | `cooldown_email_enabled` | 冷却到期邮件提醒 |
 | `enable_email_currency` | 启用自动领取邮箱货币 |
 | `post_run_shutdown_delay` | 运行完成后延迟关机（0-5分钟，0=不关机） |
@@ -153,7 +154,7 @@ sc start interception
 >
 > **v1.3.0 更新**：移除凭据加密模块、代码质量优化（冷却线程安全锁、模板LRU缓存、OCR自动恢复、坐标边界校验）、降价逻辑优化、设置明文读写、新增冷却到期定时任务兜底机制（Windows 任务计划程序 + 信号文件双重保障）、WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，减少等待时间
 >
-> **v1.3.1 更新**：修复冷却 key 匹配 bug（`_get_cooldown_key` 统一短名称优先）、冷却触发时额外检查 10 分钟内到期账号、暂停账号正确跳过、定时任务静默执行（VBScript 无窗口）、删除未使用图片资源、模板上传向导改用截取方式、全局 OCR 窗口可调节、自定义冷却支持分钟、所有窗口大小记忆、隐藏屏幕唤醒鼠标移动、修复停止按钮关闭子窗口问题
+> **v1.3.1 更新**：删除 PyDirectInput 依赖（统一使用 Interception 驱动）、Interception 失败时自动重启电脑选项、右键运行单个账号功能、游戏内操作失败自动暂停 1 天冷却、冷却定时任务兜底机制完善、代码模块化重构（`get_cooldown_key` 提取到 `cooldown_manager`、`_ensure_game_focused` 统一、`scheduler.py` 简化）、OCR 引擎异步初始化加速启动、Treeview 列宽优化
 >
 > **v1.3.2 更新**：代码审查全面修复 — save_settings 原子写入防崩溃丢设置、cooldown_manager 线程安全锁修复、RedirectText 后台线程安全、_last_account_error 跨账号清除、_launch_game 区分中断和失败、delete_account 清理冷却数据、move_up/down 持久化排序、编辑账号迁移冷却数据、模板缓存和 OCR 失败跟踪加锁、登录后验证 login_again、关闭游戏前先激活窗口、右键菜单标签动态查找
 >

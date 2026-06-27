@@ -166,6 +166,7 @@ DEFAULT_SETTINGS = {
     "cooldown_delay_minutes": 1,      # 账号间隔时间（0-5分钟，默认1）
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
+    "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
     "window_geometry": "",                   # 主窗口大小和位置（自动保存/恢复）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
