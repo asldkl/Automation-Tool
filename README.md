@@ -142,24 +142,6 @@ sc start interception
 | `asset_region` | 资产识别屏幕区域 [x, y, w, h] |
 | `asset_ocr_confidence` | 资产识别置信度 |
 
-> **v1.1.2 更新**：OCR 全面增强（降级开关、置信度降至 0.55、预加载引擎、调试日志、日志区分）、全局文本配置完善（新增 4 条目、状态同步、移除 global_text_enabled 限制）、WeGame 登录改 smart 模式、开发者测试窗口新增 OCR 测试
->
-> **v1.2.1 更新**：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护、SMTP 不加密（防止密钥变化导致发送失败）、冷却到期优先运行+10分钟等待、删除 QQ 无效设置、售卖物品元数据原子写入+备份保护
->
-> **v1.2.0 更新**：WeGame 直接登录（Interception 驱动级键盘输入，绕开验证码）、代码重构优化（合并重复函数、缓存设置读取、消除冗余颜色转换）、截图对象内存泄漏修复、线程安全改进
->
-> **v1.1.5 更新**：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 账号限制）、图像识别点击登录界面按钮、pyautogui.typewrite 逐键输入、密码必填校验、开发者测试按钮更新
->
-> **v1.1.4 更新**：UI 简化（删除电源管理页签和定时执行功能）、线程安全、冷却缓存优化、核心模块单元测试
->
-> **v1.3.0 更新**：移除凭据加密模块、代码质量优化（冷却线程安全锁、模板LRU缓存、OCR自动恢复、坐标边界校验）、降价逻辑优化、设置明文读写、新增冷却到期定时任务兜底机制（Windows 任务计划程序 + 信号文件双重保障）、WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，减少等待时间
->
-> **v1.3.1 更新**：删除 PyDirectInput 依赖（统一使用 Interception 驱动）、Interception 失败时自动重启电脑选项、右键运行单个账号功能、游戏内操作失败自动暂停 1 天冷却、冷却定时任务兜底机制完善、代码模块化重构（`get_cooldown_key` 提取到 `cooldown_manager`、`_ensure_game_focused` 统一、`scheduler.py` 简化）、OCR 引擎异步初始化加速启动、Treeview 列宽优化
->
-> **v1.3.2 更新**：代码审查全面修复 — save_settings 原子写入防崩溃丢设置、cooldown_manager 线程安全锁修复、RedirectText 后台线程安全、_last_account_error 跨账号清除、_launch_game 区分中断和失败、delete_account 清理冷却数据、move_up/down 持久化排序、编辑账号迁移冷却数据、模板缓存和 OCR 失败跟踪加锁、登录后验证 login_again、关闭游戏前先激活窗口、右键菜单标签动态查找
->
-> **v1.1.3 更新**：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化
-
 ## 技术栈
 
 Tkinter / OpenCV / PyAutoGUI / psutil / pywin32 / pystray+Pillow / RapidOCR / PyInstaller / Nuitka
