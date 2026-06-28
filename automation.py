@@ -311,8 +311,6 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
                     time.sleep(0.5)
                 pyautogui.press("esc")
                 time.sleep(0.5)
-            pyautogui.press("esc")
-            time.sleep(0.5)
             print("✅ 邮箱货币领取流程完成")
         else:
             print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")

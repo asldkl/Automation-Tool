@@ -765,7 +765,13 @@ class App:
         automation_runner.stop_run(self)
 
     def update_ui(self, step_increment=False, account_text=None, account_file=None):
-        automation_runner.update_ui(self, step_increment, account_text, account_file)
+        if step_increment:
+            self.current_step += 1
+            self.progress['value'] = self.current_step
+        if account_text:
+            self.account_label.config(text=account_text)
+        if account_file:
+            self.current_account_file_label.config(text=account_file)
 
     def set_operation(self, text):
         automation_runner.set_operation(self, text)

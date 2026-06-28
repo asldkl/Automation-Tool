@@ -25,16 +25,11 @@ def start_cooldown_watcher(app):
         cd_hours = app.settings.get("cooldown_hours", 8)
         all_cd = cooldown_manager.get_all_cooldowns()
         for acc_idx, img_path in enumerate(app.qq_account_images):
-            file_name = os.path.basename(img_path)
-            # 用两种 key 检查，避免误判
-            short_name = file_name.split(":")[-1] if ":" in file_name else file_name
-            has_record = file_name in all_cd or short_name in all_cd or img_path in all_cd
-            if has_record:
+            cd_key = cooldown_manager.get_cooldown_key(img_path)
+            if cd_key in all_cd:
                 continue
-            cooling, _ = cooldown_manager.is_cooling_down(file_name)
+            cooling, _ = cooldown_manager.is_cooling_down(cd_key)
             if not cooling:
-                # 用 _get_cooldown_key 的逻辑获取正确的 key
-                cd_key = short_name if short_name in all_cd else file_name
                 cooldown_manager.record_run(cd_key, cd_hours)
                 print(f"📝 首次启用冷却监听，为 {cd_key} 记录冷却时间")
 
@@ -98,11 +93,24 @@ def cooldown_watcher_loop(app):
                             ready_list = []
                             cd_data = cooldown_manager._load_data()
                             for img_path in app.qq_account_images:
-                                fname = os.path.basename(img_path)
-                                cd_name = img_path if img_path in cd_data else fname
-                                cooling, _ = cooldown_manager.is_cooling_down(cd_name)
-                                if not cooling:
+                                cd_name = cooldown_manager.get_cooldown_key(img_path)
+                                # 用多种 key 格式查找
+                                entry = cd_data.get(cd_name) or cd_data.get(img_path) or cd_data.get(os.path.basename(img_path))
+                                if entry is None:
                                     ready_list.append(cd_name)
+                                    continue
+                                if entry.get("paused") or entry.get("account_paused"):
+                                    continue
+                                next_run_str = entry.get("next_run_time", "")
+                                if not next_run_str:
+                                    ready_list.append(cd_name)
+                                    continue
+                                try:
+                                    next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                                    if datetime.datetime.now() >= next_run:
+                                        ready_list.append(cd_name)
+                                except Exception:
+                                    pass
                             if ready_list:
                                 email_notifier.send_cooldown_ready_email(app, ready_list)
 
@@ -156,16 +164,24 @@ def check_any_account_ready(app):
     if not app.settings.get("cooldown_run_immediately", False):
         return False
     ready_accounts = []
-    cd_data = cooldown_manager._load_data()
+    all_cooldowns = cooldown_manager.get_all_cooldowns()
     now = datetime.datetime.now()
     for img_path in app.qq_account_images:
         cd_name = cooldown_manager.get_cooldown_key(img_path)
-        # 直接用 cd_data 判断暂停状态（避免额外锁获取）
-        entry = cd_data.get(cd_name, {})
-        if entry.get("account_paused") or entry.get("paused"):
+        # 用多种 key 格式查找冷却记录
+        info = all_cooldowns.get(cd_name)
+        if info is None:
+            info = all_cooldowns.get(img_path)
+        if info is None:
+            info = all_cooldowns.get(os.path.basename(img_path))
+        if info is None:
+            # 真正没有冷却记录，视为就绪
+            ready_accounts.append(cd_name)
+            continue
+        if info.get("paused") or info.get("account_paused"):
             continue
         # 检查冷却状态
-        next_run_str = entry.get("next_run_time", "")
+        next_run_str = info.get("next_run_time", "")
         if not next_run_str:
             ready_accounts.append(cd_name)
             continue

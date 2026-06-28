@@ -85,23 +85,52 @@ def _recognize_asset(app, asset_region):
             return None
 
         all_text = "".join(item[1] for item in result)
-        # 提取数字+小数点+单位(KMB)，过滤"现有资产"等无效文字
-        match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
+        # 提取数字 + 单位(KMB)
+        match = re.search(r'([\d,.]+)\s*([KMBkmb])', all_text)
         if match:
-            number = match.group(1)
+            raw_number = match.group(1)
             suffix = match.group(2).upper()
-            return f"{number}{suffix}"
+            # OCR 可能把逗号识别成小数点（如 66.271K 实际是 66,271K）
+            # K 单位不应有小数点，M/B 单位可以
+            if suffix == "K":
+                raw_number = raw_number.replace(".", "").replace(",", "")
+            else:
+                raw_number = raw_number.replace(",", "")
+            return _format_asset_display(raw_number, suffix)
         # 降级：清理非数字/KMB字符后重试
-        cleaned = re.sub(r'[^0-9.KMBkmb]', '', all_text)
-        match2 = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', cleaned)
+        cleaned = re.sub(r'[^0-9.,KMBkmb]', '', all_text)
+        match2 = re.search(r'([\d,.]+)\s*([KMBkmb])', cleaned)
         if match2:
-            number = match2.group(1)
+            raw_number = match2.group(1)
             suffix = match2.group(2).upper()
-            return f"{number}{suffix}"
+            if suffix == "K":
+                raw_number = raw_number.replace(".", "").replace(",", "")
+            else:
+                raw_number = raw_number.replace(",", "")
+            return _format_asset_display(raw_number, suffix)
         return None
     except Exception as e:
         print(f"⚠️ 资产识别失败: {e}")
         return None
+
+
+def _format_asset_display(raw_number, suffix):
+    """格式化资产显示：K 用逗号分隔，M/B 用小数点"""
+    try:
+        value = float(raw_number)
+        if suffix == "K":
+            # K 单位：用逗号分隔显示，如 78,394K
+            return f"{int(value):,}K"
+        elif suffix == "M":
+            # M 单位：保留 2 位小数，如 1.23M
+            return f"{value:.2f}M"
+        elif suffix == "B":
+            # B 单位：保留 2 位小数，如 1.50B
+            return f"{value:.2f}B"
+        else:
+            return f"{raw_number}{suffix}"
+    except ValueError:
+        return f"{raw_number}{suffix}"
 
 
 def start_run(app):
@@ -157,8 +186,21 @@ def start_single_account_run(app, img_path):
     if app.running:
         return
     file_name = _get_cooldown_key(img_path)
-    # 记录该账号是否原本暂停
+    # 检查是否暂停
     was_paused = cooldown_manager.is_account_paused(file_name)
+    # 检查是否在冷却中
+    cd_data = cooldown_manager._load_data()
+    cd_entry = cd_data.get(file_name) or cd_data.get(img_path) or cd_data.get(os.path.basename(img_path))
+    if cd_entry and not cd_entry.get("account_paused") and not cd_entry.get("paused"):
+        next_run_str = cd_entry.get("next_run_time", "")
+        if next_run_str:
+            try:
+                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                if datetime.datetime.now() < next_run:
+                    messagebox.showwarning("提示", f"账号 {file_name} 正在冷却中，无法运行。", parent=app.root)
+                    return
+            except Exception:
+                pass
     app._single_account_mode = True
     app._single_account_was_paused = was_paused
     app._single_account_img_path = img_path
@@ -211,38 +253,63 @@ def _run_single_account_main(app, img_path):
         account_failed = False
         account_interrupted = False
 
-        # 步骤1：登录
+        # 步骤1：登录 WeGame
         if not _login_account(app, file_name, 0, total, processed_accounts):
             account_failed = True
 
-        # 步骤2：启动游戏
+        # 步骤2：找到三角洲图标并启动游戏（不执行游戏内操作）
         if not account_failed and not app._stop_event.is_set():
-            launch_result = _launch_game(app)
-            if launch_result == "relogin":
-                print("🔄 重新登录...")
-                if not _login_account(app, file_name, 0, total, processed_accounts):
+            print("🔍 查找三角洲游戏图标...")
+            if not utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=10):
+                print("❌ 未找到三角洲游戏图标")
+                account_failed = True
+            else:
+                time.sleep(2)
+                # 点击启动按钮
+                if not utils.find_and_click_smart(config.DELTA_LAUNCH_BTN, timeout=10):
+                    print("❌ 未找到启动按钮")
                     account_failed = True
                 else:
-                    launch_result = _launch_game(app)
-                    if launch_result is False or launch_result == "relogin":
-                        account_failed = True
-            elif launch_result is False:
-                account_failed = True
+                    print("✅ 游戏启动中，等待进入大厅...")
+                    # 等待游戏窗口出现
+                    game_loaded = False
+                    for _ in range(30):
+                        if app._stop_event.is_set():
+                            break
+                        for title in DELTA_TITLES:
+                            if utils.activate_window_by_title(title, partial_match=True,
+                                                               exclude_titles=["WeGame", "腾讯"]):
+                                game_loaded = True
+                                break
+                        if game_loaded:
+                            break
+                        time.sleep(2)
 
-        # 步骤3：登录成功后进入游戏，按 Tab，然后结束（不退出游戏）
-        if not account_failed and not app._stop_event.is_set():
-            print("✅ 登录成功，进入游戏...")
-            # 等待游戏窗口加载
-            time.sleep(8)
-            automation._ensure_game_focused()
-            print("✅ 游戏已就绪，用户可自行操作。程序不会退出游戏。")
-            processed_accounts.append(f"{file_name} (已登录)")
+                    if game_loaded:
+                        time.sleep(5)  # 等待游戏界面加载
+                        automation._ensure_game_focused()
+                        # 按 Tab 进入大厅
+                        print("⌨️ 按 Tab 进入大厅...")
+                        pyautogui.press("Tab")
+                        time.sleep(1)
+                        print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
+                        processed_accounts.append(f"{file_name} (已登录)")
+                    else:
+                        print("❌ 未检测到游戏窗口")
+                        account_failed = True
 
         if app._stop_event.is_set():
             account_interrupted = True
 
         if account_failed:
             processed_accounts.append(f"{file_name} (登录失败)")
+        elif not account_interrupted:
+            # 单账号运行成功，记录冷却
+            if app.settings.get("enable_cooldown", False):
+                cd_hours = app.settings.get("cooldown_hours", 8)
+                cooldown_manager.record_run(file_name, cd_hours)
+                print(f"✅ 账号 {file_name} 单账号运行完成，记录冷却 {cd_hours} 小时")
+            processed_accounts.append(f"{file_name} (成功)")
 
     except Exception as e:
         print(f"❌ 运行出错: {e}")
@@ -525,10 +592,6 @@ def _launch_game(app):
         utils.kill_process(config.WEGAME_PROCESS)
         return False
 
-    # 资产识别
-    _recognize_and_store_asset(app)
-    time.sleep(2)  # 资产识别缓冲
-
     launch_found = False
     for retry in range(3):
         if app._stop_event.is_set():
@@ -584,6 +647,9 @@ def _launch_game(app):
         print(f"❌ {msg}，跳过此账号")
         app._last_account_error = msg
         return False
+
+    # 游戏操作完成后执行资产识别（此时资产数值已更新）
+    _recognize_and_store_asset(app)
     return True
 
 
@@ -832,9 +898,9 @@ def _run_single_account(app, img_path, total, processed_accounts):
         elif launch_result == "game_failed":
             # 游戏内操作失败（识别问题），设置1天冷却，用户自行处理
             print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
+            app.run_stats["fail"] += 1
             cooldown_manager.record_run(file_name, 24)  # 24小时冷却
             cooldown_manager.set_account_paused(file_name, False)
-            # 标记为游戏失败
             cooldown_manager.mark_game_failed(file_name)
             processed_accounts.append(f"{file_name} (游戏失败-1天冷却)")
             server_client.update_account_status(app, file_name, "failed")
@@ -918,20 +984,27 @@ def run_script_main(app):
                 server_client.update_account_status(app, file_name, "idle")
                 continue
 
-            # 冷却检查：冷却到期/定时触发可跳过冷却；开机启动始终遵守冷却
-            skip_cooldown = app._ignore_cooldown_this_run and not app._is_boot_startup
-            if app.settings.get("enable_cooldown", False) and not skip_cooldown:
-                cooling, next_time = cooldown_manager.is_cooling_down(file_name)
-                if cooling:
-                    print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
-                    processed_accounts.append(f"{file_name} (冷却中)")
-                    server_client.update_account_status(app, file_name, "cooling")
-                    continue
-            elif skip_cooldown:
-                print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
+            # 冷却检查：无论是否由冷却触发，都要检查每个账号的冷却状态
+            if app.settings.get("enable_cooldown", False):
+                # 用冷却数据直接判断，避免 key 不匹配导致误判
+                cd_data = cooldown_manager._load_data()
+                # 尝试多种 key 格式查找冷却记录
+                cd_entry = cd_data.get(file_name) or cd_data.get(img_path) or cd_data.get(os.path.basename(img_path))
+                if cd_entry and not cd_entry.get("account_paused") and not cd_entry.get("paused"):
+                    next_run_str = cd_entry.get("next_run_time", "")
+                    if next_run_str:
+                        try:
+                            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                            if datetime.datetime.now() < next_run:
+                                print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_run_str}")
+                                processed_accounts.append(f"{file_name} (冷却中)")
+                                server_client.update_account_status(app, file_name, "cooling")
+                                continue
+                        except Exception:
+                            pass
 
             acc_text = f"第 {i+1}/{total} 个账号"
-            app.root.after(0, update_ui, app, False, acc_text, file_name)
+            app.root.after(0, app.update_ui, False, acc_text, file_name)
             print(f"\n{'='*40}")
             print(f"    {acc_text}  -  {file_name}")
             print(f"{'='*40}")
@@ -966,6 +1039,7 @@ def run_script_main(app):
                 elif launch_result == "game_failed":
                     # 游戏内操作失败，设置1天冷却
                     print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
+                    app.run_stats["fail"] += 1
                     cooldown_manager.record_run(file_name, 24)
                     cooldown_manager.mark_game_failed(file_name)
                     processed_accounts.append(f"{file_name} (游戏失败-1天冷却)")
@@ -1015,7 +1089,7 @@ def game_operations_wrapper(app):
     """执行游戏内操作，返回 True=成功，False=失败"""
     result = automation.game_operations(
         app.settings, app._stop_event, lambda text: set_operation(app, text),
-        update_ui_callback=lambda: app.root.after(0, update_ui, app, True))
+        update_ui_callback=lambda: app.root.after(0, app.update_ui, True))
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)
     if isinstance(result, tuple):
         success, extra = result
@@ -1059,12 +1133,6 @@ def on_finish(app):
 
     # 设置下一次唤醒定时器
     app._set_next_wake_timer()
-
-    # 调度器健康检查：如果调度器线程已退出，重新启动
-    if app.settings.get("auto_start", False):
-        if not app._schedule_thread or not app._schedule_thread.is_alive():
-            print("⚠️ 检测到调度器线程已退出，正在重新启动...")
-            scheduler.start_scheduler(app)
 
     # 冷却监听健康检查：确保冷却到期监听线程正常运行
     if app.settings.get("cooldown_run_immediately", False):

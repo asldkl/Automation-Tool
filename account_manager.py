@@ -376,6 +376,14 @@ def refresh_account_tree(app):
         seq += 1
         display_name = f"{seq}. {display_name}"
         asset = app._account_assets.get(name, "0")
+        # 统一显示为 M 格式（如 78,394K → 78.39M）
+        if asset and asset != "0":
+            try:
+                asset_num = utils.parse_asset_value(asset)
+                if asset_num > 0:
+                    asset = utils.format_asset_num(asset_num)
+            except Exception:
+                pass
         # 备注信息（取单行备注字段）
         note_text = ""
         if isinstance(note_data, dict):
@@ -1268,17 +1276,25 @@ def show_asset_monitor(app):
     tree_frame = ttk.Frame(status_frame)
     tree_frame.pack(fill=tk.BOTH, expand=True)
 
-    columns = ("account", "asset")
+    columns = ("account", "asset", "ratio", "coin_value")
     asset_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6)
     asset_tree.heading("account", text="账号名称")
     asset_tree.heading("asset", text="现有资产")
+    asset_tree.heading("ratio", text="转换比例")
+    asset_tree.heading("coin_value", text="纯币价值")
     asset_tree.column("account", width=80, minwidth=50)
     asset_tree.column("asset", width=50, minwidth=30, anchor=tk.CENTER)
+    asset_tree.column("ratio", width=50, minwidth=30, anchor=tk.CENTER)
+    asset_tree.column("coin_value", width=60, minwidth=40, anchor=tk.CENTER)
 
     scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=asset_tree.yview)
     asset_tree.configure(yscrollcommand=scrollbar.set)
     asset_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+    # 每个账号的转换比例（默认45）
+    settings = config.load_settings()
+    account_ratios = settings.get("asset_conversion_ratios", {})
 
     def _refresh_status():
         for item in asset_tree.get_children():
@@ -1292,9 +1308,76 @@ def show_asset_monitor(app):
                 display_name = name
             display_name = f"{i+1}. {display_name}"
             asset_value = app._account_assets.get(name, "0")
-            asset_tree.insert("", tk.END, values=(display_name, asset_value))
+            ratio = account_ratios.get(name, 45)
+            # 计算纯币价值：现有资产(万) / 转换比例
+            # 资产单位是K，1万 = 10K，所以先 /10000 转换成万
+            try:
+                asset_num = utils.parse_asset_value(asset_value)
+                asset_wan = asset_num / 10000
+                coin_val = asset_wan / ratio if ratio > 0 else 0
+                coin_str = f"{coin_val:.2f}"
+            except Exception:
+                coin_str = "-"
+            asset_tree.insert("", tk.END, values=(display_name, asset_value, ratio, coin_str))
 
-    _refresh_status()
+    # 双击转换比例列直接在单元格上编辑
+    def _on_ratio_double_click(event):
+        col = asset_tree.identify_column(event.x)
+        if col != "#3":  # 只响应"转换比例"列
+            return
+        row_id = asset_tree.identify_row(event.y)
+        if not row_id:
+            return
+        idx = asset_tree.index(row_id)
+        if idx >= len(app.qq_account_images):
+            return
+
+        # 获取单元格位置
+        bbox = asset_tree.bbox(row_id, column="#3")
+        if not bbox:
+            return
+        x, y, w, h = bbox
+
+        # 获取当前值
+        name = _account_key_from_path(app.qq_account_images[idx])
+        old_ratio = account_ratios.get(name, 45)
+
+        # 在单元格上创建输入框
+        entry = tk.Entry(asset_tree, font=('Microsoft YaHei UI', 9), justify='center')
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.insert(0, str(old_ratio))
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        def _commit(event=None):
+            try:
+                new_ratio = int(entry.get())
+                if new_ratio < 1:
+                    new_ratio = 1
+            except ValueError:
+                new_ratio = old_ratio
+            account_ratios[name] = new_ratio
+            settings["asset_conversion_ratios"] = account_ratios
+            config.save_settings(settings)
+            entry.destroy()
+            _refresh_status()
+
+        def _cancel(event=None):
+            entry.destroy()
+
+        entry.bind("<Return>", _commit)
+        entry.bind("<KP_Enter>", _commit)
+        entry.bind("<Escape>", _cancel)
+        entry.bind("<FocusOut>", _commit)
+
+    asset_tree.bind("<Double-1>", _on_ratio_double_click)
+
+    # 转换比例说明
+    ttk.Label(status_frame, text="提示：双击「转换比例」列可直接修改比例，回车确认，Esc 取消",
+              font=('Microsoft YaHei UI', 8), foreground='#999').pack(anchor=tk.W, pady=(4, 0))
+
+    # 延迟加载资产数据，避免阻塞窗口打开
+    win.after(50, _refresh_status)
 
     # 注册刷新回调，供资产记录编辑后自动更新（上半部分+下半部分统计）
     def _refresh_all():
