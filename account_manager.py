@@ -11,25 +11,22 @@ import config
 import utils
 import cooldown_manager
 import asset_db
-import pyautogui
-import cv2
-import numpy as np
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
 
 
 def _account_key_from_path(path):
-    """从账号路径提取账号标识（去掉 account: 前缀和 .png 后缀）"""
+    """从账号路径提取账号标识（去掉 account: 前缀和扩展名）"""
     name = os.path.basename(path)
-    if name.startswith("account:"):
-        return name[len("account:"):]
+    if ":" in name:
+        name = name.split(":", 1)[1]
     return os.path.splitext(name)[0]
 
 
-# 统一使用 cooldown_manager.get_cooldown_key
+# 统一使用 cooldown_manager.normalize_key
 def _get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
-    return cooldown_manager.get_cooldown_key(img_path)
+    """获取冷却数据中使用的 key（统一短名称格式）"""
+    return cooldown_manager.normalize_key(img_path)
 
 
 # ---------- 账号持久化 ----------
@@ -70,7 +67,7 @@ def load_accounts(app):
             app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
         # 刷新账号列表
         refresh_account_tree(app)
-        print(f"✅ 已加载 {len(app.qq_account_images)} 个 QQ 账号")
+        print(f"✅ 已加载 {len(app.qq_account_images)} 个账号")
     except Exception as e:
         print(f"⚠️ 加载历史账号失败：{e}")
 
@@ -277,17 +274,12 @@ def delete_account(app):
         idx = _tree_idx_to_account_idx(app, sel[0])
         img_path = app.qq_account_images[idx]
         account_name = _account_key_from_path(img_path)
-        # 同时用两种 key 清理冷却数据
-        cd_key = _get_cooldown_key(img_path)
         del app.qq_account_images[idx]
-        # 清理该账号的资产和备注数据
+        # 清理该账号的所有数据
         app._account_assets.pop(account_name, None)
         app._asset_history.pop(account_name, None)
         app._account_notes.pop(account_name, None)
-        # 清理冷却数据
         cooldown_manager.reset_cooldown(account_name)
-        if cd_key != account_name:
-            cooldown_manager.reset_cooldown(cd_key)
         # 清理 SQLite 中的资产记录
         try:
             asset_db.delete_account_records(account_name)
@@ -367,7 +359,6 @@ def refresh_account_tree(app):
     seq = 0
     for i, p in enumerate(app.qq_account_images):
         name = _account_key_from_path(p)
-        cd_name = cooldown_manager.get_cooldown_key(p)
         note_data = app._account_notes.get(name, {})
         if isinstance(note_data, dict) and note_data.get("account"):
             display_name = note_data["account"]
@@ -395,8 +386,8 @@ def refresh_account_tree(app):
         if cooldown_manager.is_account_paused(name):
             next_run_str = "已暂停"
             tag = "paused"
-        elif cd_name in all_cooldowns:
-            cd_info = all_cooldowns[cd_name]
+        elif name in all_cooldowns:
+            cd_info = all_cooldowns[name]
             paused = cd_info.get("paused", False)
             game_failed = cd_info.get("game_failed", False)
             next_time = cd_info.get("next_run_time", "")
@@ -635,226 +626,6 @@ def start_periodic_tree_refresh(app):
     """启动账号列表定时刷新（每60秒）"""
     refresh_account_tree(app)
     app._tree_refresh_timer = app.root.after(60000, lambda: start_periodic_tree_refresh(app))
-
-
-def test_recognition(app):
-    sel = app.account_tree.selection()
-    if not sel:
-        messagebox.showwarning("提示", "请先选中一个账号")
-        return
-    if "separator" in app.account_tree.item(sel[0], "tags"):
-        return
-    idx = _tree_idx_to_account_idx(app, sel[0])
-    if idx >= len(app.qq_account_images):
-        return
-    img_path = app.qq_account_images[idx]
-    if not os.path.exists(img_path):
-        messagebox.showerror("错误", "截图文件不存在")
-        return
-    try:
-        import cv2
-        import numpy as np
-        screen = pyautogui.screenshot()
-        gray = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2GRAY)
-        screen.close()
-        template = cv2.imread(img_path, 0)
-        if template is None:
-            messagebox.showerror("错误", "无法读取截图文件")
-            return
-
-        # 标准灰度匹配
-        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-
-        # 边缘匹配（对头像轮廓、文字笔画、数字形状更敏感）
-        screen_edges = cv2.Canny(gray, 50, 150)
-        template_edges = cv2.Canny(template, 50, 150)
-        res_edge = cv2.matchTemplate(screen_edges, template_edges, cv2.TM_CCOEFF_NORMED)
-        _, edge_val, _, edge_loc = cv2.minMaxLoc(res_edge)
-
-        # 复合多尺度匹配
-        matched_ms, max_val_ms, max_loc_ms, best_scale, (ms_h, ms_w) = \
-            utils._match_template_multiscale(gray, template, 0.0)
-
-        conf = int(max_val * 100)
-        conf_edge = int(edge_val * 100)
-        conf_ms = int(max_val_ms * 100)
-        threshold = int(config.CONFIDENCE * 100)
-
-        if max_val >= config.CONFIDENCE:
-            status = "✅ 灰度匹配成功"
-        elif edge_val >= config.CONFIDENCE:
-            status = "✅ 边缘匹配成功（头像/文字/数字特征）"
-        elif max_val_ms >= config.CONFIDENCE:
-            status = f"✅ 复合多尺度匹配成功（缩放 {best_scale:.2f}x）"
-        else:
-            status = "❌ 匹配度不足，建议裁剪截图保留头像+名称+QQ号区域"
-
-        scale_info = f"（缩放 {best_scale:.2f}x）" if best_scale != 1.0 else "（原始比例）"
-        messagebox.showinfo(
-            "测试结果",
-            f"截图：{os.path.basename(img_path)}\n"
-            f"模板尺寸：{template.shape[1]}x{template.shape[0]}\n\n"
-            f"灰度匹配度：{conf}% (阈值：{threshold}%)\n"
-            f"边缘匹配度：{conf_edge}% （头像轮廓/文字/数字特征）\n"
-            f"复合多尺度：{conf_ms}% {scale_info}\n\n"
-            f"结论：{status}\n\n"
-            f"提示：截图应包含头像+名称+QQ号，这些特征组合可帮助精确区分不同账号。"
-        )
-    except Exception as e:
-        messagebox.showerror("测试失败", f"识别过程出错：{e}")
-
-
-def crop_account_image(app):
-    """裁剪QQ账号截图，框选包含头像+名称+QQ号的区域以提高识别精度"""
-    sel = app.account_tree.selection()
-    if not sel:
-        messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
-        return
-    if "separator" in app.account_tree.item(sel[0], "tags"):
-        return
-    idx = _tree_idx_to_account_idx(app, sel[0])
-    if idx >= len(app.qq_account_images):
-        return
-    img_path = app.qq_account_images[idx]
-    if not os.path.exists(img_path):
-        messagebox.showerror("错误", "截图文件不存在", parent=app.root)
-        return
-
-    try:
-        from PIL import Image, ImageTk, ImageDraw
-        img = Image.open(img_path)
-    except Exception as e:
-        messagebox.showerror("错误", f"无法打开图片：{e}", parent=app.root)
-        return
-
-    # 创建裁剪窗口
-    crop_win = tk.Toplevel(app.root)
-    crop_win.title(f"裁剪截图 - {os.path.basename(img_path)}")
-    crop_win.resizable(True, True)
-    crop_win.transient(app.root)
-    crop_win.grab_set()
-
-    # 设置图标
-    utils.set_window_icon(crop_win)
-
-    # 说明文字
-    ttk.Label(crop_win, text="拖动鼠标框选包含头像+名称+QQ号的区域（三个特征组合可精确区分不同账号），然后点击「保存裁剪」",
-              font=('Microsoft YaHei UI', 9), foreground='#555').pack(padx=10, pady=(10, 5), anchor='w')
-
-    # 图片显示区域
-    canvas_frame = ttk.Frame(crop_win)
-    canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-    canvas = tk.Canvas(canvas_frame, bg='#2c3e50', cursor='crosshair')
-    canvas.pack(fill=tk.BOTH, expand=True)
-
-    # 显示图片
-    orig_w, orig_h = img.size
-    canvas.update_idletasks()
-    # 初始缩放以适应窗口
-    display_img = img.copy()
-    max_canvas_w, max_canvas_h = 800, 500
-    scale_x = max_canvas_w / orig_w if orig_w > max_canvas_w else 1.0
-    scale_y = max_canvas_h / orig_h if orig_h > max_canvas_h else 1.0
-    display_scale = min(scale_x, scale_y, 1.0)
-    disp_w = int(orig_w * display_scale)
-    disp_h = int(orig_h * display_scale)
-    if display_scale < 1.0:
-        display_img = img.resize((disp_w, disp_h), Image.LANCZOS)
-    else:
-        display_img = img.copy()
-
-    photo = ImageTk.PhotoImage(display_img)
-    canvas.create_image(0, 0, anchor='nw', image=photo)
-    canvas.config(scrollregion=canvas.bbox("all"))
-
-    # 裁剪状态
-    crop_state = {'start_x': 0, 'start_y': 0, 'rect_id': None, 'crop_rect': None}
-
-    def on_press(event):
-        crop_state['start_x'] = event.x
-        crop_state['start_y'] = event.y
-        if crop_state['rect_id']:
-            canvas.delete(crop_state['rect_id'])
-        crop_state['rect_id'] = canvas.create_rectangle(
-            event.x, event.y, event.x, event.y,
-            outline='#e74c3c', width=2, dash=(4, 4))
-
-    def on_drag(event):
-        if crop_state['rect_id']:
-            canvas.coords(crop_state['rect_id'],
-                          crop_state['start_x'], crop_state['start_y'],
-                          event.x, event.y)
-
-    def on_release(event):
-        x1 = min(crop_state['start_x'], event.x)
-        y1 = min(crop_state['start_y'], event.y)
-        x2 = max(crop_state['start_x'], event.x)
-        y2 = max(crop_state['start_y'], event.y)
-        # 转换回原始图片坐标
-        orig_x1 = int(x1 / display_scale)
-        orig_y1 = int(y1 / display_scale)
-        orig_x2 = int(x2 / display_scale)
-        orig_y2 = int(y2 / display_scale)
-        # 确保在图片范围内
-        orig_x1 = max(0, min(orig_x1, orig_w))
-        orig_y1 = max(0, min(orig_y1, orig_h))
-        orig_x2 = max(0, min(orig_x2, orig_w))
-        orig_y2 = max(0, min(orig_y2, orig_h))
-        if orig_x2 - orig_x1 > 5 and orig_y2 - orig_y1 > 5:
-            crop_state['crop_rect'] = (orig_x1, orig_y1, orig_x2, orig_y2)
-            size_text = f"选区：{orig_x2-orig_x1}x{orig_y2-orig_y1} 像素"
-            crop_info_label.config(text=size_text)
-        else:
-            crop_state['crop_rect'] = None
-            crop_info_label.config(text="选区过小，请重新框选")
-
-    canvas.bind('<ButtonPress-1>', on_press)
-    canvas.bind('<B1-Motion>', on_drag)
-    canvas.bind('<ButtonRelease-1>', on_release)
-
-    # 底部信息和按钮
-    bottom_frame = ttk.Frame(crop_win)
-    bottom_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-
-    crop_info_label = ttk.Label(bottom_frame, text=f"原始尺寸：{orig_w}x{orig_h}  |  请拖动鼠标框选区域",
-                                font=('Microsoft YaHei UI', 9), foreground='#7f8c8d')
-    crop_info_label.pack(side=tk.LEFT)
-
-    def save_crop():
-        if not crop_state['crop_rect']:
-            messagebox.showwarning("提示", "请先框选要裁剪的区域", parent=crop_win)
-            return
-        x1, y1, x2, y2 = crop_state['crop_rect']
-        cropped = img.crop((x1, y1, x2, y2))
-        try:
-            cropped.save(img_path)
-            app.qq_account_images[idx] = img_path  # 路径不变
-            print(f"✅ 截图已裁剪并保存：{img_path} ({x2-x1}x{y2-y1})")
-            messagebox.showinfo("完成",
-                f"截图已裁剪并保存！\n\n"
-                f"裁剪区域：{x2-x1}x{y2-y1} 像素\n"
-                f"建议：保留头像+名称+QQ号三个特征区域，组合可精确区分不同账号。\n"
-                f"可在右键菜单中使用「测试截图识别」验证效果。",
-                parent=crop_win)
-            crop_win.destroy()
-        except Exception as e:
-            messagebox.showerror("错误", f"保存失败：{e}", parent=crop_win)
-
-    def cancel_crop():
-        crop_win.destroy()
-
-    ttk.Button(bottom_frame, text="保存裁剪", command=save_crop, width=10).pack(side=tk.RIGHT, padx=(5, 0))
-    ttk.Button(bottom_frame, text="取消", command=cancel_crop, width=8).pack(side=tk.RIGHT)
-
-    # 居中窗口
-    crop_win.update_idletasks()
-    w = max(crop_win.winfo_width(), 850)
-    h = max(crop_win.winfo_height(), 600)
-    x = (crop_win.winfo_screenwidth() - w) // 2
-    y = (crop_win.winfo_screenheight() - h) // 2
-    crop_win.geometry(f"{w}x{h}+{x}+{y}")
 
 
 # ---------- 冷却查看 ----------

@@ -93,7 +93,7 @@ def send_heartbeat(app, server_url, client_key, machine_id):
     import cooldown_manager
     accounts = []
     for img_path in app.qq_account_images:
-        cd_key = cooldown_manager.get_cooldown_key(img_path)
+        cd_key = cooldown_manager.normalize_key(img_path)
         fname = os.path.basename(img_path)
         status = app._account_status.get(cd_key, "idle")
         accounts.append({"name": fname, "status": status})

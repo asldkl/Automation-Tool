@@ -624,7 +624,7 @@ class SettingsWindow:
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_kb, text="测试 Interception / PyDirectInput 驱动级键盘",
+        ttk.Label(frame_kb, text="测试 Interception 驱动级键盘",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         kb_btn_frame = ttk.Frame(frame_kb, style='SettingsInner.TFrame')
@@ -870,28 +870,18 @@ class SettingsWindow:
         threading.Thread(target=_run_test, daemon=True).start()
 
     def _test_ola_status(self):
-        """测试驱动键盘状态"""
+        """测试 Interception 驱动键盘状态"""
         try:
             import interception_keyboard
-            import driver_keyboard
             inter_ok = interception_keyboard.is_available()
-            inter_backend = interception_keyboard.get_backend()
-            di_ok = driver_keyboard.is_available()
-            di_backend = driver_keyboard.get_backend()
-            parts = []
             if inter_ok:
-                parts.append(f"Interception ✓")
+                self._dev_kb_status.config(
+                    text="Interception ✓ | 驱动可用",
+                    foreground="#27ae60")
             else:
-                parts.append(f"Interception ✗")
-            if di_ok:
-                parts.append(f"PyDirectInput ✓")
-            else:
-                parts.append(f"PyDirectInput ✗")
-            status = " | ".join(parts)
-            login_kb = inter_backend if inter_ok else di_backend
-            self._dev_kb_status.config(
-                text=f"{status}  |  登录使用: {login_kb}",
-                foreground="#27ae60" if (inter_ok or di_ok) else "#f39c12")
+                self._dev_kb_status.config(
+                    text="Interception ✗ | 驱动不可用",
+                    foreground="#e74c3c")
         except Exception as e:
             self._dev_kb_status.config(text=f"✗ 检测异常: {e}", foreground="#e74c3c")
 
@@ -1612,14 +1602,14 @@ class SettingsWindow:
             # 拼接所有识别到的文本
             all_text = "".join(item[1] for item in result)
 
-            # 匹配资产格式：数字+K/M/B（过滤"现有资产"等无效文字）
-            match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
+            # 匹配资产格式：数字（含逗号分隔）+K/M/B（过滤"现有资产"等无效文字）
+            match = re.search(r'([\d,]+\.?\d*)\s*([KMBkmb])', all_text)
             if match:
                 asset_str = f"{match.group(1)}{match.group(2).upper()}"
             else:
                 # 降级：清理非数字/KMB字符后重试
-                cleaned = re.sub(r'[^0-9.KMBkmb]', '', all_text)
-                match2 = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', cleaned)
+                cleaned = re.sub(r'[^0-9,KMBkmb]', '', all_text)
+                match2 = re.search(r'([\d,]+\.?\d*)\s*([KMBkmb])', cleaned)
                 if match2:
                     asset_str = f"{match2.group(1)}{match2.group(2).upper()}"
                 else:

@@ -25,7 +25,7 @@ def start_cooldown_watcher(app):
         cd_hours = app.settings.get("cooldown_hours", 8)
         all_cd = cooldown_manager.get_all_cooldowns()
         for acc_idx, img_path in enumerate(app.qq_account_images):
-            cd_key = cooldown_manager.get_cooldown_key(img_path)
+            cd_key = cooldown_manager.normalize_key(img_path)
             if cd_key in all_cd:
                 continue
             cooling, _ = cooldown_manager.is_cooling_down(cd_key)
@@ -91,11 +91,10 @@ def cooldown_watcher_loop(app):
 
                             # 发送冷却到期邮件提醒
                             ready_list = []
-                            cd_data = cooldown_manager._load_data()
+                            all_cd = cooldown_manager.get_all_cooldowns()
                             for img_path in app.qq_account_images:
-                                cd_name = cooldown_manager.get_cooldown_key(img_path)
-                                # 用多种 key 格式查找
-                                entry = cd_data.get(cd_name) or cd_data.get(img_path) or cd_data.get(os.path.basename(img_path))
+                                cd_name = cooldown_manager.normalize_key(img_path)
+                                entry = all_cd.get(cd_name)
                                 if entry is None:
                                     ready_list.append(cd_name)
                                     continue
@@ -167,15 +166,10 @@ def check_any_account_ready(app):
     all_cooldowns = cooldown_manager.get_all_cooldowns()
     now = datetime.datetime.now()
     for img_path in app.qq_account_images:
-        cd_name = cooldown_manager.get_cooldown_key(img_path)
-        # 用多种 key 格式查找冷却记录
+        cd_name = cooldown_manager.normalize_key(img_path)
         info = all_cooldowns.get(cd_name)
         if info is None:
-            info = all_cooldowns.get(img_path)
-        if info is None:
-            info = all_cooldowns.get(os.path.basename(img_path))
-        if info is None:
-            # 真正没有冷却记录，视为就绪
+            # 没有冷却记录，视为就绪
             ready_accounts.append(cd_name)
             continue
         if info.get("paused") or info.get("account_paused"):

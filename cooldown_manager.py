@@ -10,21 +10,58 @@ import threading
 COOLDOWN_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown.json")
 
 
+def normalize_key(img_path):
+    """统一 key 提取：去掉 account: 前缀和 .png 后缀
+    所有模块应使用此函数获取冷却 key。
+    """
+    basename = os.path.basename(img_path)
+    # 去掉 account: 前缀
+    if ":" in basename:
+        basename = basename.split(":", 1)[1]
+    # 去掉扩展名
+    basename = os.path.splitext(basename)[0]
+    return basename
+
+
+def migrate_cooldown_keys():
+    """迁移冷却数据中的旧 key 格式为统一的短名称格式"""
+    with _lock:
+        data = _load_data()
+        changed = False
+        new_data = {}
+        for old_key, entry in data.items():
+            new_key = normalize_key(old_key)
+            if new_key in new_data:
+                # 合并重复 key（保留有数据的）
+                existing = new_data[new_key]
+                # 合并字段，不覆盖已有的有效数据
+                for k, v in entry.items():
+                    if k not in existing or (v and not existing.get(k)):
+                        existing[k] = v
+            else:
+                new_data[new_key] = entry
+            if new_key != old_key:
+                changed = True
+        if changed:
+            _save_data(new_data)
+            print(f"[OK] 冷却数据 key 迁移完成，{len(data)} -> {len(new_data)} 条记录")
+        return changed
+
 def get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）
-    统一函数，所有模块应使用此函数而非自行解析。
+    """获取冷却数据中使用的 key（统一短名称格式）
+    优先从冷却数据中查找匹配的 key，找不到则用 normalize_key。
     """
     cd_data = _load_data()
-    basename = os.path.basename(img_path)
-    short_name = basename.split(":")[-1] if ":" in basename else basename
-    short_name = os.path.splitext(short_name)[0]
+    short_name = normalize_key(img_path)
     if short_name in cd_data:
         return short_name
-    if img_path in cd_data:
-        return img_path
+    basename = os.path.basename(img_path)
     if basename in cd_data:
-        return basename
+        return normalize_key(basename)
+    if img_path in cd_data:
+        return normalize_key(img_path)
     return short_name
+
 
 # 内存缓存：避免每次读操作都访问磁盘
 _cache = None
@@ -240,56 +277,6 @@ def set_custom_cooldown(account_name, next_run_time_str):
         return True
 
 
-def pause_cooldown(account_name):
-    """暂停指定账号的冷却倒计时，保存剩余秒数"""
-    with _lock:
-        data = _load_data()
-        if account_name not in data:
-            return False
-        entry = data[account_name]
-        if entry.get("paused"):
-            return False  # 已经暂停
-        next_run_str = entry.get("next_run_time", "")
-        if not next_run_str:
-            return False
-        try:
-            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-            now = datetime.datetime.now()
-            remaining = max(0, int((next_run - now).total_seconds()))
-            if remaining <= 0:
-                return False  # 已过期，无需暂停
-            entry["paused"] = True
-            entry["paused_remaining"] = remaining
-            _save_data(data)
-            return True
-        except Exception:
-            return False
-
-
-def resume_cooldown(account_name):
-    """恢复指定账号的冷却倒计时，从暂停时的剩余时间重新计算"""
-    with _lock:
-        data = _load_data()
-        if account_name not in data:
-            return False
-        entry = data[account_name]
-        if not entry.get("paused"):
-            return False  # 未暂停
-        remaining = entry.get("paused_remaining", 0)
-        if remaining <= 0:
-            entry.pop("paused", None)
-            entry.pop("paused_remaining", None)
-            _save_data(data)
-            return True
-        now = datetime.datetime.now()
-        next_run = now + datetime.timedelta(seconds=remaining)
-        entry["next_run_time"] = next_run.strftime("%Y-%m-%d %H:%M:%S")
-        entry.pop("paused", None)
-        entry.pop("paused_remaining", None)
-        _save_data(data)
-        return True
-
-
 def is_paused(account_name):
     """检查账号的冷却是否处于暂停状态"""
     with _lock:
@@ -327,15 +314,6 @@ def mark_game_failed(account_name):
             data[account_name] = {}
         data[account_name]["game_failed"] = True
         _save_data(data)
-
-
-def clear_game_failed(account_name):
-    """清除账号的游戏失败状态"""
-    with _lock:
-        data = _load_data()
-        if account_name in data and "game_failed" in data[account_name]:
-            del data[account_name]["game_failed"]
-            _save_data(data)
 
 
 def remove_expired_cooldowns():

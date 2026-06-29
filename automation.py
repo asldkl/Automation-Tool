@@ -252,8 +252,6 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         return "game_failed"
     time.sleep(0.5)
 
-    _ensure_game_focused()
-
     selected_ops = settings.get("selected_operations", [])
     all_facilities = [
         ("tech_center", config.Tech_Center, config.Produce_TechCenter, "技术中心"),

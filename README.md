@@ -102,7 +102,7 @@ sc start interception
 
 清理进程（WeGame/三角洲） → 逐个账号：
 1. 打开 WeGame → 图像识别双击账号选择框（左偏 15px）→ 删除旧账号 → Interception 驱动级键盘输入账号 → 点击密码框 → Interception 输入密码 → 点击登录
-2. 找到三角洲图标 → 资产识别 → 启动游戏 → 执行操作 → 关闭游戏和 WeGame → 完成
+2. 找到三角洲图标 → 启动游戏 → 进入烽火地带 → 进入特勤处 → 第一次资产识别 → 执行操作（设施/出售/邮箱）→ 第二次资产识别 → 关闭游戏和 WeGame → 完成
 
 ## 配置说明
 
@@ -123,7 +123,7 @@ sc start interception
 | `sell_confidence` | 出售物品匹配置信度（0.40-0.80） |
 | `sell_quantity` | 每个物品出售次数（1-99，适配产出数量>1的物品） |
 | `enable_cooldown` | 启用账号冷却（默认8小时） |
-| `cooldown_delay_minutes` | 账号间隔时间（0-5分钟） |
+| `cooldown_delay_minutes` | 账号间隔时间（0-5分钟，默认0） |
 | `cooldown_run_immediately` | 冷却完立即运行 |
 | `cooldown_scheduled_task_enabled` | 冷却到期定时任务兜底（默认开启） |
 | `restart_on_interception_fail` | Interception 驱动失败时自动重启电脑（默认关闭） |

@@ -203,6 +203,12 @@ class App:
         # 初始化样式
         self._setup_styles()
 
+        # 冷却数据 key 迁移（旧格式 -> 统一短名称）
+        try:
+            cooldown_manager.migrate_cooldown_keys()
+        except Exception as e:
+            print(f"⚠️ 冷却数据迁移失败: {e}")
+
         # 快捷键
         root.bind("<F1>", lambda e: self.start())
         root.bind("<F2>", lambda e: self.stop())
@@ -497,8 +503,10 @@ class App:
             if self._show_event is not None:
                 import win32event
                 if win32event.WaitForSingleObject(self._show_event, 0) == win32event.WAIT_OBJECT_0:
-                    self._show_window()
-                    print("ℹ️ 检测到外部打开请求，已显示窗口")
+                    # 运行期间忽略外部打开请求，避免主界面遮挡游戏窗口
+                    if not self.running:
+                        self._show_window()
+                        print("ℹ️ 检测到外部打开请求，已显示窗口")
         except Exception:
             pass
         try:
@@ -659,9 +667,6 @@ class App:
     def _start_periodic_tree_refresh(self):
         account_manager.start_periodic_tree_refresh(self)
 
-    def _test_recognition(self):
-        account_manager.test_recognition(self)
-
     def _show_asset_history(self):
         account_manager.show_asset_history(self)
 
@@ -671,9 +676,6 @@ class App:
         msg = f"机器指纹: {info['machine_id']}\n\n硬盘序列号: {info['disk_serial']}\n主板序列号: {info['board_serial']}\n来源: {info['source']}"
         from tkinter import messagebox
         messagebox.showinfo("机器指纹", msg)
-
-    def _crop_account_image(self):
-        account_manager.crop_account_image(self)
 
     def _show_cooldown_window(self):
         account_manager.show_cooldown_window(self)

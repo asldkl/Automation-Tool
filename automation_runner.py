@@ -29,8 +29,8 @@ import interception_keyboard
 # 三角洲行动窗口标题关键词
 DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]
 
-# 统一使用 cooldown_manager.get_cooldown_key
-_get_cooldown_key = cooldown_manager.get_cooldown_key
+# 统一使用 cooldown_manager.normalize_key
+_get_cooldown_key = cooldown_manager.normalize_key
 
 
 def _ensure_wegame_focused():
@@ -115,18 +115,15 @@ def _recognize_asset(app, asset_region):
 
 
 def _format_asset_display(raw_number, suffix):
-    """格式化资产显示：K 用逗号分隔，M/B 用小数点"""
+    """格式化资产显示：K 用逗号分隔，M 用整数（无小数点）"""
     try:
         value = float(raw_number)
         if suffix == "K":
             # K 单位：用逗号分隔显示，如 78,394K
             return f"{int(value):,}K"
         elif suffix == "M":
-            # M 单位：保留 2 位小数，如 1.23M
-            return f"{value:.2f}M"
-        elif suffix == "B":
-            # B 单位：保留 2 位小数，如 1.50B
-            return f"{value:.2f}B"
+            # M 单位：整数显示，如 78M、2100M
+            return f"{int(value)}M"
         else:
             return f"{raw_number}{suffix}"
     except ValueError:
@@ -152,6 +149,7 @@ def start_run(app):
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
     app._last_account_error = ""
     app._consecutive_failures = {}  # 重置连续失败计数
+    app._cooldown_wait_done = False  # 重置冷却等待标志
     app.start_btn.config(state='disabled')
     app.stop_btn.config(state='normal')
     app.log_area.configure(state='normal')
@@ -166,7 +164,7 @@ def start_run(app):
 
 
 def stop_run(app):
-    """停止自动化任务"""
+    """停止自动化任务（不阻塞 UI，工作线程自行退出）"""
     if not app.running:
         return
     app._stop_event.set()
@@ -175,32 +173,16 @@ def stop_run(app):
     app.start_btn.config(state='normal')
     app.stop_btn.config(state='disabled')
     print("\n⏹ 停止信号已发送，将尽快终止...")
-    # 等待工作线程结束（最多 10 秒）
-    if app.work_thread and app.work_thread.is_alive():
-        app.work_thread.join(timeout=10)
-    app.running = False
 
 
 def start_single_account_run(app, img_path):
-    """单独运行一个账号（右键菜单触发），运行完进入冷却，暂停账号保持暂停"""
+    """单独运行一个账号（右键菜单触发），运行完进入冷却，暂停账号保持暂停
+    不受冷却和暂停限制，用于快速登录进入游戏大厅手动操作"""
     if app.running:
         return
     file_name = _get_cooldown_key(img_path)
-    # 检查是否暂停
+    # 记录暂停状态（运行完后恢复），但不阻止运行
     was_paused = cooldown_manager.is_account_paused(file_name)
-    # 检查是否在冷却中
-    cd_data = cooldown_manager._load_data()
-    cd_entry = cd_data.get(file_name) or cd_data.get(img_path) or cd_data.get(os.path.basename(img_path))
-    if cd_entry and not cd_entry.get("account_paused") and not cd_entry.get("paused"):
-        next_run_str = cd_entry.get("next_run_time", "")
-        if next_run_str:
-            try:
-                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-                if datetime.datetime.now() < next_run:
-                    messagebox.showwarning("提示", f"账号 {file_name} 正在冷却中，无法运行。", parent=app.root)
-                    return
-            except Exception:
-                pass
     app._single_account_mode = True
     app._single_account_was_paused = was_paused
     app._single_account_img_path = img_path
@@ -257,7 +239,7 @@ def _run_single_account_main(app, img_path):
         if not _login_account(app, file_name, 0, total, processed_accounts):
             account_failed = True
 
-        # 步骤2：找到三角洲图标并启动游戏（不执行游戏内操作）
+        # 步骤2：找到三角洲图标并启动游戏
         if not account_failed and not app._stop_event.is_set():
             print("🔍 查找三角洲游戏图标...")
             if not utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=10):
@@ -288,12 +270,29 @@ def _run_single_account_main(app, img_path):
                     if game_loaded:
                         time.sleep(5)  # 等待游戏界面加载
                         automation._ensure_game_focused()
-                        # 按 Tab 进入大厅
-                        print("⌨️ 按 Tab 进入大厅...")
-                        pyautogui.press("Tab")
-                        time.sleep(1)
-                        print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
-                        processed_accounts.append(f"{file_name} (已登录)")
+
+                        # 进入烽火地带
+                        print("进入烽火地带...")
+                        if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
+                            time.sleep(5)
+
+                            # 按 Space、Space、Tab 进入特勤处（与主流程一致）
+                            print("进入大厅...")
+                            pyautogui.press("Space")
+                            time.sleep(0.5)
+                            pyautogui.press("Space")
+                            time.sleep(0.8)
+                            pyautogui.press("Tab")
+                            time.sleep(1)
+
+                            # 等待1秒后进行资产识别
+                            _recognize_and_store_asset(app, stage="单账号")
+
+                            print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
+                            processed_accounts.append(f"{file_name} (已登录)")
+                        else:
+                            print("❌ 未找到烽火地带入口")
+                            account_failed = True
                     else:
                         print("❌ 未检测到游戏窗口")
                         account_failed = True
@@ -329,6 +328,13 @@ def _on_single_account_finish(app):
             print(f"⏸️ 账号 {file_name} 原为暂停状态，已恢复暂停")
     app._single_account_mode = False
     on_finish(app)
+
+    # 检查是否有其他冷却完成的账号，优先运行（在后台线程执行，避免冻结 UI）
+    if app.settings.get("enable_cooldown", False):
+        def _check_and_run():
+            processed = []
+            _wait_and_run_nearby_cooldowns(app, processed)
+        threading.Thread(target=_check_and_run, daemon=True).start()
 
 
 def set_operation(app, text):
@@ -634,6 +640,9 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
+    # 第一次资产识别（按 Tab 进入大厅后，game_operations 中会按 Tab 进入特勤处）
+    _recognize_and_store_asset(app, stage="第一次")
+
     ops_result = game_operations_wrapper(app)
     if ops_result == "game_failed":
         msg = "游戏内操作失败（识别问题）"
@@ -648,27 +657,32 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
-    # 游戏操作完成后执行资产识别（此时资产数值已更新）
-    _recognize_and_store_asset(app)
+    # 第二次资产识别（游戏内操作完成后，资产数值已更新）
+    _recognize_and_store_asset(app, stage="第二次")
     return True
 
 
-def _recognize_and_store_asset(app):
-    """执行资产识别并存储结果"""
+def _recognize_and_store_asset(app, stage=""):
+    """执行资产识别并存储结果
+    stage: 识别阶段标识（如"第一次"、"第二次"），用于日志区分
+    如果两次都成功，第二次结果会覆盖第一次（使用最新的资产数值）
+    """
     settings = app.settings
     if not settings.get("enable_asset_recognition", False):
         return
-    set_operation(app, "识别资产")
+    label = f"（{stage}）" if stage else ""
+    set_operation(app, f"识别资产{label}")
     asset_region = settings.get("asset_region", [0, 0, 0, 0])
     if not asset_region or asset_region[2] <= 0 or asset_region[3] <= 0:
         return
-    print(f"🔍 正在识别资产区域：{asset_region}")
+    print(f"🔍 正在识别资产区域{label}：{asset_region}")
     time.sleep(4)
     asset_value = _recognize_asset(app, asset_region)
     if asset_value:
-        print(f"💰 识别到资产：{asset_value}")
+        print(f"💰 {stage}识别到资产：{asset_value}")
         if app._current_account_name:
             app._account_assets[app._current_account_name] = asset_value
+            print(f"💰 资产存储到：{app._current_account_name}，当前所有资产：{app._account_assets}")
             if app._current_account_name not in app._asset_history:
                 app._asset_history[app._current_account_name] = []
             app._asset_history[app._current_account_name].append({
@@ -678,7 +692,7 @@ def _recognize_and_store_asset(app):
             asset_db.record_asset(app._current_account_name, asset_value)
             app.root.after(0, app._refresh_account_tree)
     else:
-        print("ℹ️ 未识别到资产数值")
+        print(f"ℹ️ {stage}未识别到资产数值" if stage else "ℹ️ 未识别到资产数值")
 
 
 def _close_game(app):
@@ -800,6 +814,18 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
                 _run_single_account(app, img_path, len(app.qq_account_images), processed_accounts)
 
     # 第二步：检查 10 分钟内到期的账号，等待执行
+    # _cooldown_wait_done 控制是否执行等待：
+    #   False = 首次调用（主循环前），只运行已到期账号，不等待
+    #   True  = 第二次调用（主循环后），执行等待
+    #   "done" = 已经等待过了，不再重复
+    if not hasattr(app, '_cooldown_wait_done'):
+        app._cooldown_wait_done = False
+    if app._cooldown_wait_done == "done":
+        return
+    if not app._cooldown_wait_done:
+        app._cooldown_wait_done = True
+        return  # 首次调用，只运行已到期账号，不等待
+    app._cooldown_wait_done = "done"
     while not app._stop_event.is_set():
         all_cooldowns = cooldown_manager.get_all_cooldowns()
         now = datetime.datetime.now()
@@ -962,8 +988,8 @@ def run_script_main(app):
         _cleanup_processes(app)
 
         print("=" * 55)
-        print("  QQ 登录 + WeGame 快捷登录 + 三角洲行动 多账号轮换脚本")
-        print(f"  本轮将处理 {total} 个 QQ 账号")
+        print("  WeGame 直接登录 + 三角洲行动 多账号轮换脚本")
+        print(f"  本轮将处理 {total} 个账号")
         print("=" * 55)
 
         # 开始前检查是否有即将到期的账号（10分钟内），等待并运行
@@ -986,22 +1012,12 @@ def run_script_main(app):
 
             # 冷却检查：无论是否由冷却触发，都要检查每个账号的冷却状态
             if app.settings.get("enable_cooldown", False):
-                # 用冷却数据直接判断，避免 key 不匹配导致误判
-                cd_data = cooldown_manager._load_data()
-                # 尝试多种 key 格式查找冷却记录
-                cd_entry = cd_data.get(file_name) or cd_data.get(img_path) or cd_data.get(os.path.basename(img_path))
-                if cd_entry and not cd_entry.get("account_paused") and not cd_entry.get("paused"):
-                    next_run_str = cd_entry.get("next_run_time", "")
-                    if next_run_str:
-                        try:
-                            next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-                            if datetime.datetime.now() < next_run:
-                                print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_run_str}")
-                                processed_accounts.append(f"{file_name} (冷却中)")
-                                server_client.update_account_status(app, file_name, "cooling")
-                                continue
-                        except Exception:
-                            pass
+                cooling, next_time = cooldown_manager.is_cooling_down(file_name)
+                if cooling:
+                    print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
+                    processed_accounts.append(f"{file_name} (冷却中)")
+                    server_client.update_account_status(app, file_name, "cooling")
+                    continue
 
             acc_text = f"第 {i+1}/{total} 个账号"
             app.root.after(0, app.update_ui, False, acc_text, file_name)

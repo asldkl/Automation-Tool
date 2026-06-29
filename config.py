@@ -44,14 +44,6 @@ def resolve_template_path(config_path):
 # ==================== 售卖物品目录 ====================
 SELL_ITEMS_DIR = os.path.join(os.path.expanduser("~"), ".delta_auto_sell_items")
 
-def get_sell_items():
-    """获取用户上传的售卖物品模板列表，返回路径列表"""
-    if not os.path.exists(SELL_ITEMS_DIR):
-        return []
-    items = sorted([f for f in os.listdir(SELL_ITEMS_DIR)
-                    if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))])
-    return [os.path.join(SELL_ITEMS_DIR, f) for f in items]
-
 # ==================== 售卖物品元数据 ====================
 ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
 ITEMS_META_BACKUP = os.path.join(SELL_ITEMS_DIR, "items_meta.backup.json")
@@ -163,7 +155,7 @@ DEFAULT_SETTINGS = {
     # 冷却管理
     "enable_cooldown": False,         # 是否启用账号冷却
     "cooldown_hours": 8,              # 冷却小时数（默认8小时）
-    "cooldown_delay_minutes": 1,      # 账号间隔时间（0-5分钟，默认1）
+    "cooldown_delay_minutes": 0,      # 账号间隔时间（0-5分钟）
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
@@ -203,6 +195,7 @@ DEFAULT_SETTINGS = {
     # 资产识别
     "enable_asset_recognition": False,           # 是否启用资产识别
     "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]
+    "asset_conversion_ratios": {},              # 每个账号的资产转换比例 {account_name: ratio}
     "asset_ocr_confidence": 0.7,                 # 资产识别置信度
 }
 
