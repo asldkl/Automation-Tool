@@ -102,7 +102,7 @@ sc start interception
 
 清理进程（WeGame/三角洲） → 逐个账号：
 1. 打开 WeGame → 图像识别双击账号选择框（左偏 15px）→ 删除旧账号 → Interception 驱动级键盘输入账号 → 点击密码框 → Interception 输入密码 → 点击登录
-2. 找到三角洲图标 → 资产识别 → 启动游戏 → 执行操作 → 关闭游戏和 WeGame → 完成
+2. 找到三角洲图标 → 启动游戏 → 进入烽火地带 → 进入特勤处 → 第一次资产识别 → 执行操作（设施/出售/邮箱）→ 第二次资产识别 → 关闭游戏和 WeGame → 完成
 
 ## 配置说明
 
@@ -123,9 +123,10 @@ sc start interception
 | `sell_confidence` | 出售物品匹配置信度（0.40-0.80） |
 | `sell_quantity` | 每个物品出售次数（1-99，适配产出数量>1的物品） |
 | `enable_cooldown` | 启用账号冷却（默认8小时） |
-| `cooldown_delay_minutes` | 账号间隔时间（0-5分钟） |
+| `cooldown_delay_minutes` | 账号间隔时间（0-5分钟，默认0） |
 | `cooldown_run_immediately` | 冷却完立即运行 |
 | `cooldown_scheduled_task_enabled` | 冷却到期定时任务兜底（默认开启） |
+| `restart_on_interception_fail` | Interception 驱动失败时自动重启电脑（默认关闭） |
 | `cooldown_email_enabled` | 冷却到期邮件提醒 |
 | `enable_email_currency` | 启用自动领取邮箱货币 |
 | `post_run_shutdown_delay` | 运行完成后延迟关机（0-5分钟，0=不关机） |
@@ -140,22 +141,6 @@ sc start interception
 | `enable_asset_recognition` | 启用资产识别 |
 | `asset_region` | 资产识别屏幕区域 [x, y, w, h] |
 | `asset_ocr_confidence` | 资产识别置信度 |
-
-> **v1.1.2 更新**：OCR 全面增强（降级开关、置信度降至 0.55、预加载引擎、调试日志、日志区分）、全局文本配置完善（新增 4 条目、状态同步、移除 global_text_enabled 限制）、WeGame 登录改 smart 模式、开发者测试窗口新增 OCR 测试
->
-> **v1.2.1 更新**：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护、SMTP 不加密（防止密钥变化导致发送失败）、冷却到期优先运行+10分钟等待、删除 QQ 无效设置、售卖物品元数据原子写入+备份保护
->
-> **v1.2.0 更新**：WeGame 直接登录（Interception 驱动级键盘输入，绕开验证码）、代码重构优化（合并重复函数、缓存设置读取、消除冗余颜色转换）、截图对象内存泄漏修复、线程安全改进
->
-> **v1.1.5 更新**：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 账号限制）、图像识别点击登录界面按钮、pyautogui.typewrite 逐键输入、密码必填校验、开发者测试按钮更新
->
-> **v1.1.4 更新**：UI 简化（删除电源管理页签和定时执行功能）、线程安全、冷却缓存优化、核心模块单元测试
->
-> **v1.3.0 更新**：移除凭据加密模块、代码质量优化（冷却线程安全锁、模板LRU缓存、OCR自动恢复、坐标边界校验）、降价逻辑优化、设置明文读写、新增冷却到期定时任务兜底机制（Windows 任务计划程序 + 信号文件双重保障）、WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，减少等待时间
->
-> **v1.3.1 更新**：修复冷却 key 匹配 bug（`_get_cooldown_key` 统一短名称优先）、冷却触发时额外检查 10 分钟内到期账号、暂停账号正确跳过、定时任务静默执行（VBScript 无窗口）、删除未使用图片资源、模板上传向导改用截取方式、全局 OCR 窗口可调节、自定义冷却支持分钟、所有窗口大小记忆、隐藏屏幕唤醒鼠标移动、修复停止按钮关闭子窗口问题
->
-> **v1.1.3 更新**：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化
 
 ## 技术栈
 

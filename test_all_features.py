@@ -1,5 +1,5 @@
 """
-覆盖：config新选项、互斥逻辑、QQ降级方案、烽火地带重试、冷却管理
+覆盖：config新选项、互斥逻辑、烽火地带重试、冷却管理、邮件通知
 无需启动GUI，通过模拟环境验证核心逻辑
 """
 import os
@@ -273,108 +273,7 @@ class TestMutualExclusion(unittest.TestCase):
         self.assertFalse(auto and cooldown)
 
 
-# ==================== Test 5: QQ 降级方案模拟 ====================
-class TestQQDegradation(unittest.TestCase):
-    """模拟测试 QQ 窗口激活失败的降级逻辑"""
-
-    def _simulate_qq_activation_loop(self, activate_results, image_results):
-        """
-        模拟 QQ 窗口等待循环
-        activate_results: activate_window_by_title 的返回值列表
-        image_results: find_and_click(QQ_ACCOUNT_SELECT) 的返回值列表
-        返回: (qq_ready, account_failed, degrade_triggered)
-        """
-        qq_ready = False
-        account_failed = False
-        qq_activate_fail_count = 0
-        qq_degrade_triggered = False
-        img_call_count = 0
-
-        for i, result in enumerate(activate_results):
-            if result:
-                qq_ready = True
-                qq_activate_fail_count = 0
-                break
-            qq_activate_fail_count += 1
-            if qq_activate_fail_count >= 5:
-                qq_degrade_triggered = True
-                # 尝试图像识别
-                for img_retry in range(3):
-                    if img_call_count < len(image_results) and image_results[img_call_count]:
-                        img_call_count += 1
-                        qq_ready = True
-                        break
-                    img_call_count += 1
-                if qq_ready:
-                    break
-                else:
-                    account_failed = True
-                    break
-
-        return qq_ready, account_failed, qq_degrade_triggered
-
-    def test_normal_activation_success(self):
-        """正常激活成功，不触发降级"""
-        results = [False, False, True]  # 第3次成功
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, [])
-        self.assertTrue(qq_ready)
-        self.assertFalse(failed)
-        self.assertFalse(degrade)
-
-    def test_activation_fails_triggers_degradation(self):
-        """连续5次激活失败应触发降级方案"""
-        results = [False] * 5  # 5次都失败
-        image_results = [True]  # 图像识别成功
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, image_results)
-        self.assertTrue(qq_ready)
-        self.assertFalse(failed)
-        self.assertTrue(degrade)
-
-    def test_degradation_image_success(self):
-        """降级方案中图像识别成功"""
-        results = [False] * 10
-        image_results = [False, True]  # 第2次图像识别成功
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, image_results)
-        self.assertTrue(qq_ready)
-        self.assertFalse(failed)
-        self.assertTrue(degrade)
-
-    def test_degradation_image_all_fail(self):
-        """降级方案中图像识别全部失败，应标记账号失败"""
-        results = [False] * 10
-        image_results = [False, False, False]  # 3次都失败
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, image_results)
-        self.assertFalse(qq_ready)
-        self.assertTrue(failed)
-        self.assertTrue(degrade)
-
-    def test_activation_success_before_degradation(self):
-        """在触发降级前激活成功"""
-        results = [False, False, False, False, True]  # 第5次成功（刚好在降级前）
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, [])
-        self.assertTrue(qq_ready)
-        self.assertFalse(failed)
-        self.assertFalse(degrade)
-
-    def test_first_try_success(self):
-        """第一次就成功"""
-        results = [True]
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, [])
-        self.assertTrue(qq_ready)
-        self.assertFalse(failed)
-        self.assertFalse(degrade)
-
-    def test_degradation_first_image_success(self):
-        """降级方案第一次图像识别就成功"""
-        results = [False] * 5
-        image_results = [True]
-        qq_ready, failed, degrade = self._simulate_qq_activation_loop(results, image_results)
-        self.assertTrue(qq_ready)
-        self.assertFalse(failed)
-        self.assertTrue(degrade)
-
-
-# ==================== Test 6: 烽火地带重试次数 ====================
+# ==================== Test 4: 烽火地带重试次数 ====================
 class TestHazardOperationsRetry(unittest.TestCase):
     """测试 game_operations 中烽火地带的重试次数"""
 
@@ -402,7 +301,7 @@ class TestHazardOperationsRetry(unittest.TestCase):
         self.assertIn("5次重试后仍未找到烽火地带图标", content)
 
 
-# ==================== Test 7: game_launch_wait 位置和日志 ====================
+# ==================== Test 5: game_launch_wait 位置和日志 ====================
 class TestGameLaunchWait(unittest.TestCase):
     """测试 game_launch_wait 的位置和日志消息"""
 
@@ -433,7 +332,7 @@ class TestGameLaunchWait(unittest.TestCase):
         self.assertLess(wait_pos, ops_call_pos, "额外等待应在 game_operations 之前")
 
 
-# ==================== Test 8: 邮件通知模拟 ====================
+# ==================== Test 6: 邮件通知模拟 ====================
 class TestEmailNotification(unittest.TestCase):
     """模拟测试失败邮件通知"""
 
@@ -459,7 +358,7 @@ class TestEmailNotification(unittest.TestCase):
         self.assertIn("send_account_failure_email", content)
 
 
-# ==================== Test 9: 完整流程模拟 ====================
+# ==================== Test 7: 完整流程模拟 ====================
 class TestFullFlowSimulation(unittest.TestCase):
     """模拟完整多账号运行流程"""
 
@@ -483,12 +382,7 @@ class TestFullFlowSimulation(unittest.TestCase):
                     continue
 
             # 模拟执行
-            if account.get("qq_activate_fails", 0) >= 5:
-                if account.get("image_recognition_success", False):
-                    results.append({"account": account["name"], "status": "success_degraded"})
-                else:
-                    results.append({"account": account["name"], "status": "failed_degraded"})
-            elif account.get("fail", False):
+            if account.get("fail", False):
                 results.append({"account": account["name"], "status": "failed"})
             else:
                 results.append({"account": account["name"], "status": "success"})
@@ -512,24 +406,6 @@ class TestFullFlowSimulation(unittest.TestCase):
         for r in results:
             self.assertEqual(r["status"], "success")
 
-    def test_flow_with_qq_degradation_success(self):
-        """QQ 降级方案成功的场景"""
-        now = time.time()
-        accounts = [
-            {"name": "user1.png", "start_time": now, "qq_activate_fails": 5, "image_recognition_success": True},
-        ]
-        results = self._simulate_multi_account_flow(accounts)
-        self.assertEqual(results[0]["status"], "success_degraded")
-
-    def test_flow_with_qq_degradation_failure(self):
-        """QQ 降级方案失败的场景"""
-        now = time.time()
-        accounts = [
-            {"name": "user1.png", "start_time": now, "qq_activate_fails": 5, "image_recognition_success": False},
-        ]
-        results = self._simulate_multi_account_flow(accounts)
-        self.assertEqual(results[0]["status"], "failed_degraded")
-
     def test_flow_with_cooldown(self):
         """冷却中的账号应被跳过"""
         now = time.time()
@@ -544,20 +420,20 @@ class TestFullFlowSimulation(unittest.TestCase):
         self.assertEqual(results[2]["status"], "success")
 
     def test_flow_mixed_results(self):
-        """混合场景：成功、失败、降级"""
+        """混合场景：成功、失败"""
         now = time.time()
         accounts = [
             {"name": "user1.png", "start_time": now},
             {"name": "user2.png", "start_time": now + 300, "fail": True},
-            {"name": "user3.png", "start_time": now + 600, "qq_activate_fails": 5, "image_recognition_success": True},
+            {"name": "user3.png", "start_time": now + 600},
         ]
         results = self._simulate_multi_account_flow(accounts)
         self.assertEqual(results[0]["status"], "success")
         self.assertEqual(results[1]["status"], "failed")
-        self.assertEqual(results[2]["status"], "success_degraded")
+        self.assertEqual(results[2]["status"], "success")
 
 
-# ==================== Test 10: 设置保存完整性 ====================
+# ==================== Test 8: 设置保存完整性 ====================
 class TestSettingsSaveIntegrity(unittest.TestCase):
     """测试设置保存和加载的完整性"""
 
@@ -590,20 +466,22 @@ class TestSettingsSaveIntegrity(unittest.TestCase):
         """保存应保留所有自动任务设置"""
         from config import save_settings, load_settings, DEFAULT_SETTINGS
         settings = dict(DEFAULT_SETTINGS)
-        settings["auto_start"] = True
-        settings["run_mode"] = "每日循环"
-        settings["schedule_times"] = ["08:00", "12:00", "18:00"]
-        settings["cooldown_run_immediately"] = False
+        settings["cooldown_run_immediately"] = True
+        settings["cooldown_scheduled_task_enabled"] = True
+        settings["cooldown_hours"] = 12
+        settings["cooldown_delay_minutes"] = 5
+        settings["enable_cooldown"] = True
         save_settings(settings)
 
         loaded = load_settings()
-        self.assertTrue(loaded["auto_start"])
-        self.assertEqual(loaded["run_mode"], "每日循环")
-        self.assertEqual(loaded["schedule_times"], ["08:00", "12:00", "18:00"])
-        self.assertFalse(loaded["cooldown_run_immediately"])
+        self.assertTrue(loaded["cooldown_run_immediately"])
+        self.assertTrue(loaded["cooldown_scheduled_task_enabled"])
+        self.assertEqual(loaded["cooldown_hours"], 12)
+        self.assertEqual(loaded["cooldown_delay_minutes"], 5)
+        self.assertTrue(loaded["enable_cooldown"])
 
 
-# ==================== Test 11: 代码一致性检查 ====================
+# ==================== Test 9: 代码一致性检查 ====================
 class TestCodeConsistency(unittest.TestCase):
     """检查代码中各处引用的一致性"""
 
@@ -619,11 +497,10 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("v1.2.1", content)
 
     def test_readme_has_v190_section(self):
-        """README.md 应包含更新日志"""
+        """README.md 应包含配置说明"""
         readme_path = os.path.join(os.path.dirname(__file__), "README.md")
         with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.2.0", content)
         self.assertIn("cooldown_run_immediately", content)
 
     def test_readme_has_cooldown_config(self):
@@ -650,7 +527,7 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("ACCOUNT_SELECT", content)
 
 
-# ==================== Test 12: Bug修复验证 ====================
+# ==================== Test 10: Bug修复验证 ====================
 class TestBugFixes(unittest.TestCase):
     """验证Bug修复的正确性"""
 
@@ -703,13 +580,12 @@ class TestBugFixes(unittest.TestCase):
             runner_content = f.read()
         self.assertIn("_ignore_cooldown_this_run = False", runner_content)
 
-    def test_bug7_first_run_records_cooldown(self):
-        """Bug7: start_cooldown_watcher 中应为新账号记录冷却"""
+    def test_bug7_is_removed(self):
+        """Bug7: 已移除首次自动添加冷却功能（现由新建账号自动暂停代替）"""
         watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
         with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("record_run", content)
-        self.assertIn("首次启用", content)
+        self.assertNotIn("首次启用", content)
 
 
 # ==================== 运行所有测试 ====================

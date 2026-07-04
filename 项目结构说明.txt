@@ -1,42 +1,28 @@
 ================================================================================
 三角洲行动自动化工具 - 项目结构说明
-版本: v1.3.1
+版本: v1.3.3
 用途: 辅助 AI 快速了解项目结构和各模块功能
 ================================================================================
 
 【项目概述】
 基于图像识别（OpenCV 模板匹配）+ OCR 文字识别（RapidOCR）的《三角洲行动》游戏日常自动化工具。
-支持 QQ 登录 + WeGame 快捷登录、多账号轮换、定时执行、一键出售、冷却管理、邮件通知。
-v1.0.3 新增：机器指纹绑定、远程有效期控制、心跳状态同步、运行完成后延迟关机。
-v1.0.4 新增：OCR 文字识别、模板 OCR 配置、全局 OCR 设置、资产识别、模块拆分重构。
-v1.1.0 新增：资产识别修复（直接 numpy 数组，无 BGR 转换）、设置界面 6 选项卡、主界面简化、窗口可调整大小。
-v1.1.1 新增：资产监测（SQLite 持久化 + 时间段统计）、账号备注（账号密码输入框）、使用说明移至设置页面。
-v1.1.2 新增：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞尔曲线移动、运行完成后清空残余状态。
-v1.1.3 新增：暂停账号功能、批量添加账号、账号列表分隔线、QQ登录逻辑优化（滚动到底部+向上查找）、资产识别过滤优化、手动终止跳过关机、手动停止不发邮件、日志可收起侧边面板、分隔行不可选中。
-v1.1.4 新增：eval注入修复、线程安全（threading.Event）、冷却缓存优化、SQLite单例连接、异步服务器验证、重复代码提取、死代码清理、核心模块单元测试。UI简化：删除电源管理页签和定时执行功能，全部改用冷却执行，设置页签从6个精简为5个。
-v1.1.5 新增：QQ 账号密码登录 + WeGame 快捷安全登录（绕开 10 账号限制）、图像识别登录界面按钮（无 OCR）、pyautogui.typewrite 逐键输入、密码必填校验、账号信息设置窗口、主界面四列显示（账号名称/现有资产/下次运行时间/备注）、账号序号、资产监测自定义天数。删除 OLA SDK 依赖、登录流程 OCR 代码。
-v1.2.0 新增：WeGame 直接登录（Interception 驱动级键盘输入）、代码重构（合并 find_and_click、缓存 settings、消除冗余颜色转换）、截图对象关闭、prevent_sleep 线程安全。新增 interception_keyboard.py 模块。
-v1.2.1 新增：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护、SMTP 不加密、冷却到期优先运行+10分钟等待、删除 QQ 无效设置、售卖物品元数据原子写入+备份保护。
-v1.3.0 更新：移除 credential_crypto/crypto_utils 凭据加密模块；设置明文读写；代码质量优化（冷却线程安全锁、_IMAGE_TO_VAR 自动生成、模板 LRU 缓存、OCR 按 var_name 失败跟踪自动恢复、点击坐标边界校验）；降价逻辑优化（首次识别后原地点击剩余次数）；截图 close() 安全（try/finally）。
-v1.3.1 (2026-06-24)：
-   - 新增冷却到期定时任务兜底机制：Windows 任务计划程序 + 信号文件双重保障
-   - 设置界面新增「定时任务兜底」开关（自动任务选项卡）
-   - WeGame 登录失败检测优化：每次查找游戏图标失败后立即检测 login_again，超时从15秒降至10秒
-   - cooldown_manager.record_run 时自动创建定时任务（最早到期时间）
-   - gui_app 主界面每30秒检查信号文件，检测到即触发运行
-   - 修复冷却 key 匹配 bug：新增 _get_cooldown_key 统一短名称优先，解决 account: 前缀导致的冷却状态不同步
-   - 冷却触发时额外检查 10 分钟内到期账号并等待执行
-   - 暂停账号正确跳过（is_account_paused 检查修复）
-   - 定时任务静默执行（VBScript 包装，无 cmd 窗口弹出）
-   - 删除未使用的图片资源（qq_login、Department_Bullets、background.jpg 等）
-   - 模板上传向导改用截取方式（屏幕框选替代文件上传）
-   - 全局 OCR 窗口可调节大小
-   - 自定义冷却时间支持分钟（小时+分钟双 Spinbox）
-   - 所有弹出窗口大小记忆（关闭时保存，下次恢复）
-   - 删除屏幕唤醒鼠标移动功能
-   - 修复停止按钮关闭子窗口问题
-   - 开机自启动设置移至自动任务选项卡
-   - 模板上传向导序号显示
+支持 WeGame 直接登录、多账号轮换、冷却执行、一键出售、冷却管理、邮件通知。
+
+【版本历史】
+v1.3.3 (2026-06-29)：修复未定义变量 bug、删除死代码（9个函数）、清理旧登录方式残留、账号间隔默认值改为0、资产识别流程优化、单账号运行增加进入特勤处和资产识别、设置界面只显示 Interception 状态
+v1.3.2 (2026-06-27)：代码审查全面修复（原子写入、线程安全、冷却数据迁移等）
+v1.3.1 (2026-06-27)：模块化重构、删除 PyDirectInput、右键运行单账号、冷却定时任务兜底
+v1.3.0 (2026-06-19)：移除凭据加密模块、代码质量优化（LRU缓存、OCR自动恢复）
+v1.2.1 (2026-06-17)：资产记录双击编辑、失败邮件含错误日志、WeGame 登录窗口聚焦保护
+v1.2.0 (2026-06-14)：WeGame 直接登录（Interception 驱动级键盘输入）、代码重构
+v1.1.5 (2026-06-13)：QQ 账号密码登录 + WeGame 快捷安全登录
+v1.1.4 (2026-06-10)：UI 简化、线程安全、冷却缓存优化、核心模块单元测试
+v1.1.3 (2026-06-09)：暂停账号功能、批量添加账号、账号列表分隔线
+v1.1.2 (2026-06-08)：冷却暂停/恢复、账号状态颜色可视化、鼠标贝塞尔曲线移动
+v1.1.1 (2026-06-07)：资产监测功能、账号备注功能
+v1.1.0 (2026-06-06)：OCR 文字识别、资产识别、模块拆分
+v1.0.3 (2026-05-28)：机器指纹绑定、远程有效期控制、心跳同步
+v1.0.0 (2026-05-25)：初始发布版本
 
 【核心文件】
 
@@ -63,7 +49,9 @@ v1.3.1 (2026-06-24)：
 │   - start_run() / stop_run()：启动/停止自动化任务
 │   - run_script_main()：主自动化循环（v1.1.4 重构为 ~80 行，调用 8 个子函数）
 │   - _validate_daily() / _cleanup_processes() / _login_account()
-│   - _launch_game() / _recognize_and_store_asset() / _close_game() / _cleanup_account_processes()
+│   - _launch_game()：启动游戏、进入特勤处、资产识别（两次：进入特勤处后+操作完成后）
+│   - _recognize_and_store_asset()：资产识别并存储结果（支持 stage 参数区分识别阶段）
+│   - _close_game() / _cleanup_account_processes()
 │   - _ensure_wegame_focused()：WeGame 窗口聚焦检查，失去焦点时自动激活（v1.2.1 新增）
 │   - _login_account()：WeGame 直接登录（v1.2.0，Interception 驱动级键盘输入）
 │     - 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空
@@ -78,7 +66,7 @@ v1.3.1 (2026-06-24)：
 │   - sell_operations_wrapper()：委托 automation.sell_operations() 执行一键出售
 │   - _wait_and_run_nearby_cooldowns()：先运行已到期账号，再等待 10 分钟内到期的账号（v1.2.1）
 │     - run_script_main 开始前和结束后均调用（v1.3.1）
-│   - _run_single_account()：从冷却等待中调用的单账号运行（v1.3.1 使用 _get_cooldown_key）
+│   - start_single_account_run() / _run_single_account_main()：单账号运行（进入特勤处+资产识别，不执行游戏内操作，不受冷却限制）
 │   - on_finish()：任务完成后清空残余状态（进度条、状态标签）、刷新账号列表、延迟关机（可选 0-5 分钟）；手动终止时跳过邮件通知
 │   - update_ui() / set_operation()：UI 更新辅助
 │   - get_account_next_run() / build_accounts_html()：账号信息构建
@@ -133,13 +121,12 @@ v1.3.1 (2026-06-24)：
 
 
 │
-├── driver_keyboard.py          # 驱动级键盘输入模块（v1.1.5 新增）
-│   - 使用 PyDirectInput，回退到 pyautogui
-│   - send_string()：发送字符串到指定窗口（剪贴板粘贴方式，QQ 密码框不兼容）
-│   - key_press() / key_down() / key_up()：按键操作
-│   - hold_key()：长按指定键（用于清空输入框）
+├── driver_keyboard.py          # 驱动级键盘输入模块（v1.3.1 重写）
+│   - 统一使用 Interception 驱动
+│   - send_string()：通过 Interception 扫描码方式输入字符串
+│   - is_available()：检查驱动是否可用
 │   - get_backend()：获取当前使用的后端名称
-│   - 注：登录流程已改用 Interception 驱动级键盘输入，此模块保留供其他场景使用
+│   - 所有操作委托给 interception_keyboard 模块
 │
 ├── interception_keyboard.py    # Interception 驱动级键盘输入模块（v1.2.0 新增）
 │   - 通过 ctypes 调用 interception.dll 实现驱动级键盘模拟
@@ -163,7 +150,6 @@ v1.3.1 (2026-06-24)：
 │   - load_settings() / save_settings()：读写 ~/.delta_auto_settings.json（v1.2.0 mtime 缓存，v1.3.0 明文读写）
 │   - resource_path()：PyInstaller/Nuitka 资源路径处理
 │   - resolve_template_path()：用户自定义模板优先
-│   - get_sell_items()：获取售卖物品图片列表
 │   - load_sell_items_meta() / save_sell_items_meta()：售卖物品元数据（v1.2.1 原子写入+备份保护）
 │   - TEMPLATE_CAPTURE_LIST：所有模板图片定义（变量名、路径、中文描述）
 │   - WeGame 路径自动检测（Windows 注册表）
@@ -183,7 +169,6 @@ v1.3.1 (2026-06-24)：
 │     - _screenshot_gray()：截屏直接转灰度（try/finally 安全释放截图）
 │     - _match_template()：标准灰度模板匹配
 │     - find_and_click()：单尺度模板匹配+点击（薄包装，兼容旧调用）
-│     - find_and_click_multiscale()：多尺度复合匹配（薄包装）
 │     - find_and_click_smart()：智能匹配（OCR 优先 → 支持降级开关 → 超时回退图像匹配，日志区分识别方式）
 │     - _match_template_multiscale()：核心多尺度匹配算法（灰度+边缘）
 │   - 鼠标移动：
@@ -201,15 +186,11 @@ v1.3.1 (2026-06-24)：
 │     - start_app() / kill_process() / close_window_by_title()
 │     - activate_window_by_title() / wait_for_window()
 │     - find_window_by_title()：查找窗口句柄（v1.1.5 新增，返回 hwnd）
-│   - WeGame 登录：
-│     - wegame_quick_login()：WeGame 快捷登录
 │   - 电源管理：
 │     - prevent_sleep() / allow_sleep()：防休眠
 │     - set_wake_timer() / cancel_wake_timer()：定时唤醒
-│     - schedule_shutdown() / cancel_shutdown()：自动关机
+│     - schedule_shutdown()：自动关机
 │   - Windows 任务计划：
-│     - schedule_startup_task() / remove_startup_task()
-│     - write_cooldown_signal()：写入冷却触发信号文件（定时任务触发时通知已有实例）
 │     - check_cooldown_signal()：检查并消费信号文件
 │     - create_cooldown_scheduled_task()：创建一次性定时任务（到期写信号文件+启动程序）
 │     - remove_cooldown_scheduled_task()：删除冷却到期定时任务
@@ -239,17 +220,18 @@ v1.3.1 (2026-06-24)：
 │   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
 │   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
 │
-├── cooldown_manager.py         # 冷却管理
+├── cooldown_manager.py         # 冷却管理（v1.3.1 新增 get_cooldown_key 统一函数）
 │   - 数据存储：~/.delta_auto_cooldown.json
 │   - 内存缓存（v1.1.4）：mtime 校验，文件未变直接返回缓存，避免重复磁盘读取
+│   - get_cooldown_key()：统一冷却 key 解析（v1.3.1，消除 5 处重复代码）
+│   - find_earliest_cooldown()：查找最早冷却到期时间（v1.3.1 公开函数）
 │   - is_cooling_down()：检查账号是否在冷却中（含暂停状态判断）
 │   - record_run()：记录运行时间，计算下次可运行时间
-│   - reset_cooldown() / reset_all_cooldowns()：重置冷却
-│   - pause_cooldown() / resume_cooldown()：暂停/恢复冷却倒计时（v1.1.2 新增）
-│   - is_paused()：检查冷却是否处于暂停状态
-│   - set_account_paused() / is_account_paused()：账号暂停/恢复（v1.1.3 新增，独立于冷却）
-│   - get_all_cooldowns()：获取所有账号冷却信息（含 paused、account_paused 状态）
-│   - 线程安全（v1.3.0）：threading.Lock 包裹所有公共函数，防止并发读写
+│   - reset_cooldown() / reset_all_cooldowns()：重置冷却（保留暂停和 game_failed 状态）
+│   - set_account_paused() / is_account_paused()：账号暂停/恢复
+│   - mark_game_failed()：游戏失败标记（v1.3.1 新增）
+│   - get_all_cooldowns()：获取所有账号冷却信息
+│   - 线程安全：threading.Lock 包裹所有公共函数，is_cooling_down/get_all_cooldowns 全部操作移入锁内
 │   - 原子写入（.tmp + os.replace）
 │
 ├── template_capture.py         # 模板上传向导（约 986 行）
@@ -263,11 +245,11 @@ v1.3.1 (2026-06-24)：
 │   - 全局 OCR 设置：统一配置 OCR 区域、置信度、文本列表（底部含使用说明）
 │   - 保存到 ~/.delta_auto_templates/
 │
-├── test_all_features.py        # 全功能测试（52 项）
+├── test_all_features.py        # 全功能测试（43 项）
 │   - 测试配置、冷却、互斥、QQ降级、邮件、代码一致性
 │   - 验证各模块函数存在性和调用关系
 │
-├── test_core_modules.py        # 核心模块单元测试（v1.1.4 新增，35 项）
+├── test_core_modules.py        # 核心模块单元测试（v1.1.4 新增，28 项）
 │   - cooldown_manager：缓存命中/失效、暂停恢复、过期清理、自定义冷却
 │   - asset_db：单例连接、建表去重、记录/查询、删除
 

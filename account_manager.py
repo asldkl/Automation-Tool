@@ -11,35 +11,22 @@ import config
 import utils
 import cooldown_manager
 import asset_db
-import pyautogui
-import cv2
-import numpy as np
 
 ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
 
 
 def _account_key_from_path(path):
-    """从账号路径提取账号标识（去掉 account: 前缀和 .png 后缀）"""
+    """从账号路径提取账号标识（去掉 account: 前缀和扩展名）"""
     name = os.path.basename(path)
-    if name.startswith("account:"):
-        return name[len("account:"):]
+    if ":" in name:
+        name = name.split(":", 1)[1]
     return os.path.splitext(name)[0]
 
 
+# 统一使用 cooldown_manager.normalize_key
 def _get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
-    import cooldown_manager
-    cd_data = cooldown_manager._load_data()
-    basename = os.path.basename(img_path)
-    short_name = basename.split(":")[-1] if ":" in basename else basename
-    # 优先用短名称（暂停状态通常记录在短名称上）
-    if short_name in cd_data:
-        return short_name
-    if img_path in cd_data:
-        return img_path
-    if basename in cd_data:
-        return basename
-    return short_name
+    """获取冷却数据中使用的 key（统一短名称格式）"""
+    return cooldown_manager.normalize_key(img_path)
 
 
 # ---------- 账号持久化 ----------
@@ -49,10 +36,17 @@ def save_accounts(app):
                 "assets": app._account_assets,
                 "asset_history": app._asset_history,
                 "notes": app._account_notes}
-        with open(ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
+        tmp_path = ACCOUNTS_JSON_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, ACCOUNTS_JSON_PATH)
     except Exception as e:
         print(f"⚠️ 保存账号列表失败：{e}")
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
 
 
 def load_accounts(app):
@@ -65,8 +59,7 @@ def load_accounts(app):
         if isinstance(data, list):
             app.qq_account_images = []
         else:
-            app.qq_account_images = [p for p in data.get("qq", [])
-                                     if p.startswith("account:") or os.path.exists(p)]
+            app.qq_account_images = list(data.get("qq", []))
             # 只保留当前存在的账号对应的资产和备注数据
             current_names = {_account_key_from_path(p) for p in app.qq_account_images}
             app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
@@ -74,7 +67,7 @@ def load_accounts(app):
             app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
         # 刷新账号列表
         refresh_account_tree(app)
-        print(f"✅ 已加载 {len(app.qq_account_images)} 个 QQ 账号")
+        print(f"✅ 已加载 {len(app.qq_account_images)} 个账号")
     except Exception as e:
         print(f"⚠️ 加载历史账号失败：{e}")
 
@@ -221,6 +214,14 @@ def _open_account_info_window(app, account_key=None):
                 # 迁移资产数据
                 app._account_assets[new_key] = app._account_assets.pop(account_key, "0")
                 app._asset_history[new_key] = app._asset_history.pop(account_key, [])
+                # 迁移冷却数据
+                old_cd = cooldown_manager.get_all_cooldowns().get(account_key)
+                if old_cd:
+                    cooldown_manager.reset_cooldown(account_key)
+                    if old_cd.get("next_run_time"):
+                        cooldown_manager.set_custom_cooldown(new_key, old_cd["next_run_time"])
+                    if old_cd.get("account_paused"):
+                        cooldown_manager.set_account_paused(new_key, True)
                 account_key = new_key
 
         # 保存备注
@@ -231,16 +232,28 @@ def _open_account_info_window(app, account_key=None):
             "note": note_text,
         }
 
-        # 新建账号默认暂停
+        # 新建账号立即在内存中标记暂停（确保 UI 刷新时显示正确颜色）
         if is_new:
             cooldown_manager.set_account_paused(account_key, True)
 
+        # 立即刷新 UI
         refresh_account_tree(app)
         update_account_count(app)
-        save_accounts(app)
-        messagebox.showinfo("已保存", f"账号「{user_text}」已保存。", parent=win)
+
+        # 磁盘操作放到后台线程，避免卡 UI
+        def _save_to_disk():
+            try:
+                save_accounts(app)
+            except Exception as e:
+                print(f"⚠️ 保存账号数据失败: {e}")
+
+        import threading
+        threading.Thread(target=_save_to_disk, daemon=True).start()
+
+        # 关闭窗口后再弹提示（避免模态窗口遮挡）
         utils.save_window_geometry(win, "account_info_geometry")
         win.destroy()
+        messagebox.showinfo("已保存", f"账号「{user_text}」已保存。", parent=app.root)
 
     def _close():
         utils.save_window_geometry(win, "account_info_geometry")
@@ -253,18 +266,20 @@ def _open_account_info_window(app, account_key=None):
 
 
 def delete_account(app):
+    import cooldown_manager
     sel = app.account_tree.selection()
     if sel:
         if "separator" in app.account_tree.item(sel[0], "tags"):
             return
         idx = _tree_idx_to_account_idx(app, sel[0])
-        # 在删除前获取账号名称，用于清理资产数据
-        account_name = _account_key_from_path(app.qq_account_images[idx])
+        img_path = app.qq_account_images[idx]
+        account_name = _account_key_from_path(img_path)
         del app.qq_account_images[idx]
-        # 清理该账号的资产和备注数据
+        # 清理该账号的所有数据
         app._account_assets.pop(account_name, None)
         app._asset_history.pop(account_name, None)
         app._account_notes.pop(account_name, None)
+        cooldown_manager.reset_cooldown(account_name)
         # 清理 SQLite 中的资产记录
         try:
             asset_db.delete_account_records(account_name)
@@ -300,6 +315,7 @@ def move_up(app):
         if idx > 0:
             app.qq_account_images[idx], app.qq_account_images[idx-1] = app.qq_account_images[idx-1], app.qq_account_images[idx]
             refresh_account_tree(app)
+            save_accounts(app)
 
 
 def move_down(app):
@@ -311,6 +327,7 @@ def move_down(app):
         if idx < len(app.qq_account_images) - 1:
             app.qq_account_images[idx], app.qq_account_images[idx+1] = app.qq_account_images[idx+1], app.qq_account_images[idx]
             refresh_account_tree(app)
+            save_accounts(app)
 
 
 def _tree_idx_to_account_idx(app, tree_item):
@@ -342,7 +359,6 @@ def refresh_account_tree(app):
     seq = 0
     for i, p in enumerate(app.qq_account_images):
         name = _account_key_from_path(p)
-        cd_name = _get_cooldown_key(p)
         note_data = app._account_notes.get(name, {})
         if isinstance(note_data, dict) and note_data.get("account"):
             display_name = note_data["account"]
@@ -351,6 +367,14 @@ def refresh_account_tree(app):
         seq += 1
         display_name = f"{seq}. {display_name}"
         asset = app._account_assets.get(name, "0")
+        # 统一显示为 M 格式（如 78,394K → 78.39M）
+        if asset and asset != "0":
+            try:
+                asset_num = utils.parse_asset_value(asset)
+                if asset_num > 0:
+                    asset = utils.format_asset_num(asset_num)
+            except Exception:
+                pass
         # 备注信息（取单行备注字段）
         note_text = ""
         if isinstance(note_data, dict):
@@ -362,9 +386,10 @@ def refresh_account_tree(app):
         if cooldown_manager.is_account_paused(name):
             next_run_str = "已暂停"
             tag = "paused"
-        elif cd_name in all_cooldowns:
-            cd_info = all_cooldowns[cd_name]
+        elif name in all_cooldowns:
+            cd_info = all_cooldowns[name]
             paused = cd_info.get("paused", False)
+            game_failed = cd_info.get("game_failed", False)
             next_time = cd_info.get("next_run_time", "")
             if paused:
                 remaining = cd_info.get("remaining_seconds", 0)
@@ -372,6 +397,12 @@ def refresh_account_tree(app):
                 minutes = int((remaining % 3600) // 60)
                 next_run_str = f"冷却暂停 {hours}h {minutes}m"
                 tag = "paused"
+            elif game_failed:
+                remaining = cd_info.get("remaining_seconds", 0)
+                hours = int(remaining // 3600)
+                minutes = int((remaining % 3600) // 60)
+                next_run_str = f"游戏失败 {hours}h {minutes}m"
+                tag = "game_failed"
             elif next_time:
                 from datetime import datetime
                 try:
@@ -399,7 +430,6 @@ def refresh_account_tree(app):
             if vals and vals[0] == selected_name and "separator" not in app.account_tree.item(child, "tags"):
                 app.account_tree.selection_set(child)
                 break
-    save_accounts(app)
 
 
 # ---------- 账号右键菜单 ----------
@@ -410,16 +440,22 @@ def show_account_menu(app, event):
     if "separator" in app.account_tree.item(item, "tags"):
         return
     app.account_tree.selection_set(item)
-    # 动态更新"暂停账号"/"恢复账号"菜单标签（使用固定索引，避免标签变化后找不到）
+    # 动态更新"暂停账号"/"恢复账号"菜单标签
     import cooldown_manager
     idx = _tree_idx_to_account_idx(app, item)
     if idx < len(app.qq_account_images):
         name = _account_key_from_path(app.qq_account_images[idx])
         is_paused = cooldown_manager.is_account_paused(name)
-        if is_paused:
-            app.account_menu.entryconfigure(8, label="恢复账号")
-        else:
-            app.account_menu.entryconfigure(8, label="暂停账号")
+        new_label = "恢复账号" if is_paused else "暂停账号"
+        # 遍历菜单项找到"暂停账号"或"恢复账号"并更新
+        for i in range(app.account_menu.index(tk.END) + 1):
+            try:
+                current = app.account_menu.entrycget(i, "label")
+                if current in ("暂停账号", "恢复账号"):
+                    app.account_menu.entryconfigure(i, label=new_label)
+                    break
+            except tk.TclError:
+                continue
     app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
@@ -590,222 +626,6 @@ def start_periodic_tree_refresh(app):
     """启动账号列表定时刷新（每60秒）"""
     refresh_account_tree(app)
     app._tree_refresh_timer = app.root.after(60000, lambda: start_periodic_tree_refresh(app))
-
-
-def test_recognition(app):
-    sel = app.account_tree.selection()
-    if not sel:
-        messagebox.showwarning("提示", "请先选中一个账号")
-        return
-    if "separator" in app.account_tree.item(sel[0], "tags"):
-        return
-    idx = _tree_idx_to_account_idx(app, sel[0])
-    img_path = app.qq_account_images[idx]
-    if not os.path.exists(img_path):
-        messagebox.showerror("错误", "截图文件不存在")
-        return
-    try:
-        import cv2
-        import numpy as np
-        screen = pyautogui.screenshot()
-        gray = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2GRAY)
-        screen.close()
-        template = cv2.imread(img_path, 0)
-        if template is None:
-            messagebox.showerror("错误", "无法读取截图文件")
-            return
-
-        # 标准灰度匹配
-        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-
-        # 边缘匹配（对头像轮廓、文字笔画、数字形状更敏感）
-        screen_edges = cv2.Canny(gray, 50, 150)
-        template_edges = cv2.Canny(template, 50, 150)
-        res_edge = cv2.matchTemplate(screen_edges, template_edges, cv2.TM_CCOEFF_NORMED)
-        _, edge_val, _, edge_loc = cv2.minMaxLoc(res_edge)
-
-        # 复合多尺度匹配
-        matched_ms, max_val_ms, max_loc_ms, best_scale, (ms_h, ms_w) = \
-            utils._match_template_multiscale(gray, template, 0.0)
-
-        conf = int(max_val * 100)
-        conf_edge = int(edge_val * 100)
-        conf_ms = int(max_val_ms * 100)
-        threshold = int(config.CONFIDENCE * 100)
-
-        if max_val >= config.CONFIDENCE:
-            status = "✅ 灰度匹配成功"
-        elif edge_val >= config.CONFIDENCE:
-            status = "✅ 边缘匹配成功（头像/文字/数字特征）"
-        elif max_val_ms >= config.CONFIDENCE:
-            status = f"✅ 复合多尺度匹配成功（缩放 {best_scale:.2f}x）"
-        else:
-            status = "❌ 匹配度不足，建议裁剪截图保留头像+名称+QQ号区域"
-
-        scale_info = f"（缩放 {best_scale:.2f}x）" if best_scale != 1.0 else "（原始比例）"
-        messagebox.showinfo(
-            "测试结果",
-            f"截图：{os.path.basename(img_path)}\n"
-            f"模板尺寸：{template.shape[1]}x{template.shape[0]}\n\n"
-            f"灰度匹配度：{conf}% (阈值：{threshold}%)\n"
-            f"边缘匹配度：{conf_edge}% （头像轮廓/文字/数字特征）\n"
-            f"复合多尺度：{conf_ms}% {scale_info}\n\n"
-            f"结论：{status}\n\n"
-            f"提示：截图应包含头像+名称+QQ号，这些特征组合可帮助精确区分不同账号。"
-        )
-    except Exception as e:
-        messagebox.showerror("测试失败", f"识别过程出错：{e}")
-
-
-def crop_account_image(app):
-    """裁剪QQ账号截图，框选包含头像+名称+QQ号的区域以提高识别精度"""
-    sel = app.account_tree.selection()
-    if not sel:
-        messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
-        return
-    if "separator" in app.account_tree.item(sel[0], "tags"):
-        return
-    idx = _tree_idx_to_account_idx(app, sel[0])
-    img_path = app.qq_account_images[idx]
-    if not os.path.exists(img_path):
-        messagebox.showerror("错误", "截图文件不存在", parent=app.root)
-        return
-
-    try:
-        from PIL import Image, ImageTk, ImageDraw
-        img = Image.open(img_path)
-    except Exception as e:
-        messagebox.showerror("错误", f"无法打开图片：{e}", parent=app.root)
-        return
-
-    # 创建裁剪窗口
-    crop_win = tk.Toplevel(app.root)
-    crop_win.title(f"裁剪截图 - {os.path.basename(img_path)}")
-    crop_win.resizable(True, True)
-    crop_win.transient(app.root)
-    crop_win.grab_set()
-
-    # 设置图标
-    utils.set_window_icon(crop_win)
-
-    # 说明文字
-    ttk.Label(crop_win, text="拖动鼠标框选包含头像+名称+QQ号的区域（三个特征组合可精确区分不同账号），然后点击「保存裁剪」",
-              font=('Microsoft YaHei UI', 9), foreground='#555').pack(padx=10, pady=(10, 5), anchor='w')
-
-    # 图片显示区域
-    canvas_frame = ttk.Frame(crop_win)
-    canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-    canvas = tk.Canvas(canvas_frame, bg='#2c3e50', cursor='crosshair')
-    canvas.pack(fill=tk.BOTH, expand=True)
-
-    # 显示图片
-    orig_w, orig_h = img.size
-    canvas.update_idletasks()
-    # 初始缩放以适应窗口
-    display_img = img.copy()
-    max_canvas_w, max_canvas_h = 800, 500
-    scale_x = max_canvas_w / orig_w if orig_w > max_canvas_w else 1.0
-    scale_y = max_canvas_h / orig_h if orig_h > max_canvas_h else 1.0
-    display_scale = min(scale_x, scale_y, 1.0)
-    disp_w = int(orig_w * display_scale)
-    disp_h = int(orig_h * display_scale)
-    if display_scale < 1.0:
-        display_img = img.resize((disp_w, disp_h), Image.LANCZOS)
-    else:
-        display_img = img.copy()
-
-    photo = ImageTk.PhotoImage(display_img)
-    canvas.create_image(0, 0, anchor='nw', image=photo)
-    canvas.config(scrollregion=canvas.bbox("all"))
-
-    # 裁剪状态
-    crop_state = {'start_x': 0, 'start_y': 0, 'rect_id': None, 'crop_rect': None}
-
-    def on_press(event):
-        crop_state['start_x'] = event.x
-        crop_state['start_y'] = event.y
-        if crop_state['rect_id']:
-            canvas.delete(crop_state['rect_id'])
-        crop_state['rect_id'] = canvas.create_rectangle(
-            event.x, event.y, event.x, event.y,
-            outline='#e74c3c', width=2, dash=(4, 4))
-
-    def on_drag(event):
-        if crop_state['rect_id']:
-            canvas.coords(crop_state['rect_id'],
-                          crop_state['start_x'], crop_state['start_y'],
-                          event.x, event.y)
-
-    def on_release(event):
-        x1 = min(crop_state['start_x'], event.x)
-        y1 = min(crop_state['start_y'], event.y)
-        x2 = max(crop_state['start_x'], event.x)
-        y2 = max(crop_state['start_y'], event.y)
-        # 转换回原始图片坐标
-        orig_x1 = int(x1 / display_scale)
-        orig_y1 = int(y1 / display_scale)
-        orig_x2 = int(x2 / display_scale)
-        orig_y2 = int(y2 / display_scale)
-        # 确保在图片范围内
-        orig_x1 = max(0, min(orig_x1, orig_w))
-        orig_y1 = max(0, min(orig_y1, orig_h))
-        orig_x2 = max(0, min(orig_x2, orig_w))
-        orig_y2 = max(0, min(orig_y2, orig_h))
-        if orig_x2 - orig_x1 > 5 and orig_y2 - orig_y1 > 5:
-            crop_state['crop_rect'] = (orig_x1, orig_y1, orig_x2, orig_y2)
-            size_text = f"选区：{orig_x2-orig_x1}x{orig_y2-orig_y1} 像素"
-            crop_info_label.config(text=size_text)
-        else:
-            crop_state['crop_rect'] = None
-            crop_info_label.config(text="选区过小，请重新框选")
-
-    canvas.bind('<ButtonPress-1>', on_press)
-    canvas.bind('<B1-Motion>', on_drag)
-    canvas.bind('<ButtonRelease-1>', on_release)
-
-    # 底部信息和按钮
-    bottom_frame = ttk.Frame(crop_win)
-    bottom_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-
-    crop_info_label = ttk.Label(bottom_frame, text=f"原始尺寸：{orig_w}x{orig_h}  |  请拖动鼠标框选区域",
-                                font=('Microsoft YaHei UI', 9), foreground='#7f8c8d')
-    crop_info_label.pack(side=tk.LEFT)
-
-    def save_crop():
-        if not crop_state['crop_rect']:
-            messagebox.showwarning("提示", "请先框选要裁剪的区域", parent=crop_win)
-            return
-        x1, y1, x2, y2 = crop_state['crop_rect']
-        cropped = img.crop((x1, y1, x2, y2))
-        try:
-            cropped.save(img_path)
-            app.qq_account_images[idx] = img_path  # 路径不变
-            print(f"✅ 截图已裁剪并保存：{img_path} ({x2-x1}x{y2-y1})")
-            messagebox.showinfo("完成",
-                f"截图已裁剪并保存！\n\n"
-                f"裁剪区域：{x2-x1}x{y2-y1} 像素\n"
-                f"建议：保留头像+名称+QQ号三个特征区域，组合可精确区分不同账号。\n"
-                f"可在右键菜单中使用「测试截图识别」验证效果。",
-                parent=crop_win)
-            crop_win.destroy()
-        except Exception as e:
-            messagebox.showerror("错误", f"保存失败：{e}", parent=crop_win)
-
-    def cancel_crop():
-        crop_win.destroy()
-
-    ttk.Button(bottom_frame, text="保存裁剪", command=save_crop, width=10).pack(side=tk.RIGHT, padx=(5, 0))
-    ttk.Button(bottom_frame, text="取消", command=cancel_crop, width=8).pack(side=tk.RIGHT)
-
-    # 居中窗口
-    crop_win.update_idletasks()
-    w = max(crop_win.winfo_width(), 850)
-    h = max(crop_win.winfo_height(), 600)
-    x = (crop_win.winfo_screenwidth() - w) // 2
-    y = (crop_win.winfo_screenheight() - h) // 2
-    crop_win.geometry(f"{w}x{h}+{x}+{y}")
 
 
 # ---------- 冷却查看 ----------
@@ -1179,6 +999,10 @@ def show_asset_history(app):
 
     tree.bind("<Double-1>", _on_double_click)
 
+    # 底部区域：统计信息 + 清除按钮
+    bottom_frame = ttk.Frame(win)
+    bottom_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+
     # 底部统计
     if len(history) >= 2:
         first_val = _parse_asset_value(history[0].get("value", "0"))
@@ -1193,11 +1017,41 @@ def show_asset_history(app):
         else:
             trend = "累计无变化"
             color = "#888"
-        ttk.Label(win, text=f"共 {len(history)} 条记录  |  {trend}",
-                  font=('Microsoft YaHei UI', 9), foreground=color).pack(padx=15, pady=(0, 10), anchor='w')
+        ttk.Label(bottom_frame, text=f"共 {len(history)} 条记录  |  {trend}",
+                  font=('Microsoft YaHei UI', 9), foreground=color).pack(side=tk.LEFT)
     else:
-        ttk.Label(win, text=f"共 {len(history)} 条记录",
-                  font=('Microsoft YaHei UI', 9), foreground='#888').pack(padx=15, pady=(0, 10), anchor='w')
+        ttk.Label(bottom_frame, text=f"共 {len(history)} 条记录",
+                  font=('Microsoft YaHei UI', 9), foreground='#888').pack(side=tk.LEFT)
+
+    # 清除记录资产按钮
+    def _clear_asset_records():
+        if not messagebox.askyesno("确认清除",
+                f"确定要清空账号「{account_name}」的所有资产记录吗？\n\n"
+                f"此操作不可撤销，主页的现有资产也会清零。",
+                parent=win):
+            return
+        # 清空 SQLite 中的资产记录
+        try:
+            asset_db.delete_account_records(account_name)
+        except Exception as e:
+            print(f"⚠️ 清除资产记录失败: {e}")
+        # 清空内存中的资产数据
+        app._account_assets[account_name] = "0"
+        app._asset_history[account_name] = []
+        # 刷新主界面账号列表
+        refresh_account_tree(app)
+        # 刷新资产监测窗口（如果打开）
+        if hasattr(app, '_asset_monitor_refresh') and app._asset_monitor_refresh:
+            try:
+                app._asset_monitor_refresh()
+            except Exception:
+                pass
+        print(f"✅ 已清空账号 {account_name} 的资产记录")
+        messagebox.showinfo("已清除", f"账号「{account_name}」的资产记录已清空。", parent=win)
+        win.destroy()
+
+    ttk.Button(bottom_frame, text="清除记录资产", style='Danger.TButton',
+               command=_clear_asset_records, width=14).pack(side=tk.RIGHT)
 
 
 def _format_asset_num(val):
@@ -1227,17 +1081,25 @@ def show_asset_monitor(app):
     tree_frame = ttk.Frame(status_frame)
     tree_frame.pack(fill=tk.BOTH, expand=True)
 
-    columns = ("account", "asset")
+    columns = ("account", "asset", "ratio", "coin_value")
     asset_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6)
     asset_tree.heading("account", text="账号名称")
     asset_tree.heading("asset", text="现有资产")
+    asset_tree.heading("ratio", text="转换比例")
+    asset_tree.heading("coin_value", text="纯币价值")
     asset_tree.column("account", width=80, minwidth=50)
     asset_tree.column("asset", width=50, minwidth=30, anchor=tk.CENTER)
+    asset_tree.column("ratio", width=50, minwidth=30, anchor=tk.CENTER)
+    asset_tree.column("coin_value", width=60, minwidth=40, anchor=tk.CENTER)
 
     scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=asset_tree.yview)
     asset_tree.configure(yscrollcommand=scrollbar.set)
     asset_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+
+    # 每个账号的转换比例（默认45）
+    settings = config.load_settings()
+    account_ratios = settings.get("asset_conversion_ratios", {})
 
     def _refresh_status():
         for item in asset_tree.get_children():
@@ -1251,9 +1113,76 @@ def show_asset_monitor(app):
                 display_name = name
             display_name = f"{i+1}. {display_name}"
             asset_value = app._account_assets.get(name, "0")
-            asset_tree.insert("", tk.END, values=(display_name, asset_value))
+            ratio = account_ratios.get(name, 45)
+            # 计算纯币价值：现有资产(万) / 转换比例
+            # 资产单位是K，1万 = 10K，所以先 /10000 转换成万
+            try:
+                asset_num = utils.parse_asset_value(asset_value)
+                asset_wan = asset_num / 10000
+                coin_val = asset_wan / ratio if ratio > 0 else 0
+                coin_str = f"{coin_val:.2f}"
+            except Exception:
+                coin_str = "-"
+            asset_tree.insert("", tk.END, values=(display_name, asset_value, ratio, coin_str))
 
-    _refresh_status()
+    # 双击转换比例列直接在单元格上编辑
+    def _on_ratio_double_click(event):
+        col = asset_tree.identify_column(event.x)
+        if col != "#3":  # 只响应"转换比例"列
+            return
+        row_id = asset_tree.identify_row(event.y)
+        if not row_id:
+            return
+        idx = asset_tree.index(row_id)
+        if idx >= len(app.qq_account_images):
+            return
+
+        # 获取单元格位置
+        bbox = asset_tree.bbox(row_id, column="#3")
+        if not bbox:
+            return
+        x, y, w, h = bbox
+
+        # 获取当前值
+        name = _account_key_from_path(app.qq_account_images[idx])
+        old_ratio = account_ratios.get(name, 45)
+
+        # 在单元格上创建输入框
+        entry = tk.Entry(asset_tree, font=('Microsoft YaHei UI', 9), justify='center')
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.insert(0, str(old_ratio))
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        def _commit(event=None):
+            try:
+                new_ratio = int(entry.get())
+                if new_ratio < 1:
+                    new_ratio = 1
+            except ValueError:
+                new_ratio = old_ratio
+            account_ratios[name] = new_ratio
+            settings["asset_conversion_ratios"] = account_ratios
+            config.save_settings(settings)
+            entry.destroy()
+            _refresh_status()
+
+        def _cancel(event=None):
+            entry.destroy()
+
+        entry.bind("<Return>", _commit)
+        entry.bind("<KP_Enter>", _commit)
+        entry.bind("<Escape>", _cancel)
+        entry.bind("<FocusOut>", _commit)
+
+    asset_tree.bind("<Double-1>", _on_ratio_double_click)
+
+    # 转换比例说明
+    ttk.Label(status_frame, text="提示：双击「转换比例」列可直接修改比例，回车确认，Esc 取消",
+              font=('Microsoft YaHei UI', 8), foreground='#999').pack(anchor=tk.W, pady=(4, 0))
+
+    # 延迟加载资产数据，避免阻塞窗口打开
+    win.after(50, _refresh_status)
 
     # 注册刷新回调，供资产记录编辑后自动更新（上半部分+下半部分统计）
     def _refresh_all():

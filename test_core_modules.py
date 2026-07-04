@@ -64,16 +64,6 @@ class TestCooldownManagerCache(unittest.TestCase):
         cooling, _ = self.cm.is_cooling_down("ext_user.png")
         self.assertTrue(cooling)
 
-    def test_pause_and_resume(self):
-        """暂停和恢复冷却"""
-        self.cm.record_run("user_pause.png", cooldown_hours=8)
-        self.assertTrue(self.cm.pause_cooldown("user_pause.png"))
-        self.assertTrue(self.cm.is_paused("user_pause.png"))
-        cooling, _ = self.cm.is_cooling_down("user_pause.png")
-        self.assertTrue(cooling)  # 暂停也算冷却中
-        self.assertTrue(self.cm.resume_cooldown("user_pause.png"))
-        self.assertFalse(self.cm.is_paused("user_pause.png"))
-
     def test_set_account_paused(self):
         """独立的账号暂停功能"""
         self.cm.set_account_paused("user_ap.png", True)

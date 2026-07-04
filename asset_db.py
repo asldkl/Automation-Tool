@@ -22,7 +22,7 @@ def _get_conn():
             return _conn
         except Exception:
             _conn = None
-    _conn = sqlite3.connect(DB_PATH)
+    _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     _conn.execute("""CREATE TABLE IF NOT EXISTS asset_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         account TEXT NOT NULL,

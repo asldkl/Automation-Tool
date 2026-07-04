@@ -40,14 +40,44 @@ ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts
 
 
 class RedirectText:
-    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件"""
-    def __init__(self, text_widget, log_path=None):
+    """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件（线程安全，缓冲写入）"""
+    def __init__(self, text_widget, root, log_path=None):
         self.text_widget = text_widget
+        self.root = root
         self.log_path = log_path
+        self._log_buffer = []
+        self._log_file = None
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            try:
+                self._log_file = open(log_path, 'a', encoding='utf-8')
+            except Exception:
+                pass
 
     def write(self, message):
+        try:
+            # 从后台线程安全地更新 UI
+            self.root.after(0, self._insert_text, message)
+        except Exception:
+            pass
+        if self._log_file and message.strip():
+            try:
+                self._log_file.write(message)
+                self._log_file.flush()
+            except Exception:
+                pass
+
+    def close(self):
+        """关闭日志文件"""
+        if self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
+
+    def _insert_text(self, message):
+        """在主线程中插入文本到文本框"""
         try:
             self.text_widget.configure(state='normal')
             self.text_widget.insert(tk.END, message)
@@ -55,12 +85,6 @@ class RedirectText:
             self.text_widget.configure(state='disabled')
         except Exception:
             pass
-        if self.log_path and message.strip():
-            try:
-                with open(self.log_path, 'a', encoding='utf-8') as f:
-                    f.write(message)
-            except Exception:
-                pass
 
     def flush(self):
         pass
@@ -73,6 +97,8 @@ class App:
         self.root.resizable(True, True)
         self.root.minsize(500, 600)
         self.running_event = threading.Event()
+        self._shutdown = False
+        self._consecutive_failures = {}  # 账号名 -> 连续失败次数
         self.qq_account_images = []
         self._account_assets = {}
         self._asset_history = {}
@@ -87,13 +113,10 @@ class App:
         self._ignore_cooldown_this_run = False
         self._is_boot_startup = False
         self._user_stopped_cooldown = False
-        # 窗口图标
-        try:
-            icon_path = config.resource_path("picture/icon/icon.ico")
-            if os.path.exists(icon_path):
-                self.root.iconbitmap(icon_path)
-        except Exception:
-            pass
+        # 窗口图标（失败时重试一次）
+        self._icon_photo = None
+        if not self._set_window_icon():
+            self.root.after(500, self._set_window_icon)
 
         # 加载设置
         self.settings = config.APP_SETTINGS
@@ -180,10 +203,15 @@ class App:
         # 初始化样式
         self._setup_styles()
 
+        # 冷却数据 key 迁移（旧格式 -> 统一短名称）
+        try:
+            cooldown_manager.migrate_cooldown_keys()
+        except Exception as e:
+            print(f"⚠️ 冷却数据迁移失败: {e}")
+
         # 快捷键
         root.bind("<F1>", lambda e: self.start())
         root.bind("<F2>", lambda e: self.stop())
-        root.bind_all("<space>", lambda e: "break")
 
         self._build_ui()
         self._redirect_output()
@@ -227,6 +255,19 @@ class App:
     @property
     def running(self):
         return self.running_event.is_set()
+
+    def _set_window_icon(self):
+        """设置窗口图标，返回 True=成功"""
+        try:
+            icon_path = config.resource_path("picture/icon/icon.ico")
+            if os.path.exists(icon_path):
+                from PIL import Image, ImageTk
+                self._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+                self.root.iconphoto(False, self._icon_photo)
+                return True
+        except Exception:
+            pass
+        return False
 
     @running.setter
     def running(self, value):
@@ -462,8 +503,10 @@ class App:
             if self._show_event is not None:
                 import win32event
                 if win32event.WaitForSingleObject(self._show_event, 0) == win32event.WAIT_OBJECT_0:
-                    self._show_window()
-                    print("ℹ️ 检测到外部打开请求，已显示窗口")
+                    # 运行期间忽略外部打开请求，避免主界面遮挡游戏窗口
+                    if not self.running:
+                        self._show_window()
+                        print("ℹ️ 检测到外部打开请求，已显示窗口")
         except Exception:
             pass
         try:
@@ -498,6 +541,7 @@ class App:
             self._quit_all()
 
     def _quit_all(self):
+        self._shutdown = True
         # 保存窗口大小和位置（最小化/托盘状态时先恢复再保存）
         try:
             if self.root.state() == 'iconic' or self.root.state() == 'withdrawn':
@@ -623,9 +667,6 @@ class App:
     def _start_periodic_tree_refresh(self):
         account_manager.start_periodic_tree_refresh(self)
 
-    def _test_recognition(self):
-        account_manager.test_recognition(self)
-
     def _show_asset_history(self):
         account_manager.show_asset_history(self)
 
@@ -635,9 +676,6 @@ class App:
         msg = f"机器指纹: {info['machine_id']}\n\n硬盘序列号: {info['disk_serial']}\n主板序列号: {info['board_serial']}\n来源: {info['source']}"
         from tkinter import messagebox
         messagebox.showinfo("机器指纹", msg)
-
-    def _crop_account_image(self):
-        account_manager.crop_account_image(self)
 
     def _show_cooldown_window(self):
         account_manager.show_cooldown_window(self)
@@ -681,6 +719,23 @@ class App:
     def _cooldown_watcher_loop(self):
         cooldown_watcher.cooldown_watcher_loop(self)
 
+    def _run_single_account(self):
+        """右键菜单：单独运行选中的账号"""
+        import automation_runner
+        sel = self.account_tree.selection()
+        if not sel:
+            return
+        if "separator" in self.account_tree.item(sel[0], "tags"):
+            return
+        idx = account_manager._tree_idx_to_account_idx(self, sel[0])
+        if idx >= len(self.qq_account_images):
+            return
+        if self.running:
+            messagebox.showwarning("提示", "已有任务在运行中，请等待完成后再试。", parent=self.root)
+            return
+        img_path = self.qq_account_images[idx]
+        automation_runner.start_single_account_run(self, img_path)
+
     def _check_any_account_ready(self):
         return cooldown_watcher.check_any_account_ready(self)
 
@@ -700,7 +755,8 @@ class App:
                     print("📡 检测到冷却触发信号，但程序正在运行或无账号，忽略")
         except Exception as e:
             print(f"⚠️ 检查冷却信号文件异常: {e}")
-        finally:
+        # 关闭时不重新调度
+        if not self._shutdown:
             self.root.after(30000, self._check_cooldown_signal)
 
     # --- 运行控制 ---
@@ -711,7 +767,13 @@ class App:
         automation_runner.stop_run(self)
 
     def update_ui(self, step_increment=False, account_text=None, account_file=None):
-        automation_runner.update_ui(self, step_increment, account_text, account_file)
+        if step_increment:
+            self.current_step += 1
+            self.progress['value'] = self.current_step
+        if account_text:
+            self.account_label.config(text=account_text)
+        if account_file:
+            self.current_account_file_label.config(text=account_file)
 
     def set_operation(self, text):
         automation_runner.set_operation(self, text)
@@ -784,10 +846,10 @@ class App:
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("next_run", text="下次运行时间")
         self.account_tree.heading("note", text="备注")
-        self.account_tree.column("name", width=50, minwidth=40, anchor=tk.W)
-        self.account_tree.column("asset", width=30, minwidth=20, anchor=tk.CENTER)
-        self.account_tree.column("next_run", width=50, minwidth=40, anchor=tk.CENTER)
-        self.account_tree.column("note", width=40, minwidth=30, anchor=tk.CENTER)
+        self.account_tree.column("name", width=120, minwidth=80, anchor=tk.W)
+        self.account_tree.column("asset", width=60, minwidth=40, anchor=tk.CENTER)
+        self.account_tree.column("next_run", width=100, minwidth=70, anchor=tk.CENTER)
+        self.account_tree.column("note", width=80, minwidth=50, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.account_tree.yview)
         self.account_tree.configure(yscrollcommand=scrollbar.set)
         self.account_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -796,6 +858,7 @@ class App:
         self.account_tree.tag_configure("cooling", foreground="#0078d4")   # 蓝色 - 冷却中
         self.account_tree.tag_configure("runnable", foreground="#4CAF50")  # 绿色 - 可运行
         self.account_tree.tag_configure("paused", foreground="#f44336")    # 红色 - 已暂停
+        self.account_tree.tag_configure("game_failed", foreground="#ff8c00")  # 黄色 - 游戏失败
         self.account_tree.tag_configure("separator", background="#e0e0e0")  # 分隔线
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
@@ -804,6 +867,7 @@ class App:
                   style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888').pack(side=tk.LEFT)
 
         self.account_menu = tk.Menu(self.root, tearoff=0)
+        self.account_menu.add_command(label="运行此账号", command=self._run_single_account)
         self.account_menu.add_command(label="查看资产记录", command=self._show_asset_history)
         self.account_menu.add_command(label="账号信息设置", command=self._show_account_note)
         self.account_menu.add_separator()
@@ -921,8 +985,8 @@ class App:
             pass
 
         # 重定向输出到新窗口
-        sys.stdout = RedirectText(log_area, self._log_file_path)
-        sys.stderr = RedirectText(log_area, self._log_file_path)
+        sys.stdout = RedirectText(log_area, self.root, self._log_file_path)
+        sys.stderr = RedirectText(log_area, self.root, self._log_file_path)
 
         # 主窗口移动时，日志窗口跟随
         def _follow_main(event=None):
@@ -965,12 +1029,12 @@ class App:
         self._log_win = None
         self._log_area_widget = None
         # 恢复输出到主窗口的隐藏 log_area
-        sys.stdout = RedirectText(self.log_area, self._log_file_path)
-        sys.stderr = RedirectText(self.log_area, self._log_file_path)
+        sys.stdout = RedirectText(self.log_area, self.root, self._log_file_path)
+        sys.stderr = RedirectText(self.log_area, self.root, self._log_file_path)
 
     def _redirect_output(self):
-        sys.stdout = RedirectText(self.log_area, self._log_file_path)
-        sys.stderr = RedirectText(self.log_area, self._log_file_path)
+        sys.stdout = RedirectText(self.log_area, self.root, self._log_file_path)
+        sys.stderr = RedirectText(self.log_area, self.root, self._log_file_path)
 
 
 def main():
@@ -978,9 +1042,9 @@ def main():
     config.WEGAME_PATH = config.APP_SETTINGS.get("wegame_path", "")
     config.CONFIDENCE = config.APP_SETTINGS["confidence"]
 
-    # 预加载 OCR 引擎（在后台初始化，避免使用时等待）
+    # 预加载 OCR 引擎（后台线程，不阻塞启动）
     import utils
-    utils.init_ocr_engine()
+    threading.Thread(target=utils.init_ocr_engine, daemon=True).start()
 
     root = tk.Tk()
     root.title("三角洲行动自动化工具")

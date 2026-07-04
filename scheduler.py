@@ -25,25 +25,11 @@ def set_next_wake_timer(app):
         next_run = None
 
         # 冷却完立即运行模式：取最早冷却到期时间
-        if app.settings.get("cooldown_run_immediately", False) and app.qq_account_images:
-            for img_path in app.qq_account_images:
-                cd_data = cooldown_manager._load_data()
-                basename = os.path.basename(img_path)
-                short_name = basename.split(":")[-1] if ":" in basename else basename
-                if short_name in cd_data:
-                    fname = short_name
-                elif img_path in cd_data:
-                    fname = img_path
-                else:
-                    fname = basename
-                cooling, next_time_str = cooldown_manager.is_cooling_down(fname)
-                if cooling and next_time_str:
-                    try:
-                        cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
-                        if next_run is None or cd_next < next_run:
-                            next_run = cd_next
-                    except Exception:
-                        pass
+        if app.settings.get("cooldown_run_immediately", False):
+            cd_data = cooldown_manager._load_data()
+            earliest = cooldown_manager.find_earliest_cooldown(cd_data)
+            if earliest and earliest > now:
+                next_run = earliest
 
         if next_run:
             wake_time = next_run - datetime.timedelta(minutes=5)
@@ -66,28 +52,9 @@ def update_cooldown_wake_timer(app):
         return
     try:
         now = datetime.datetime.now()
-        earliest_next = None
-        if app.qq_account_images:
-            for img_path in app.qq_account_images:
-                cd_data = cooldown_manager._load_data()
-                basename = os.path.basename(img_path)
-                short_name = basename.split(":")[-1] if ":" in basename else basename
-                if short_name in cd_data:
-                    fname = short_name
-                elif img_path in cd_data:
-                    fname = img_path
-                else:
-                    fname = basename
-                cooling, next_time_str = cooldown_manager.is_cooling_down(fname)
-                if cooling and next_time_str:
-                    try:
-                        cd_next = datetime.datetime.strptime(next_time_str, "%Y-%m-%d %H:%M:%S")
-                        if earliest_next is None or cd_next < earliest_next:
-                            earliest_next = cd_next
-                    except Exception:
-                        pass
-
-        if earliest_next:
+        cd_data = cooldown_manager._load_data()
+        earliest_next = cooldown_manager.find_earliest_cooldown(cd_data)
+        if earliest_next and earliest_next > now:
             wake_time = earliest_next - datetime.timedelta(minutes=5)
             min_gap = datetime.timedelta(seconds=60)
             if wake_time > now + min_gap:

@@ -189,12 +189,31 @@ def sell_operations(settings, stop_event, set_operation):
     return True, sell_stats
 
 
+def _ensure_game_focused():
+    """确保游戏窗口在前台，防止外部窗口遮挡导致识别失败"""
+    try:
+        import win32gui
+        for title in ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]:
+            hwnd = win32gui.FindWindow(None, title)
+            if hwnd:
+                if win32gui.IsIconic(hwnd):
+                    win32gui.ShowWindow(hwnd, 9)  # SW_RESTORE
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(0.3)
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def game_operations(settings, stop_event, set_operation, update_ui_callback=None):
     """
     执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
     返回 True=成功，False=失败
     """
     print("\n--- 进入游戏操作 ---")
+    _ensure_game_focused()
+
     set_operation("进入烽火地带")
     print("进入烽火地带...")
     for retry in range(5):
@@ -203,14 +222,15 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
             break
         print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/5)...")
+        _ensure_game_focused()
         time.sleep(5)
     else:
         print("❌ 5次重试后仍未找到烽火地带图标")
-        utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
-        return False
+        return "game_failed"
 
     time.sleep(5)
 
+    _ensure_game_focused()
     set_operation("进入大厅 / 特勤处")
     print("进入大厅...")
     pyautogui.press("Space")
@@ -229,8 +249,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         time.sleep(5)
     else:
         print("❌ 多次重试后仍未找到特勤处图标")
-        utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
-        return False
+        return "game_failed"
     time.sleep(0.5)
 
     selected_ops = settings.get("selected_operations", [])
@@ -251,13 +270,12 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         if stop_event.is_set():
             return False
         set_operation(f"处理 {fac_name}")
+        _ensure_game_focused()
         if not handle_facility(fac_img, prod_img, fac_name, stop_event, set_operation, update_ui_callback):
             if not stop_event.is_set():
                 print(f"❌ 处理{fac_name}失败，终止当前账号")
-                utils.kill_process(config.DELTA_PROCESS, wait_exit=False)
-                utils.kill_process(config.WEGAME_PROCESS)
-            all_success = False
-            break
+                all_success = False
+                break
         pyautogui.press("esc")
         time.sleep(0.5)
     if all_success:
@@ -291,8 +309,6 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
                     time.sleep(0.5)
                 pyautogui.press("esc")
                 time.sleep(0.5)
-            pyautogui.press("esc")
-            time.sleep(0.5)
             print("✅ 邮箱货币领取流程完成")
         else:
             print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")

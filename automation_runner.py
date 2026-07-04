@@ -27,31 +27,10 @@ import driver_keyboard
 import interception_keyboard
 
 # 三角洲行动窗口标题关键词
-DELTA_TITLES = ["三角洲行动", "Delta Force", "三角洲", "Delta"]
+DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]
 
-
-def _account_key(path):
-    """从账号路径提取账号标识（去掉 account: 前缀和 .png 后缀）"""
-    name = os.path.basename(path)
-    if name.startswith("account:"):
-        return name[len("account:"):]
-    return os.path.splitext(name)[0]
-
-
-def _get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（优先短名称，与暂停状态一致）"""
-    cd_data = cooldown_manager._load_data()
-    basename = os.path.basename(img_path)
-    # 去掉 account: 前缀的短名称
-    short_name = basename.split(":")[-1] if ":" in basename else basename
-    # 优先用短名称（暂停状态通常记录在短名称上）
-    if short_name in cd_data:
-        return short_name
-    if img_path in cd_data:
-        return img_path
-    if basename in cd_data:
-        return basename
-    return short_name
+# 统一使用 cooldown_manager.normalize_key
+_get_cooldown_key = cooldown_manager.normalize_key
 
 
 def _ensure_wegame_focused():
@@ -106,23 +85,49 @@ def _recognize_asset(app, asset_region):
             return None
 
         all_text = "".join(item[1] for item in result)
-        # 提取数字+小数点+单位(KMB)，过滤"现有资产"等无效文字
-        match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
+        # 提取数字 + 单位(KMB)
+        match = re.search(r'([\d,.]+)\s*([KMBkmb])', all_text)
         if match:
-            number = match.group(1)
+            raw_number = match.group(1)
             suffix = match.group(2).upper()
-            return f"{number}{suffix}"
+            # OCR 可能把逗号识别成小数点（如 66.271K 实际是 66,271K）
+            # K 单位不应有小数点，M/B 单位可以
+            if suffix == "K":
+                raw_number = raw_number.replace(".", "").replace(",", "")
+            else:
+                raw_number = raw_number.replace(",", "")
+            return _format_asset_display(raw_number, suffix)
         # 降级：清理非数字/KMB字符后重试
-        cleaned = re.sub(r'[^0-9.KMBkmb]', '', all_text)
-        match2 = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', cleaned)
+        cleaned = re.sub(r'[^0-9.,KMBkmb]', '', all_text)
+        match2 = re.search(r'([\d,.]+)\s*([KMBkmb])', cleaned)
         if match2:
-            number = match2.group(1)
+            raw_number = match2.group(1)
             suffix = match2.group(2).upper()
-            return f"{number}{suffix}"
+            if suffix == "K":
+                raw_number = raw_number.replace(".", "").replace(",", "")
+            else:
+                raw_number = raw_number.replace(",", "")
+            return _format_asset_display(raw_number, suffix)
         return None
     except Exception as e:
         print(f"⚠️ 资产识别失败: {e}")
         return None
+
+
+def _format_asset_display(raw_number, suffix):
+    """格式化资产显示：K 用逗号分隔，M 用整数（无小数点）"""
+    try:
+        value = float(raw_number)
+        if suffix == "K":
+            # K 单位：用逗号分隔显示，如 78,394K
+            return f"{int(value):,}K"
+        elif suffix == "M":
+            # M 单位：整数显示，如 78M、2100M
+            return f"{int(value)}M"
+        else:
+            return f"{raw_number}{suffix}"
+    except ValueError:
+        return f"{raw_number}{suffix}"
 
 
 def start_run(app):
@@ -136,13 +141,15 @@ def start_run(app):
     app.running = True
     app._stop_event.clear()
     app._user_stopped_cooldown = False  # 新运行开始，清除停止标志
-    app._ignore_cooldown_this_run = False  # 手动启动时重置冷却跳过标志，确保冷却检查生效
+    # 不重置 _ignore_cooldown_this_run，由调用方（冷却监听/信号触发）设置
     app._is_boot_startup = False  # 手动启动时重置开机标志
     app.current_step = 0
     app.progress['value'] = 0
     app.stats_label.config(text="")
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
     app._last_account_error = ""
+    app._consecutive_failures = {}  # 重置连续失败计数
+    app._cooldown_wait_done = False  # 重置冷却等待标志
     app.start_btn.config(state='disabled')
     app.stop_btn.config(state='normal')
     app.log_area.configure(state='normal')
@@ -157,11 +164,10 @@ def start_run(app):
 
 
 def stop_run(app):
-    """停止自动化任务"""
+    """停止自动化任务（不阻塞 UI，工作线程自行退出）"""
     if not app.running:
         return
     app._stop_event.set()
-    app.running = False
     # 标记用户主动停止，阻止冷却监听在短时间内重新触发
     app._user_stopped_cooldown = True
     app.start_btn.config(state='normal')
@@ -169,15 +175,166 @@ def stop_run(app):
     print("\n⏹ 停止信号已发送，将尽快终止...")
 
 
-def update_ui(app, step_increment=False, account_text=None, account_file=None):
-    """更新界面显示"""
-    if step_increment:
-        app.current_step += 1
-        app.progress['value'] = app.current_step
-    if account_text:
-        app.account_label.config(text=account_text)
-    if account_file:
-        app.current_account_file_label.config(text=account_file)
+def start_single_account_run(app, img_path):
+    """单独运行一个账号（右键菜单触发），运行完进入冷却，暂停账号保持暂停
+    不受冷却和暂停限制，用于快速登录进入游戏大厅手动操作"""
+    if app.running:
+        return
+    file_name = _get_cooldown_key(img_path)
+    # 记录暂停状态（运行完后恢复），但不阻止运行
+    was_paused = cooldown_manager.is_account_paused(file_name)
+    app._single_account_mode = True
+    app._single_account_was_paused = was_paused
+    app._single_account_img_path = img_path
+    # 启动运行（只跑这一个账号）
+    app.running = True
+    app._stop_event.clear()
+    app._user_stopped_cooldown = False
+    app._ignore_cooldown_this_run = False
+    app._is_boot_startup = False
+    app.current_step = 0
+    app.progress['value'] = 0
+    app.stats_label.config(text="")
+    app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
+    app._last_account_error = ""
+    app._consecutive_failures = {}
+    app.start_btn.config(state='disabled')
+    app.stop_btn.config(state='normal')
+    app.log_area.configure(state='normal')
+    app.log_area.delete('1.0', tk.END)
+    app.log_area.configure(state='disabled')
+    utils.prevent_sleep()
+    server_client.start_heartbeat(app)
+    app.work_thread = threading.Thread(target=_run_single_account_main, args=(app, img_path), daemon=True)
+    app.work_thread.start()
+
+
+def _run_single_account_main(app, img_path):
+    """单账号运行主函数：登录 → 进入游戏 → 按 Tab → 结束（不退出游戏）"""
+    processed_accounts = []
+    try:
+        file_name = _get_cooldown_key(img_path)
+        total = len(app.qq_account_images)
+        print(f"🟢 单账号运行：{file_name}")
+
+        if not _validate_daily(app):
+            return
+
+        _cleanup_processes(app)
+
+        # 关闭前台窗口，防止影响自动化
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                win32gui.PostMessage(hwnd, 0x0010, 0, 0)
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+        account_failed = False
+        account_interrupted = False
+
+        # 步骤1：登录 WeGame
+        if not _login_account(app, file_name, 0, total, processed_accounts):
+            account_failed = True
+
+        # 步骤2：找到三角洲图标并启动游戏
+        if not account_failed and not app._stop_event.is_set():
+            print("🔍 查找三角洲游戏图标...")
+            if not utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=10):
+                print("❌ 未找到三角洲游戏图标")
+                account_failed = True
+            else:
+                time.sleep(2)
+                # 点击启动按钮
+                if not utils.find_and_click_smart(config.DELTA_LAUNCH_BTN, timeout=10):
+                    print("❌ 未找到启动按钮")
+                    account_failed = True
+                else:
+                    print("✅ 游戏启动中，等待进入大厅...")
+                    # 等待游戏窗口出现
+                    game_loaded = False
+                    for _ in range(30):
+                        if app._stop_event.is_set():
+                            break
+                        for title in DELTA_TITLES:
+                            if utils.activate_window_by_title(title, partial_match=True,
+                                                               exclude_titles=["WeGame", "腾讯"]):
+                                game_loaded = True
+                                break
+                        if game_loaded:
+                            break
+                        time.sleep(2)
+
+                    if game_loaded:
+                        time.sleep(5)  # 等待游戏界面加载
+                        automation._ensure_game_focused()
+
+                        # 进入烽火地带
+                        print("进入烽火地带...")
+                        if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
+                            time.sleep(5)
+
+                            # 按 Space、Space、Tab 进入特勤处（与主流程一致）
+                            print("进入大厅...")
+                            pyautogui.press("Space")
+                            time.sleep(0.5)
+                            pyautogui.press("Space")
+                            time.sleep(0.8)
+                            pyautogui.press("Tab")
+                            time.sleep(1)
+
+                            # 等待1秒后进行资产识别
+                            _recognize_and_store_asset(app, stage="单账号")
+
+                            print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
+                            processed_accounts.append(f"{file_name} (已登录)")
+                        else:
+                            print("❌ 未找到烽火地带入口")
+                            account_failed = True
+                    else:
+                        print("❌ 未检测到游戏窗口")
+                        account_failed = True
+
+        if app._stop_event.is_set():
+            account_interrupted = True
+
+        if account_failed:
+            processed_accounts.append(f"{file_name} (登录失败)")
+        elif not account_interrupted:
+            # 单账号运行成功，记录冷却
+            if app.settings.get("enable_cooldown", False):
+                cd_hours = app.settings.get("cooldown_hours", 8)
+                cooldown_manager.record_run(file_name, cd_hours)
+                print(f"✅ 账号 {file_name} 单账号运行完成，记录冷却 {cd_hours} 小时")
+            processed_accounts.append(f"{file_name} (成功)")
+
+    except Exception as e:
+        print(f"❌ 运行出错: {e}")
+        traceback.print_exc()
+    finally:
+        app.run_stats["processed_accounts"] = processed_accounts
+        app.root.after(0, lambda: _on_single_account_finish(app))
+
+
+def _on_single_account_finish(app):
+    """单账号运行完成"""
+    if hasattr(app, '_single_account_img_path') and app._single_account_img_path:
+        file_name = _get_cooldown_key(app._single_account_img_path)
+        # 如果是暂停账号，保持暂停状态
+        if getattr(app, '_single_account_was_paused', False):
+            cooldown_manager.set_account_paused(file_name, True)
+            print(f"⏸️ 账号 {file_name} 原为暂停状态，已恢复暂停")
+    app._single_account_mode = False
+    on_finish(app)
+
+    # 检查是否有其他冷却完成的账号，优先运行（在后台线程执行，避免冻结 UI）
+    if app.settings.get("enable_cooldown", False):
+        def _check_and_run():
+            processed = []
+            _wait_and_run_nearby_cooldowns(app, processed)
+        threading.Thread(target=_check_and_run, daemon=True).start()
 
 
 def set_operation(app, text):
@@ -213,12 +370,17 @@ def _validate_daily(app):
 
 
 def _cleanup_processes(app):
-    """运行前清理 QQ、WeGame 和三角洲行动进程"""
+    """运行前清理 QQ、WeGame 和三角洲行动进程（并行杀进程，减少等待）"""
     print("🧹 运行前清理：退出 QQ、WeGame 和三角洲行动...")
     set_operation(app, "清理进程")
-    utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
-    utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
-    utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
+    import threading
+    threads = []
+    for proc_name in [config.DELTA_PROCESS, config.QQ_PROCESS, config.WEGAME_PROCESS]:
+        t = threading.Thread(target=utils.kill_process, args=(proc_name,), kwargs={"wait_exit": True, "max_wait": 10}, daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join(timeout=12)
     time.sleep(2)
 
 
@@ -233,11 +395,13 @@ def _login_account(app, account_name, i, total, processed_accounts):
     返回 True=成功"""
     set_operation(app, f"WeGame 登录 ({i+1}/{total})")
 
-    # 获取备注中的账号和密码（兼容完整路径和短名称两种 key）
+    # 获取备注中的账号和密码（兼容多种 key 格式）
     note_data = app._account_notes.get(account_name, {})
     if not note_data:
         # account_name 可能是 account:1120743539，备注中 key 是 1120743539
+        # 也可能是 1120743539.png，备注中 key 是 1120743539
         short_name = account_name.split(":")[-1] if ":" in account_name else account_name
+        short_name = os.path.splitext(short_name)[0]  # 去掉 .png 后缀
         note_data = app._account_notes.get(short_name, {})
     if isinstance(note_data, dict):
         login_account = note_data.get("account", "").strip()
@@ -259,6 +423,19 @@ def _login_account(app, account_name, i, total, processed_accounts):
 
     kb_backend = interception_keyboard.get_backend()
     print(f"⌨️ 键盘后端: {kb_backend}")
+
+    # 检查 Interception 驱动是否可用，不可用时根据设置决定是否重启
+    if not interception_keyboard.is_available():
+        if app.settings.get("restart_on_interception_fail", False):
+            print("❌ Interception 驱动不可用，正在重启电脑...")
+            import subprocess
+            subprocess.run(["shutdown", "/r", "/t", "10", "/c", "Interception 驱动不可用，自动重启以重新加载驱动"], capture_output=True)
+            app.root.after(0, lambda: messagebox.showinfo("提示", "Interception 驱动不可用，系统将在 10 秒后自动重启以重新加载驱动。"))
+            return False
+        else:
+            print("❌ Interception 驱动不可用，请安装驱动或在设置中开启「Interception 失败时自动重启电脑」")
+            app._last_account_error = "Interception 驱动不可用"
+            return False
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -317,7 +494,6 @@ def _login_account(app, account_name, i, total, processed_accounts):
             return False
 
         # 删除旧账号文本（Ctrl+A 全选 + Backspace）
-        import pyautogui
         pyautogui.hotkey('ctrl', 'a')
         time.sleep(0.1)
         pyautogui.press('backspace')
@@ -369,9 +545,23 @@ def _login_account(app, account_name, i, total, processed_accounts):
             print(f"⚠️ 未找到登录确认按钮，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已点击登录确认按钮")
-        time.sleep(3)
 
-        # 检查登录是否成功（WeGame 窗口仍存在且不再显示登录界面）
+        # 轮询检查登录结果（最多 8 秒，每 2 秒检查一次）
+        login_ok = False
+        for _ in range(4):
+            time.sleep(2)
+            if utils.find_and_click_smart(config.LOGIN_AGAIN, timeout=2):
+                print(f"⚠️ 检测到重新登录按钮，登录失败，重试...")
+                break
+            if utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=2):
+                login_ok = True
+                break
+        else:
+            # 4 次检查都没发现异常，假设登录成功
+            login_ok = True
+
+        if not login_ok:
+            continue
         print(f"✅ 账号 {account_name} WeGame 登录成功")
         return True
 
@@ -407,10 +597,6 @@ def _launch_game(app):
         app._last_account_error = msg
         utils.kill_process(config.WEGAME_PROCESS)
         return False
-
-    # 资产识别
-    _recognize_and_store_asset(app)
-    time.sleep(2)  # 资产识别缓冲
 
     launch_found = False
     for retry in range(3):
@@ -449,34 +635,54 @@ def _launch_game(app):
             print(f"⏳ 游戏已启动，额外等待 {extra_wait} 秒...")
             time.sleep(extra_wait)
     else:
-        print("⚠️ 未检测到游戏窗口，继续尝试操作...")
+        msg = "未检测到游戏窗口"
+        print(f"❌ {msg}，跳过此账号")
+        app._last_account_error = msg
+        return False
 
-    if not game_operations_wrapper(app):
+    # 第一次资产识别（按 Tab 进入大厅后，game_operations 中会按 Tab 进入特勤处）
+    _recognize_and_store_asset(app, stage="第一次")
+
+    ops_result = game_operations_wrapper(app)
+    if ops_result == "game_failed":
+        msg = "游戏内操作失败（识别问题）"
+        print(f"❌ {msg}，跳过此账号")
+        app._last_account_error = msg
+        return "game_failed"
+    if not ops_result:
         if app._stop_event.is_set():
-            return False
+            return "interrupted"
         msg = "游戏内操作失败"
         print(f"❌ {msg}，跳过此账号")
         app._last_account_error = msg
         return False
-    return not app._stop_event.is_set()
+
+    # 第二次资产识别（游戏内操作完成后，资产数值已更新）
+    _recognize_and_store_asset(app, stage="第二次")
+    return True
 
 
-def _recognize_and_store_asset(app):
-    """执行资产识别并存储结果"""
-    settings = config.load_settings()
+def _recognize_and_store_asset(app, stage=""):
+    """执行资产识别并存储结果
+    stage: 识别阶段标识（如"第一次"、"第二次"），用于日志区分
+    如果两次都成功，第二次结果会覆盖第一次（使用最新的资产数值）
+    """
+    settings = app.settings
     if not settings.get("enable_asset_recognition", False):
         return
-    set_operation(app, "识别资产")
+    label = f"（{stage}）" if stage else ""
+    set_operation(app, f"识别资产{label}")
     asset_region = settings.get("asset_region", [0, 0, 0, 0])
     if not asset_region or asset_region[2] <= 0 or asset_region[3] <= 0:
         return
-    print(f"🔍 正在识别资产区域：{asset_region}")
+    print(f"🔍 正在识别资产区域{label}：{asset_region}")
     time.sleep(4)
     asset_value = _recognize_asset(app, asset_region)
     if asset_value:
-        print(f"💰 识别到资产：{asset_value}")
+        print(f"💰 {stage}识别到资产：{asset_value}")
         if app._current_account_name:
             app._account_assets[app._current_account_name] = asset_value
+            print(f"💰 资产存储到：{app._current_account_name}，当前所有资产：{app._account_assets}")
             if app._current_account_name not in app._asset_history:
                 app._asset_history[app._current_account_name] = []
             app._asset_history[app._current_account_name].append({
@@ -486,13 +692,27 @@ def _recognize_and_store_asset(app):
             asset_db.record_asset(app._current_account_name, asset_value)
             app.root.after(0, app._refresh_account_tree)
     else:
-        print("ℹ️ 未识别到资产数值")
+        print(f"ℹ️ {stage}未识别到资产数值" if stage else "ℹ️ 未识别到资产数值")
 
 
 def _close_game(app):
     """关闭三角洲游戏窗口"""
     set_operation(app, "关闭三角洲游戏")
     print("\n--- 关闭三角洲游戏 ---")
+    # 先激活游戏窗口再发送 Alt+F4，避免关闭其他窗口
+    for title in DELTA_TITLES:
+        hwnd = utils.find_window_by_title(title, partial_match=True)
+        if hwnd:
+            try:
+                import win32gui
+                if win32gui.IsIconic(hwnd):
+                    import win32con
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(0.3)
+            except Exception:
+                pass
+            break
     for _ in range(3):
         pyautogui.hotkey('alt', 'f4')
         time.sleep(0.5)
@@ -536,6 +756,12 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         if not app._user_stopped_cooldown:
             error_msg = getattr(app, '_last_account_error', '未知错误')
             email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts, error_msg)
+        # 连续失败计数
+        app._consecutive_failures[account_name] = app._consecutive_failures.get(account_name, 0) + 1
+        if app._consecutive_failures[account_name] >= 2:
+            cooldown_manager.set_account_paused(account_name, True)
+            print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，已自动暂停")
+            processed_accounts[-1] = f"{account_name} (失败-自动暂停)"
     else:
         if app.settings.get("enable_cooldown", False):
             cd_hours = app.settings.get("cooldown_hours", 8)
@@ -543,6 +769,8 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         app.run_stats["success"] += 1
         processed_accounts.append(f"{account_name} (成功)")
         server_client.update_account_status(app, account_name, "success")
+        # 成功则重置连续失败计数
+        app._consecutive_failures.pop(account_name, None)
 
 
 def _wait_and_run_nearby_cooldowns(app, processed_accounts):
@@ -552,7 +780,12 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
     now = datetime.datetime.now()
     expired = []
     for name, entry in all_cooldowns.items():
+        # 检查暂停状态（兼容多种 key 格式）
         if entry.get("account_paused") or entry.get("paused"):
+            continue
+        # 用短名称再检查一次暂停状态（防止多 key 导致漏检）
+        short_name = name.split(":")[-1] if ":" in name else name
+        if short_name != name and cooldown_manager.is_account_paused(short_name):
             continue
         next_run_str = entry.get("next_run_time", "")
         if not next_run_str:
@@ -581,12 +814,28 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
                 _run_single_account(app, img_path, len(app.qq_account_images), processed_accounts)
 
     # 第二步：检查 10 分钟内到期的账号，等待执行
+    # _cooldown_wait_done 控制是否执行等待：
+    #   False = 首次调用（主循环前），只运行已到期账号，不等待
+    #   True  = 第二次调用（主循环后），执行等待
+    #   "done" = 已经等待过了，不再重复
+    if not hasattr(app, '_cooldown_wait_done'):
+        app._cooldown_wait_done = False
+    if app._cooldown_wait_done == "done":
+        return
+    if not app._cooldown_wait_done:
+        app._cooldown_wait_done = True
+        return  # 首次调用，只运行已到期账号，不等待
+    app._cooldown_wait_done = "done"
     while not app._stop_event.is_set():
         all_cooldowns = cooldown_manager.get_all_cooldowns()
         now = datetime.datetime.now()
         nearby = []  # (剩余秒数, 账号名)
         for name, entry in all_cooldowns.items():
             if entry.get("account_paused") or entry.get("paused"):
+                continue
+            # 用短名称再检查一次暂停状态
+            short_name = name.split(":")[-1] if ":" in name else name
+            if short_name != name and cooldown_manager.is_account_paused(short_name):
                 continue
             next_run_str = entry.get("next_run_time", "")
             if not next_run_str:
@@ -642,6 +891,11 @@ def _run_single_account(app, img_path, total, processed_accounts):
     """运行单个账号（从冷却等待中调用）"""
     file_name = _get_cooldown_key(img_path)
     app._current_account_name = file_name
+    # 计算实际账号序号
+    try:
+        idx = app.qq_account_images.index(img_path) + 1
+    except ValueError:
+        idx = total
     server_client.update_account_status(app, file_name, "running")
     app.run_stats["total"] += 1
     account_failed = False
@@ -650,7 +904,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
     if app._stop_event.is_set():
         account_interrupted = True
     if not account_interrupted:
-        if not _login_account(app, file_name, 0, total, processed_accounts):
+        if not _login_account(app, file_name, idx - 1, total, processed_accounts):
             account_failed = True
     if not account_failed and app._stop_event.is_set():
         account_interrupted = True
@@ -667,6 +921,17 @@ def _run_single_account(app, img_path, total, processed_accounts):
                 launch_result = _launch_game(app)
                 if launch_result is False or launch_result == "relogin":
                     account_failed = True
+        elif launch_result == "game_failed":
+            # 游戏内操作失败（识别问题），设置1天冷却，用户自行处理
+            print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
+            app.run_stats["fail"] += 1
+            cooldown_manager.record_run(file_name, 24)  # 24小时冷却
+            cooldown_manager.mark_game_failed(file_name)
+            processed_accounts.append(f"{file_name} (游戏失败-1天冷却)")
+            server_client.update_account_status(app, file_name, "failed")
+            _close_game(app)
+            _cleanup_account_processes(app)
+            return
         elif launch_result is False:
             if app._stop_event.is_set():
                 account_interrupted = True
@@ -706,14 +971,24 @@ def run_script_main(app):
         print(f"🟢 run_script_main() 已启动，ignore_cooldown={app._ignore_cooldown_this_run}")
         total = len(app.qq_account_images)
 
+        # 关闭前台窗口，防止影响自动化流程
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                win32gui.PostMessage(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+                time.sleep(0.5)
+        except Exception:
+            pass
+
         if not _validate_daily(app):
             return
 
         _cleanup_processes(app)
 
         print("=" * 55)
-        print("  QQ 登录 + WeGame 快捷登录 + 三角洲行动 多账号轮换脚本")
-        print(f"  本轮将处理 {total} 个 QQ 账号")
+        print("  WeGame 直接登录 + 三角洲行动 多账号轮换脚本")
+        print(f"  本轮将处理 {total} 个账号")
         print("=" * 55)
 
         # 开始前检查是否有即将到期的账号（10分钟内），等待并运行
@@ -726,6 +1001,7 @@ def run_script_main(app):
 
             file_name = _get_cooldown_key(img_path)
             app._current_account_name = file_name
+            app._last_account_error = ""  # 每个账号开始前清除上一个账号的错误
 
             if cooldown_manager.is_account_paused(file_name):
                 print(f"⏸️ 账号 {file_name} 已暂停，跳过。")
@@ -733,20 +1009,17 @@ def run_script_main(app):
                 server_client.update_account_status(app, file_name, "idle")
                 continue
 
-            # 冷却检查：冷却到期/定时触发可跳过冷却；开机启动始终遵守冷却
-            skip_cooldown = app._ignore_cooldown_this_run and not app._is_boot_startup
-            if app.settings.get("enable_cooldown", False) and not skip_cooldown:
+            # 冷却检查：无论是否由冷却触发，都要检查每个账号的冷却状态
+            if app.settings.get("enable_cooldown", False):
                 cooling, next_time = cooldown_manager.is_cooling_down(file_name)
                 if cooling:
                     print(f"⏸️ 账号 {file_name} 冷却中，跳过。下次运行时间：{next_time}")
                     processed_accounts.append(f"{file_name} (冷却中)")
                     server_client.update_account_status(app, file_name, "cooling")
                     continue
-            elif skip_cooldown:
-                print(f"ℹ️ 冷却检查已跳过（冷却到期/定时任务触发）: {file_name}")
 
             acc_text = f"第 {i+1}/{total} 个账号"
-            app.root.after(0, update_ui, app, False, acc_text, file_name)
+            app.root.after(0, app.update_ui, False, acc_text, file_name)
             print(f"\n{'='*40}")
             print(f"    {acc_text}  -  {file_name}")
             print(f"{'='*40}")
@@ -778,8 +1051,19 @@ def run_script_main(app):
                         launch_result = _launch_game(app)
                         if launch_result is False or launch_result == "relogin":
                             account_failed = True
-                elif launch_result is False:
-                    if app._stop_event.is_set():
+                elif launch_result == "game_failed":
+                    # 游戏内操作失败，设置1天冷却
+                    print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
+                    app.run_stats["fail"] += 1
+                    cooldown_manager.record_run(file_name, 24)
+                    cooldown_manager.mark_game_failed(file_name)
+                    processed_accounts.append(f"{file_name} (游戏失败-1天冷却)")
+                    server_client.update_account_status(app, file_name, "failed")
+                    _close_game(app)
+                    _cleanup_account_processes(app)
+                    break  # 跳过后续账号，进入等待冷却阶段
+                elif launch_result is False or launch_result == "interrupted":
+                    if app._stop_event.is_set() or launch_result == "interrupted":
                         account_interrupted = True
                     else:
                         account_failed = True
@@ -820,7 +1104,7 @@ def game_operations_wrapper(app):
     """执行游戏内操作，返回 True=成功，False=失败"""
     result = automation.game_operations(
         app.settings, app._stop_event, lambda text: set_operation(app, text),
-        update_ui_callback=lambda: app.root.after(0, update_ui, app, True))
+        update_ui_callback=lambda: app.root.after(0, app.update_ui, True))
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)
     if isinstance(result, tuple):
         success, extra = result
@@ -864,12 +1148,6 @@ def on_finish(app):
 
     # 设置下一次唤醒定时器
     app._set_next_wake_timer()
-
-    # 调度器健康检查：如果调度器线程已退出，重新启动
-    if app.settings.get("auto_start", False):
-        if not app._schedule_thread or not app._schedule_thread.is_alive():
-            print("⚠️ 检测到调度器线程已退出，正在重新启动...")
-            scheduler.start_scheduler(app)
 
     # 冷却监听健康检查：确保冷却到期监听线程正常运行
     if app.settings.get("cooldown_run_immediately", False):
@@ -935,8 +1213,9 @@ def build_accounts_html(app, processed_accounts):
         return ""
     items = []
     for acc in processed_accounts:
-        # acc 格式: "xxx.png (成功)" 或 "xxx.png (失败)" 或 "xxx.png (冷却中)"
-        account_name = acc.split(" (")[0] if " (" in acc else acc
+        # acc 格式: "xxx (成功)" 或 "xxx (失败)" 或 "xxx (冷却中)"
+        # 用 rsplit 从右边分割，避免账号名中包含 ( 的情况
+        account_name = acc.rsplit(" (", 1)[0] if " (" in acc else acc
         asset = app._account_assets.get(account_name, "")
         asset_text = f"　｜　资产：{html.escape(asset)}" if asset else ""
         next_run = "未启用"

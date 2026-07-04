@@ -90,10 +90,12 @@ def heartbeat_loop(app):
 
 def send_heartbeat(app, server_url, client_key, machine_id):
     """发送一次心跳到服务器，处理远程指令"""
+    import cooldown_manager
     accounts = []
     for img_path in app.qq_account_images:
+        cd_key = cooldown_manager.normalize_key(img_path)
         fname = os.path.basename(img_path)
-        status = app._account_status.get(fname, "idle")
+        status = app._account_status.get(cd_key, "idle")
         accounts.append({"name": fname, "status": status})
 
     url = f"{server_url}/api/v1/heartbeat"

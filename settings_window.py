@@ -40,6 +40,7 @@ class SettingsWindow:
         # 自动任务设置变量
         self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
         self.cooldown_scheduled_task_var = tk.BooleanVar(value=app.settings.get("cooldown_scheduled_task_enabled", True))
+        self.restart_on_interception_fail_var = tk.BooleanVar(value=app.settings.get("restart_on_interception_fail", False))
 
         # 操作选择变量
         selected = app.settings.get("selected_operations", [])
@@ -359,6 +360,13 @@ class SettingsWindow:
         ttk.Label(cooldown_frame, text="开启后即使程序未运行，冷却到期也会通过系统定时任务自动启动程序执行",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
+        cd_row5 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row5.pack(fill=tk.X, pady=(4, 4))
+        ttk.Checkbutton(cd_row5, text="Interception 驱动失败时自动重启电脑",
+                       variable=self.restart_on_interception_fail_var).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Label(cooldown_frame, text="开启后运行时如果检测到 Interception 驱动不可用，将自动重启电脑重新加载驱动",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
         # ----- 开机自启动 -----
         autostart_frame = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=10)
         autostart_frame.pack(fill=tk.X, pady=(8, 8))
@@ -491,13 +499,16 @@ class SettingsWindow:
                   state='readonly', font=('Consolas', 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(frame_fp, text="此指纹用于服务器绑定验证，需告知管理员添加到白名单后方可使用",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
-        # 自动加载指纹
-        try:
-            import machine_fingerprint
-            info = machine_fingerprint.get_machine_info()
-            self._fingerprint_var.set(info["machine_id"])
-        except Exception:
-            self._fingerprint_var.set("获取失败")
+        # 异步加载指纹（避免阻塞 UI）
+        def _load_fingerprint():
+            try:
+                import machine_fingerprint
+                info = machine_fingerprint.get_machine_info()
+                self.win.after(0, self._fingerprint_var.set, info["machine_id"])
+            except Exception:
+                self.win.after(0, self._fingerprint_var.set, "获取失败")
+        import threading
+        threading.Thread(target=_load_fingerprint, daemon=True).start()
 
         # ----- 自动关机 -----
         frame_shutdown = ttk.LabelFrame(parent, text="  自动关机  ", style='SettingsCard.TLabelframe', padding=12)
@@ -609,31 +620,11 @@ class SettingsWindow:
         self._dev_login_status = ttk.Label(frame_login, text="", style='SettingsSmall.TLabel')
         self._dev_login_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
-        # ----- 图像识别测试 -----
-        frame_img = ttk.LabelFrame(parent, text="  图像识别测试  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_img.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(frame_img, text="测试模板图片是否能正确识别",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
-
-        img_btn_frame = ttk.Frame(frame_img, style='SettingsInner.TFrame')
-        img_btn_frame.pack(fill=tk.X)
-
-        ttk.Button(img_btn_frame, text="测试 account_select", style='TButton',
-                   command=lambda: self._test_image_recognition("ACCOUNT_SELECT"), width=18).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(img_btn_frame, text="测试 Input", style='TButton',
-                   command=lambda: self._test_image_recognition("IMAGE_INPUT_FIELD"), width=12).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(img_btn_frame, text="测试 Sign-in", style='TButton',
-                   command=lambda: self._test_image_recognition("SIGN_IN"), width=14).pack(side=tk.LEFT)
-
-        self._dev_img_status = ttk.Label(frame_img, text="", style='SettingsSmall.TLabel')
-        self._dev_img_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
-
         # ----- 驱动键盘测试 -----
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_kb, text="测试 Interception / PyDirectInput 驱动级键盘",
+        ttk.Label(frame_kb, text="测试 Interception 驱动级键盘",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         kb_btn_frame = ttk.Frame(frame_kb, style='SettingsInner.TFrame')
@@ -659,8 +650,6 @@ class SettingsWindow:
         proc_btn_frame = ttk.Frame(frame_proc, style='SettingsInner.TFrame')
         proc_btn_frame.pack(fill=tk.X)
 
-        ttk.Button(proc_btn_frame, text="清理 QQ", style='TButton',
-                   command=lambda: self._test_kill_process("QQ"), width=10).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(proc_btn_frame, text="清理 WeGame", style='TButton',
                    command=lambda: self._test_kill_process("WeGame"), width=12).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(proc_btn_frame, text="清理三角洲", style='TButton',
@@ -683,8 +672,6 @@ class SettingsWindow:
 
         ttk.Button(win_btn_frame, text="查找 WeGame 窗口", style='TButton',
                    command=lambda: self._test_find_window("WeGame"), width=16).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(win_btn_frame, text="查找 QQ 窗口", style='TButton',
-                   command=lambda: self._test_find_window("QQ"), width=14).pack(side=tk.LEFT)
 
         self._dev_win_status = ttk.Label(frame_win, text="", style='SettingsSmall.TLabel')
         self._dev_win_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
@@ -704,6 +691,144 @@ class SettingsWindow:
 
         self._dev_ocr_status = ttk.Label(frame_ocr, text="", style='SettingsSmall.TLabel')
         self._dev_ocr_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 图片识别置信度测试 -----
+        frame_conf = ttk.LabelFrame(parent, text="  图片识别置信度测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_conf.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_conf, text="点击模板名称，在屏幕上识别并返回置信度（匹配当前设置的置信度）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        ttk.Button(frame_conf, text="打开置信度测试窗口", style='TButton',
+                   command=self._open_confidence_test_window, width=20).pack(anchor=tk.W, padx=5)
+
+    def _open_confidence_test_window(self):
+        """打开图片识别置信度测试窗口"""
+        import config as cfg
+        win = tk.Toplevel(self.win)
+        win.title("图片识别置信度测试")
+        win.resizable(True, True)
+        win.minsize(400, 300)
+        win.transient(self.win)
+        win.grab_set()
+        utils.set_window_icon(win)
+        utils.restore_window_geometry(win, "confidence_test_geometry", "500x600", (400, 300))
+
+        # 标题
+        ttk.Label(win, text="点击模板名称，识别屏幕并返回置信度",
+                  font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(10, 5))
+        ttk.Label(win, text=f"当前匹配置信度：{self.confidence_var.get():.2f}",
+                  font=('Microsoft YaHei UI', 9), foreground='#666').pack(pady=(0, 5))
+
+        # 结果显示
+        result_var = tk.StringVar(value="等待测试...")
+        result_label = ttk.Label(win, textvariable=result_var,
+                                font=('Consolas', 10), foreground='#333')
+        result_label.pack(pady=(0, 10))
+
+        # 滚动区域
+        canvas = tk.Canvas(win, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def _on_mousewheel(event):
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except tk.TclError:
+                pass
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 分组
+        section_headers = {
+            "Produce_TechCenter": "产出项",
+            "DELTA_GAME_ICON": "WeGame 登录",
+            "Hazard_Operations": "游戏内导航",
+            "Tech_Center": "设施操作",
+            "MAKE": "制造操作",
+            "Warehouse": "一键出售",
+            "EMAIL_MAIL": "邮箱货币",
+        }
+
+        def _test_template(var_name, rel_path, name, btn):
+            """测试单个模板的识别置信度"""
+            import cv2
+            import numpy as np
+            btn.config(state='disabled')
+            result_var.set(f"正在识别: {name}...")
+            win.update_idletasks()
+
+            try:
+                # 截取全屏
+                screen = utils._screenshot_gray()
+                if screen is None:
+                    result_var.set("截图失败")
+                    btn.config(state='normal')
+                    return
+
+                # 加载模板
+                template = utils._imread_unicode(config.resolve_template_path(rel_path))
+                if template is None:
+                    result_var.set(f"模板加载失败: {rel_path}")
+                    btn.config(state='normal')
+                    return
+
+                # 转灰度
+                if len(template.shape) == 3:
+                    template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+                # 匹配
+                confidence = float(self.confidence_var.get())
+                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+                h, w = template.shape[:2]
+                if max_val >= confidence:
+                    result_var.set(f"✅ {name}: 置信度 {max_val:.4f} (阈值 {confidence:.2f}) 坐标({max_loc[0]},{max_loc[1]})")
+                    result_label.config(foreground='#27ae60')
+                else:
+                    result_var.set(f"❌ {name}: 置信度 {max_val:.4f} (阈值 {confidence:.2f}) 未达标")
+                    result_label.config(foreground='#e74c3c')
+            except Exception as e:
+                result_var.set(f"错误: {e}")
+                result_label.config(foreground='#e74c3c')
+            finally:
+                btn.config(state='normal')
+
+        seq_num = 0
+        for var_name, rel_path, name, hint in cfg.TEMPLATE_CAPTURE_LIST:
+            if var_name in section_headers:
+                hdr = ttk.Frame(inner)
+                hdr.pack(fill=tk.X, pady=(8, 2), padx=5)
+                ttk.Label(hdr, text=section_headers[var_name],
+                         font=('Microsoft YaHei UI', 9, 'bold'), foreground='#2c3e50').pack(side=tk.LEFT)
+                ttk.Separator(inner, orient='horizontal').pack(fill=tk.X, padx=5, pady=(0, 2))
+
+            seq_num += 1
+            row = ttk.Frame(inner)
+            row.pack(fill=tk.X, padx=5, pady=1)
+
+            ttk.Label(row, text=f"{seq_num}.", width=3, foreground='#999').pack(side=tk.LEFT)
+            btn = ttk.Button(row, text=name, width=25,
+                           command=lambda v=var_name, r=rel_path, n=name, b=None: _test_template(v, r, n, b))
+            # 需要在创建后绑定自身引用
+            btn.configure(command=lambda v=var_name, r=rel_path, n=name, b=btn: _test_template(v, r, n, b))
+            btn.pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(row, text=hint, font=('Microsoft YaHei UI', 8), foreground='#999').pack(side=tk.LEFT)
+
+        # 关闭时清理
+        def _on_close():
+            utils.save_window_geometry(win, "confidence_test_geometry")
+            try:
+                canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _test_account_login(self):
         """测试账号登录流程（WeGame 直接登录）"""
@@ -744,57 +869,19 @@ class SettingsWindow:
 
         threading.Thread(target=_run_test, daemon=True).start()
 
-    def _test_image_recognition(self, config_name):
-        """测试图像识别"""
-        import config
-        img_path = getattr(config, config_name, None)
-        if not img_path:
-            self._dev_img_status.config(text=f"配置 {config_name} 不存在", foreground="#e74c3c")
-            return
-
-        self._dev_img_status.config(text=f"正在识别 {config_name}...", foreground="#3498db")
-        self.win.update()
-
-        import threading
-        def _run_test():
-            try:
-                import utils
-                found = utils.find_multiscale(img_path, timeout=5)
-                if found:
-                    self.win.after(0, lambda: self._dev_img_status.config(
-                        text=f"✓ 找到 {config_name}", foreground="#27ae60"))
-                else:
-                    self.win.after(0, lambda: self._dev_img_status.config(
-                        text=f"✗ 未找到 {config_name}", foreground="#e74c3c"))
-            except Exception as e:
-                self.win.after(0, lambda: self._dev_img_status.config(
-                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
-
-        threading.Thread(target=_run_test, daemon=True).start()
-
     def _test_ola_status(self):
-        """测试驱动键盘状态"""
+        """测试 Interception 驱动键盘状态"""
         try:
             import interception_keyboard
-            import driver_keyboard
             inter_ok = interception_keyboard.is_available()
-            inter_backend = interception_keyboard.get_backend()
-            di_ok = driver_keyboard.is_available()
-            di_backend = driver_keyboard.get_backend()
-            parts = []
             if inter_ok:
-                parts.append(f"Interception ✓")
+                self._dev_kb_status.config(
+                    text="Interception ✓ | 驱动可用",
+                    foreground="#27ae60")
             else:
-                parts.append(f"Interception ✗")
-            if di_ok:
-                parts.append(f"PyDirectInput ✓")
-            else:
-                parts.append(f"PyDirectInput ✗")
-            status = " | ".join(parts)
-            login_kb = inter_backend if inter_ok else di_backend
-            self._dev_kb_status.config(
-                text=f"{status}  |  登录使用: {login_kb}",
-                foreground="#27ae60" if (inter_ok or di_ok) else "#f39c12")
+                self._dev_kb_status.config(
+                    text="Interception ✗ | 驱动不可用",
+                    foreground="#e74c3c")
         except Exception as e:
             self._dev_kb_status.config(text=f"✗ 检测异常: {e}", foreground="#e74c3c")
 
@@ -855,7 +942,6 @@ class SettingsWindow:
     def _test_kill_process(self, process_name):
         """测试清理指定进程"""
         process_map = {
-            "QQ": config.QQ_PROCESS,
             "WeGame": config.WEGAME_PROCESS,
             "DeltaForce": config.DELTA_PROCESS,
         }
@@ -1516,14 +1602,14 @@ class SettingsWindow:
             # 拼接所有识别到的文本
             all_text = "".join(item[1] for item in result)
 
-            # 匹配资产格式：数字+K/M/B（过滤"现有资产"等无效文字）
-            match = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', all_text)
+            # 匹配资产格式：数字（含逗号分隔）+K/M/B（过滤"现有资产"等无效文字）
+            match = re.search(r'([\d,]+\.?\d*)\s*([KMBkmb])', all_text)
             if match:
                 asset_str = f"{match.group(1)}{match.group(2).upper()}"
             else:
                 # 降级：清理非数字/KMB字符后重试
-                cleaned = re.sub(r'[^0-9.KMBkmb]', '', all_text)
-                match2 = re.search(r'(\d+\.?\d*)\s*([KMBkmb])', cleaned)
+                cleaned = re.sub(r'[^0-9,KMBkmb]', '', all_text)
+                match2 = re.search(r'([\d,]+\.?\d*)\s*([KMBkmb])', cleaned)
                 if match2:
                     asset_str = f"{match2.group(1)}{match2.group(2).upper()}"
                 else:
@@ -1611,6 +1697,7 @@ class SettingsWindow:
         # 冷却执行设置
         fresh["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
         fresh["cooldown_scheduled_task_enabled"] = self.cooldown_scheduled_task_var.get()
+        fresh["restart_on_interception_fail"] = self.restart_on_interception_fail_var.get()
 
         # 如果关闭了定时任务兜底，删除已有的定时任务
         if not self.cooldown_scheduled_task_var.get():

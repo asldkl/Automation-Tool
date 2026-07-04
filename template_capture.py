@@ -88,8 +88,9 @@ class TemplateCaptureWizard:
         # 设置窗口图标
         utils.set_window_icon(self.win)
 
-        self._build_ui()
-        self._update_progress()
+        # 先显示窗口，再异步构建 UI（避免窗口打开卡顿）
+        self._build_header()
+        self.win.after(10, self._build_body)
         # 恢复上次窗口大小和位置
         utils.restore_window_geometry(self.win, "template_capture_geometry", "550x700", (300, 400))
         # 关闭按钮保存窗口大小
@@ -100,7 +101,8 @@ class TemplateCaptureWizard:
         utils.save_window_geometry(self.win, "template_capture_geometry")
         self.win.destroy()
 
-    def _build_ui(self):
+    def _build_header(self):
+        """立即构建：标题、进度条、底部按钮（窗口打开时立即显示）"""
         # 标题
         header = ttk.Frame(self.win)
         header.pack(fill=tk.X, padx=30, pady=(15, 5))
@@ -118,6 +120,25 @@ class TemplateCaptureWizard:
         self.progress_label.pack(side=tk.LEFT)
         self.progress_bar = ttk.Progressbar(prog_frame, length=200, mode='determinate')
         self.progress_bar.pack(side=tk.RIGHT)
+
+        # 底部按钮（先 pack 到底部，确保始终可见）
+        btn_frame = ttk.Frame(self.win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(5, 15))
+        ttk.Button(btn_frame, text="一键重置", command=self._reset_all_templates, width=12).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="完成", command=self._finish, width=12).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
+
+        # 加载中提示
+        self._loading_label = ttk.Label(self.win, text="正在加载模板列表...",
+                                        font=('Microsoft YaHei UI', 10), foreground='#999')
+        self._loading_label.pack(expand=True)
+
+    def _build_body(self):
+        """延迟构建：滚动列表和模板行（窗口显示后再填充）"""
+        # 移除加载提示
+        if hasattr(self, '_loading_label') and self._loading_label:
+            self._loading_label.destroy()
+            self._loading_label = None
 
         # 滚动列表
         list_frame = ttk.Frame(self.win)
@@ -229,13 +250,6 @@ class TemplateCaptureWizard:
             if var_name == produce_order[-1]:
                 sep = ttk.Separator(self.scroll_frame, orient='horizontal')
                 sep.pack(fill=tk.X, pady=8, padx=10)
-
-        # 底部按钮（先 pack 到底部，确保始终可见）
-        btn_frame = ttk.Frame(self.win)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(5, 15))
-        ttk.Button(btn_frame, text="一键重置", command=self._reset_all_templates, width=12).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text="完成", command=self._finish, width=12).pack(side=tk.RIGHT, padx=(0, 8))
-        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
 
         # 售卖物品提示（已移至设置 → 售卖物品 Tab）
         sell_sep = ttk.Separator(self.win, orient='horizontal')

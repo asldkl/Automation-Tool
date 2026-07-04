@@ -1,6 +1,6 @@
 """
 工具函数模块
-包含启动应用程序、窗口激活、图像识别点击、WeGame 快捷登录、进程强制结束等
+包含启动应用程序、窗口激活、图像识别点击、进程强制结束、电源管理等
 """
 import time
 import threading
@@ -136,6 +136,7 @@ def wait_for_window(title_contains, timeout=30, partial_match=True, exclude_titl
 # 模板图片缓存，LRU 淘汰避免内存无限增长
 _MAX_CACHE_SIZE = 50
 _template_cache = {}
+_template_cache_lock = threading.Lock()
 
 def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
     """cv2.imread 不支持非 ASCII 路径（如中文），用 np.fromfile + cv2.imdecode 替代"""
@@ -147,22 +148,24 @@ def _imread_unicode(path, flags=cv2.IMREAD_GRAYSCALE):
 
 def _cache_get(key):
     """LRU 缓存读取：命中时移至末尾（最近使用）"""
-    template = _template_cache.pop(key, None)
-    if template is not None:
-        _template_cache[key] = template
-    return template
+    with _template_cache_lock:
+        template = _template_cache.pop(key, None)
+        if template is not None:
+            _template_cache[key] = template
+        return template
 
 def _cache_put(key, value):
     """LRU 缓存写入：超限时淘汰最早条目"""
-    if len(_template_cache) >= _MAX_CACHE_SIZE:
-        oldest = next(iter(_template_cache))
-        del _template_cache[oldest]
-    _template_cache[key] = value
+    with _template_cache_lock:
+        if len(_template_cache) >= _MAX_CACHE_SIZE:
+            oldest = next(iter(_template_cache))
+            del _template_cache[oldest]
+        _template_cache[key] = value
 
 def clear_template_cache():
     """清除模板缓存（用于重新截图后刷新）"""
-    global _template_cache
-    _template_cache.clear()
+    with _template_cache_lock:
+        _template_cache.clear()
 
 def _match_template(gray_screen, template, threshold):
     """标准灰度模板匹配，返回 (matched, max_val, max_loc, (h, w))"""
@@ -252,11 +255,6 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1,
                                 clicks, x_offset, y_offset, multiscale=False, return_pos=False)
 
 
-def find_and_click_pos(img_path, timeout=20, region=None, confidence=None):
-    """在当前屏幕中查找图片并点击中心点，返回 (是否成功, (x,y))"""
-    return _find_and_click_core(img_path, timeout, region, confidence,
-                                multiscale=False, return_pos=True)
-
 def _match_template_multiscale(gray_screen, template, threshold, scales=None):
     """
     多尺度复合模板匹配：结合灰度匹配和边缘匹配，充分利用头像轮廓、名称文字、
@@ -319,47 +317,7 @@ def _match_template_multiscale(gray_screen, template, threshold, scales=None):
             best_h, best_w = sh, sw
 
     matched = best_val >= threshold
-    return matched, best_val, best_loc, best_scale, (best_h, best_w)
-
-
-def find_and_click_multiscale(img_path, timeout=20, region=None, confidence=None):
-    """多尺度复合图像识别 + 点击，返回是否成功"""
-    return _find_and_click_core(img_path, timeout, region, confidence,
-                                multiscale=True, return_pos=False)
-
-
-def find_multiscale(img_path, timeout=20, region=None, confidence=None):
-    """多尺度复合图像识别，仅检测不点击，返回 True/False"""
-    threshold = confidence if confidence is not None else CONFIDENCE
-    resolved = config.resolve_template_path(img_path)
-    template = _cache_get(resolved)
-    if template is None:
-        template = _imread_unicode(resolved)
-        if template is None:
-            print(f"❌ 图片文件不存在或无法读取：{resolved}")
-            return False
-        _cache_put(resolved, template)
-
-    start = time.time()
-    while time.time() - start < timeout:
-        gray = _screenshot_gray(region)
-        if gray is None:
-            time.sleep(0.5)
-            continue
-        matched, max_val, _, scale, _ = _match_template_multiscale(
-            gray, template, threshold)
-        if matched:
-            if scale != 1.0:
-                print(f"🔍 复合匹配成功（仅检测）：缩放 {scale:.2f}x，置信度 {max_val:.3f}")
-            return True
-        time.sleep(0.3)
-    return False
-
-
-def find_and_click_pos_multiscale(img_path, timeout=20, region=None, confidence=None):
-    """多尺度复合图像识别 + 点击，返回 (是否成功, (x,y))"""
-    return _find_and_click_core(img_path, timeout, region, confidence,
-                                multiscale=True, return_pos=True)
+    return matched, best_val, best_loc, (best_h, best_w)
 
 
 def kill_process(process_name, wait_exit=True, max_wait=30):
@@ -511,81 +469,6 @@ def schedule_shutdown(delay_seconds=120):
         return False
 
 
-def cancel_shutdown():
-    """取消待执行的关机计划。返回 True 表示成功"""
-    import subprocess
-    try:
-        subprocess.run(
-            ["shutdown", "/a"],
-            check=True, capture_output=True, timeout=5
-        )
-        return True
-    except Exception:
-        return False
-
-
-def schedule_startup_task(time_str):
-    """
-    使用 Windows Task Scheduler 创建每日定时任务。
-    在睡眠/休眠状态下可唤醒电脑并启动本程序。
-    time_str: "HH:MM" 格式
-    """
-    import subprocess, sys, tempfile
-
-    if getattr(sys, 'frozen', False):
-        exe_path = sys.executable
-        ps_script = f"""$a = New-ScheduledTaskAction -Execute '"{exe_path}"' -Argument '--auto-start'
-"""
-    else:
-        python_exe = sys.executable
-        script_path = os.path.abspath(sys.argv[0]) if sys.argv[0] else os.path.abspath(__file__)
-        ps_script = f"""$a = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ('/c "{python_exe}" "{script_path}" --auto-start')
-"""
-
-    ps_script += f"""$t = New-ScheduledTaskTrigger -Daily -At '{time_str}'
-$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -StartWhenAvailable
-$p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName 'DeltaAutoTool_Wake' -Action $a -Trigger $t -Settings $s -Principal $p -Force
-"""
-    tmp_path = None
-    try:
-        fd, tmp_path = tempfile.mkstemp(suffix='.ps1', prefix='delta_task_')
-        with os.fdopen(fd, 'w', encoding='utf-8-sig') as f:
-            f.write(ps_script)
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp_path],
-            check=True, capture_output=True, text=True, timeout=15
-        )
-        print(f"✅ 已创建定时开机任务：每天 {time_str}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"⚠️ 设置定时开机任务失败: {e.stderr if e.stderr else e}")
-        return False
-    except Exception as e:
-        print(f"⚠️ 设置定时开机任务失败: {e}")
-        return False
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-
-
-def remove_startup_task():
-    """删除之前创建的定时开机唤醒任务"""
-    import subprocess
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Unregister-ScheduledTask -TaskName 'DeltaAutoTool_Wake' -Confirm:$false"],
-            check=True, capture_output=True, timeout=15
-        )
-        return True
-    except Exception:
-        return False
-
-
 # ==================== 邮件通知 ====================
 def send_email_notification(smtp_code, sender_email, receiver_email, subject, body):
     """
@@ -635,25 +518,29 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
 _ocr_engine = None
 _ocr_failed = False                          # True = OCR 引擎初始化失败，全局不可用
 _ocr_failures = {}                           # var_name → [failure_timestamps]，连续失败后临时禁用
+_ocr_failures_lock = threading.Lock()        # 线程安全锁
 _OCR_MAX_FAILURES = 3                        # 连续失败次数阈值
 _OCR_DISABLE_SECONDS = 300                   # 临时禁用时长（5分钟），超时自动恢复
 
 def _ocr_is_disabled(var_name):
     """检查指定 var_name 是否因连续失败被临时禁用（5分钟后自动恢复）"""
-    timestamps = _ocr_failures.get(var_name, [])
-    now = time.time()
-    cutoff = now - _OCR_DISABLE_SECONDS
-    recent = [t for t in timestamps if t > cutoff]
-    _ocr_failures[var_name] = recent
-    return len(recent) >= _OCR_MAX_FAILURES
+    with _ocr_failures_lock:
+        timestamps = _ocr_failures.get(var_name, [])
+        now = time.time()
+        cutoff = now - _OCR_DISABLE_SECONDS
+        recent = [t for t in timestamps if t > cutoff]
+        _ocr_failures[var_name] = recent
+        return len(recent) >= _OCR_MAX_FAILURES
 
 def _ocr_record_failure(var_name):
     """记录一次 OCR 失败"""
-    _ocr_failures.setdefault(var_name, []).append(time.time())
+    with _ocr_failures_lock:
+        _ocr_failures.setdefault(var_name, []).append(time.time())
 
 def _ocr_record_success(var_name):
     """OCR 成功后清除该 var_name 的失败记录"""
-    _ocr_failures.pop(var_name, None)
+    with _ocr_failures_lock:
+        _ocr_failures.pop(var_name, None)
 
 def init_ocr_engine():
     """预初始化 RapidOCR 引擎。程序启动时调用，失败则标记 _ocr_failed"""
@@ -726,21 +613,6 @@ def ocr_recognize(region=None):
         return []
 
 
-def ocr_find(text, region=None, timeout=20, confidence=0.8):
-    """
-    在屏幕指定区域查找包含指定文本的内容（仅检测，不点击）。
-    返回: True/False
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        results = ocr_recognize(region)
-        for recognized_text, conf, bbox in results:
-            if conf >= confidence and text in recognized_text:
-                return True
-        time.sleep(1)
-    return False
-
-
 def _click_pos_valid(cx, cy):
     """检查点击坐标是否在屏幕有效范围内（边缘 10px 留白）"""
     screen_w, screen_h = pyautogui.size()
@@ -783,32 +655,6 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
             if others:
                 print(f"  ℹ️ 区域内识别到：{', '.join(others[:5])}")
             first_scan = False
-        time.sleep(1)
-    return False
-
-
-def ocr_find_and_click_offset(text, region=None, timeout=20, confidence=0.8, x_offset=0, y_offset=0):
-    """
-    在屏幕指定区域查找包含指定文本的内容并点击（支持偏移）。
-    返回: True（找到并点击）/ False（超时未找到）
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        results = ocr_recognize(region)
-        for recognized_text, conf, bbox in results:
-            if conf >= confidence and text in recognized_text:
-                cx = int((bbox[0] + bbox[2]) / 2) + x_offset
-                cy = int((bbox[1] + bbox[3]) / 2) + y_offset
-                if not _click_pos_valid(cx, cy):
-                    continue
-                try:
-                    smooth_move_to(cx, cy, duration=0.2)
-                    pyautogui.click()
-                except pyautogui.FailSafeException:
-                    print("⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
-                    time.sleep(0.5)
-                    continue
-                return True
         time.sleep(1)
     return False
 
@@ -921,10 +767,10 @@ def set_window_icon(win):
 
 # ==================== 资产数值解析/格式化 ====================
 def parse_asset_value(val_str):
-    """将资产字符串转为数值，如 '1.2M' → 1200000"""
+    """将资产字符串转为数值，如 '78,394K' → 78394000, '1.2M' → 1200000"""
     if not val_str or val_str == "0":
         return 0
-    val_str = val_str.strip().upper()
+    val_str = val_str.strip().upper().replace(",", "")
     multipliers = {"K": 1000, "M": 1_000_000, "B": 1_000_000_000}
     for suffix, mult in multipliers.items():
         if val_str.endswith(suffix):
@@ -954,17 +800,6 @@ def format_asset_num(val):
 # ==================== 冷却到期定时任务兜底 ====================
 COOLDOWN_SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown_signal")
 COOLDOWN_TASK_NAME = "DeltaAutoTool_Cooldown"
-
-
-def write_cooldown_signal():
-    """写入冷却触发信号文件（定时任务触发时调用，通知已有实例）"""
-    try:
-        import datetime
-        with open(COOLDOWN_SIGNAL_PATH, "w", encoding="utf-8") as f:
-            f.write(datetime.datetime.now().isoformat())
-        print(f"[OK] 已写入冷却触发信号文件")
-    except Exception as e:
-        print(f"[WARN] 写入冷却信号文件失败: {e}")
 
 
 def check_cooldown_signal():

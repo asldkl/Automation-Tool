@@ -44,14 +44,6 @@ def resolve_template_path(config_path):
 # ==================== 售卖物品目录 ====================
 SELL_ITEMS_DIR = os.path.join(os.path.expanduser("~"), ".delta_auto_sell_items")
 
-def get_sell_items():
-    """获取用户上传的售卖物品模板列表，返回路径列表"""
-    if not os.path.exists(SELL_ITEMS_DIR):
-        return []
-    items = sorted([f for f in os.listdir(SELL_ITEMS_DIR)
-                    if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))])
-    return [os.path.join(SELL_ITEMS_DIR, f) for f in items]
-
 # ==================== 售卖物品元数据 ====================
 ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
 ITEMS_META_BACKUP = os.path.join(SELL_ITEMS_DIR, "items_meta.backup.json")
@@ -163,9 +155,10 @@ DEFAULT_SETTINGS = {
     # 冷却管理
     "enable_cooldown": False,         # 是否启用账号冷却
     "cooldown_hours": 8,              # 冷却小时数（默认8小时）
-    "cooldown_delay_minutes": 1,      # 账号间隔时间（0-5分钟，默认1）
+    "cooldown_delay_minutes": 0,      # 账号间隔时间（0-5分钟）
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
+    "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
     "window_geometry": "",                   # 主窗口大小和位置（自动保存/恢复）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
@@ -177,6 +170,7 @@ DEFAULT_SETTINGS = {
     "global_ocr_geometry": "",               # 全局OCR设置窗口大小和位置
     "account_info_geometry": "",             # 账号信息设置窗口大小和位置
     "ocr_template_setting_geometry": "",     # 模板OCR设置窗口大小和位置
+    "confidence_test_geometry": "",          # 置信度测试窗口大小和位置
     "global_text_config_geometry": "",       # 全局文本配置窗口大小和位置
     "custom_cooldown_geometry": "",          # 自定义冷却时间窗口大小和位置
     "cooldown_window_geometry": "",          # 账号冷却状态窗口大小和位置
@@ -201,6 +195,7 @@ DEFAULT_SETTINGS = {
     # 资产识别
     "enable_asset_recognition": False,           # 是否启用资产识别
     "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]
+    "asset_conversion_ratios": {},              # 每个账号的资产转换比例 {account_name: ratio}
     "asset_ocr_confidence": 0.7,                 # 资产识别置信度
 }
 
@@ -236,17 +231,24 @@ def load_settings():
             return dict(_settings_cache)
 
 def save_settings(settings):
-    """保存用户设置到 JSON 文件（线程安全）"""
+    """保存用户设置到 JSON 文件（原子写入，线程安全）"""
     global _settings_cache, _settings_cache_mtime
     with _settings_lock:
+        tmp_path = SETTINGS_JSON_PATH + ".tmp"
         try:
-            with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(settings, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, SETTINGS_JSON_PATH)
             # 保存后立即更新缓存
             _settings_cache = dict(settings)
             _settings_cache_mtime = os.path.getmtime(SETTINGS_JSON_PATH)
         except Exception as e:
             print(f"⚠️ 保存设置失败：{e}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
 # ==================== 自动获取 WeGame 路径 ====================
 def get_wegame_path_from_reg():
