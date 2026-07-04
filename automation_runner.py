@@ -327,8 +327,9 @@ def _on_single_account_finish(app):
         if getattr(app, '_single_account_was_paused', False):
             cooldown_manager.set_account_paused(file_name, True)
             print(f"⏸️ 账号 {file_name} 原为暂停状态，已恢复暂停")
-    app._single_account_mode = False
+    # 先调用 on_finish（内部会检查 _single_account_mode 跳过邮件和关机），再清除标志
     on_finish(app)
+    app._single_account_mode = False
 
     # 检查是否有其他冷却完成的账号，优先运行（在后台线程执行，避免冻结 UI）
     if app.settings.get("enable_cooldown", False):
@@ -1171,21 +1172,26 @@ def on_finish(app):
         print(f"   {stats_text}")
         print(f"{'='*40}")
 
-    # 发送邮件通知（手动终止时不发送）
-    if not app._user_stopped_cooldown:
+    # 发送邮件通知（手动终止或单账号模式时不发送）
+    if not app._user_stopped_cooldown and not getattr(app, '_single_account_mode', False):
         processed_accounts = stats.get("processed_accounts", [])
         email_notifier.send_run_report_email(app, stats, elapsed, processed_accounts)
     else:
-        print("⏹ 用户手动终止，跳过邮件通知")
+        if getattr(app, '_single_account_mode', False):
+            print("ℹ️ 单账号模式，跳过邮件通知")
+        else:
+            print("⏹ 用户手动终止，跳过邮件通知")
 
-    # 运行完成后延迟关机（手动终止时不执行）
-    if not app._user_stopped_cooldown:
+    # 运行完成后延迟关机（手动终止或单账号模式时不执行）
+    if not app._user_stopped_cooldown and not getattr(app, '_single_account_mode', False):
         shutdown_delay = app.settings.get("post_run_shutdown_delay", 0)
         if shutdown_delay > 0:
             delay_seconds = shutdown_delay * 60
             utils.schedule_shutdown(delay_seconds)
             print(f"🔌 所有账号运行完毕，系统将在 {shutdown_delay} 分钟后关机")
             print(f"   如需取消关机，请在命令行执行: shutdown /a")
+    elif getattr(app, '_single_account_mode', False):
+        print("ℹ️ 单账号模式，跳过延时关机")
 
     # 刷新账号列表（更新冷却状态和颜色）
     account_manager.refresh_account_tree(app)
