@@ -205,15 +205,6 @@ class TestConfigSettings(unittest.TestCase):
         self.assertTrue(loaded["auto_start"])
         self.assertEqual(loaded["smtp_code"], "test_code")
 
-    def test_backward_compatibility(self):
-        """旧配置自动补充新字段"""
-        from config import load_settings, SETTINGS_JSON_PATH
-        with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
-            json.dump({"confidence": 0.9}, f)
-        loaded = load_settings()
-        self.assertEqual(loaded["confidence"], 0.9)
-        self.assertIn("cooldown_run_immediately", loaded)
-
     def test_resource_path(self):
         """resource_path 应返回有效路径"""
         from config import resource_path

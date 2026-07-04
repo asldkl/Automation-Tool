@@ -23,46 +23,6 @@ def normalize_key(img_path):
     return basename
 
 
-def migrate_cooldown_keys():
-    """迁移冷却数据中的旧 key 格式为统一的短名称格式"""
-    with _lock:
-        data = _load_data()
-        changed = False
-        new_data = {}
-        for old_key, entry in data.items():
-            new_key = normalize_key(old_key)
-            if new_key in new_data:
-                # 合并重复 key（保留有数据的）
-                existing = new_data[new_key]
-                # 合并字段，不覆盖已有的有效数据
-                for k, v in entry.items():
-                    if k not in existing or (v and not existing.get(k)):
-                        existing[k] = v
-            else:
-                new_data[new_key] = entry
-            if new_key != old_key:
-                changed = True
-        if changed:
-            _save_data(new_data)
-            print(f"[OK] 冷却数据 key 迁移完成，{len(data)} -> {len(new_data)} 条记录")
-        return changed
-
-def get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（统一短名称格式）
-    优先从冷却数据中查找匹配的 key，找不到则用 normalize_key。
-    """
-    cd_data = _load_data()
-    short_name = normalize_key(img_path)
-    if short_name in cd_data:
-        return short_name
-    basename = os.path.basename(img_path)
-    if basename in cd_data:
-        return normalize_key(basename)
-    if img_path in cd_data:
-        return normalize_key(img_path)
-    return short_name
-
-
 # 内存缓存：避免每次读操作都访问磁盘
 _cache = None
 _cache_mtime = 0.0
@@ -159,6 +119,7 @@ def record_run(account_name, cooldown_hours=8):
         _save_data(data)
 
     # 新增：创建定时任务兜底（在锁外调用，避免死锁）
+    # 不重复创建：只有最早冷却时间变化时才更新
     try:
         import config
         import utils
@@ -166,9 +127,11 @@ def record_run(account_name, cooldown_hours=8):
         if settings.get("cooldown_scheduled_task_enabled", True):
             earliest = find_earliest_cooldown(data)
             if earliest:
-                # 延后 2 分钟，确保账号冷却已完全结束
-                earliest_with_buffer = earliest + datetime.timedelta(minutes=2)
-                utils.create_cooldown_scheduled_task(earliest_with_buffer)
+                earliest_key = earliest.strftime("%Y-%m-%d %H:%M")
+                if getattr(record_run, '_last_task_time', None) != earliest_key:
+                    record_run._last_task_time = earliest_key
+                    earliest_with_buffer = earliest + datetime.timedelta(minutes=2)
+                    utils.create_cooldown_scheduled_task(earliest_with_buffer)
     except Exception as e:
         print(f"⚠️ 创建冷却定时任务失败: {e}")
 

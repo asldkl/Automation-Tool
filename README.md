@@ -157,6 +157,11 @@ Tkinter / OpenCV / PyAutoGUI / psutil / pywin32 / pystray+Pillow / RapidOCR / Py
 - 程序绑定机器指纹，复制到其他电脑无法运行，验证失败时弹窗显示本机指纹
 - 服务器不可用时程序无法运行，请确保服务器在线
 
+## 贡献者
+
+- **开发团队** — 项目开发与维护
+- **Claude (Anthropic)** — AI 辅助代码审查、Bug 修复、代码优化与文档完善
+
 ## 免责声明
 
 本工具仅供个人学习研究使用，请勿用于违反游戏用户协议的行为。

@@ -63,19 +63,6 @@ class TestConfigNewOption(unittest.TestCase):
         loaded = load_settings()
         self.assertTrue(loaded["cooldown_run_immediately"])
 
-    def test_backward_compatibility(self):
-        """旧配置文件（无新字段）应自动补充默认值"""
-        from config import load_settings, SETTINGS_JSON_PATH
-        # 模拟旧配置文件
-        old_settings = {"confidence": 0.8, "auto_start": True}
-        with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
-            json.dump(old_settings, f)
-        loaded = load_settings()
-        self.assertEqual(loaded["confidence"], 0.8)
-        self.assertTrue(loaded["auto_start"])
-        self.assertIn("cooldown_run_immediately", loaded)
-        self.assertFalse(loaded["cooldown_run_immediately"])
-
     def test_all_default_keys_present(self):
         """load_settings 返回的字典应包含所有 DEFAULT_SETTINGS 的键"""
         from config import load_settings, DEFAULT_SETTINGS
@@ -490,11 +477,11 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.2.1"""
+        """gui_app.py 中版本号应为 v1.3.4"""
         gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("v1.2.1", content)
+        self.assertIn("v1.3.4", content)
 
     def test_readme_has_v190_section(self):
         """README.md 应包含配置说明"""

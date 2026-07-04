@@ -55,16 +55,12 @@ def load_accounts(app):
     try:
         with open(ACCOUNTS_JSON_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # 兼容旧格式（纯列表 → 丢弃，不再使用 WeGame 账号列表）
-        if isinstance(data, list):
-            app.qq_account_images = []
-        else:
-            app.qq_account_images = list(data.get("qq", []))
-            # 只保留当前存在的账号对应的资产和备注数据
-            current_names = {_account_key_from_path(p) for p in app.qq_account_images}
-            app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
-            app._asset_history = {k: v for k, v in data.get("asset_history", {}).items() if k in current_names}
-            app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
+        app.qq_account_images = list(data.get("qq", []))
+        # 只保留当前存在的账号对应的资产和备注数据
+        current_names = {_account_key_from_path(p) for p in app.qq_account_images}
+        app._account_assets = {k: v for k, v in data.get("assets", {}).items() if k in current_names}
+        app._asset_history = {k: v for k, v in data.get("asset_history", {}).items() if k in current_names}
+        app._account_notes = {k: v for k, v in data.get("notes", {}).items() if k in current_names}
         # 刷新账号列表
         refresh_account_tree(app)
         print(f"✅ 已加载 {len(app.qq_account_images)} 个账号")

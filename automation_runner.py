@@ -214,6 +214,7 @@ def _run_single_account_main(app, img_path):
     processed_accounts = []
     try:
         file_name = _get_cooldown_key(img_path)
+        app._current_account_name = file_name
         total = len(app.qq_account_images)
         print(f"🟢 单账号运行：{file_name}")
 
@@ -395,14 +396,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
     返回 True=成功"""
     set_operation(app, f"WeGame 登录 ({i+1}/{total})")
 
-    # 获取备注中的账号和密码（兼容多种 key 格式）
     note_data = app._account_notes.get(account_name, {})
-    if not note_data:
-        # account_name 可能是 account:1120743539，备注中 key 是 1120743539
-        # 也可能是 1120743539.png，备注中 key 是 1120743539
-        short_name = account_name.split(":")[-1] if ":" in account_name else account_name
-        short_name = os.path.splitext(short_name)[0]  # 去掉 .png 后缀
-        note_data = app._account_notes.get(short_name, {})
     if isinstance(note_data, dict):
         login_account = note_data.get("account", "").strip()
         login_password = note_data.get("password", "").strip()

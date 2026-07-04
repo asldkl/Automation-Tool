@@ -62,7 +62,9 @@ def cooldown_watcher_loop(app):
                 # 自动移除已过期的冷却记录
                 expired = cooldown_manager.remove_expired_cooldowns()
                 if expired:
-                    print(f"🔔 冷却完成，已从冷却列表移除：{', '.join(expired)}")
+                    if not hasattr(app, '_last_expired_log') or app._last_expired_log != set(expired):
+                        app._last_expired_log = set(expired)
+                        print(f"🔔 冷却完成，已从冷却列表移除：{', '.join(expired)}")
 
                 if not app.running and app.qq_account_images:
                     now = datetime.datetime.now()

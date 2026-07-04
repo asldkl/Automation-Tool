@@ -333,7 +333,7 @@ def kill_process(process_name, wait_exit=True, max_wait=30):
                 pass
 
     if not killed:
-        print(f"⚠️ 未找到进程 {process_name}，可能已退出")
+        # 进程已退出，静默返回（正常清理场景无需日志重复输出）
         return True
 
     if wait_exit:

@@ -203,12 +203,6 @@ class App:
         # 初始化样式
         self._setup_styles()
 
-        # 冷却数据 key 迁移（旧格式 -> 统一短名称）
-        try:
-            cooldown_manager.migrate_cooldown_keys()
-        except Exception as e:
-            print(f"⚠️ 冷却数据迁移失败: {e}")
-
         # 快捷键
         root.bind("<F1>", lambda e: self.start())
         root.bind("<F2>", lambda e: self.stop())
@@ -752,7 +746,9 @@ class App:
                     else:
                         print("📡 检测到冷却触发信号，但所有账号都暂停或冷却中，忽略")
                 else:
-                    print("📡 检测到冷却触发信号，但程序正在运行或无账号，忽略")
+                    if not hasattr(self, '_last_signal_skip') or not self._last_signal_skip:
+                        self._last_signal_skip = True
+                        print("📡 检测到冷却触发信号，但程序正在运行或无账号，忽略")
         except Exception as e:
             print(f"⚠️ 检查冷却信号文件异常: {e}")
         # 关闭时不重新调度
@@ -817,7 +813,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.2.1  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.3.4  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
