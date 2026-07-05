@@ -304,11 +304,15 @@ def _run_single_account_main(app, img_path):
         if account_failed:
             processed_accounts.append(f"{file_name} (登录失败)")
         elif not account_interrupted:
-            # 单账号运行成功，记录冷却
+            # 单账号运行成功：如果在冷却中则保留剩余时间，不重置冷却
             if app.settings.get("enable_cooldown", False):
-                cd_hours = app.settings.get("cooldown_hours", 8)
-                cooldown_manager.record_run(file_name, cd_hours)
-                print(f"✅ 账号 {file_name} 单账号运行完成，记录冷却 {cd_hours} 小时")
+                is_cooling, remaining = cooldown_manager.is_cooling_down(file_name)
+                if not is_cooling:
+                    cd_hours = app.settings.get("cooldown_hours", 8)
+                    cooldown_manager.record_run(file_name, cd_hours)
+                    print(f"✅ 账号 {file_name} 单账号运行完成，记录冷却 {cd_hours} 小时")
+                else:
+                    print(f"ℹ️ 账号 {file_name} 原有冷却剩余 {remaining}，保持不变")
             processed_accounts.append(f"{file_name} (成功)")
 
     except Exception as e:
