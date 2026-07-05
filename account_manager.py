@@ -1034,6 +1034,8 @@ def show_asset_history(app):
         # 清空内存中的资产数据
         app._account_assets[account_name] = "0"
         app._asset_history[account_name] = []
+        # 立即保存账号文件，防止重启后旧数据重新出现
+        save_accounts(app)
         # 刷新主界面账号列表
         refresh_account_tree(app)
         # 刷新资产监测窗口（如果打开）
