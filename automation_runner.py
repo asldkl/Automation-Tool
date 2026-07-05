@@ -685,6 +685,8 @@ def _recognize_and_store_asset(app, stage=""):
                 "value": asset_value
             })
             asset_db.record_asset(app._current_account_name, asset_value)
+            import account_manager
+            account_manager.save_accounts(app)
             app.root.after(0, app._refresh_account_tree)
     else:
         print(f"ℹ️ {stage}未识别到资产数值" if stage else "ℹ️ 未识别到资产数值")
@@ -1110,6 +1112,8 @@ def game_operations_wrapper(app):
                 app._account_assets[app._current_account_name] = extra["asset"]
                 # 写入 SQLite 持久化记录
                 asset_db.record_asset(app._current_account_name, extra["asset"])
+                import account_manager
+                account_manager.save_accounts(app)
                 app.root.after(0, app._refresh_account_tree)
         return success
     return result
