@@ -166,13 +166,13 @@ class TemplateCaptureWizard:
 
         # 分组定义：(标题, 起始变量名集合)
         section_headers = {
-            "Produce_TechCenter": "产出项设置",
-            "DELTA_GAME_ICON": "WeGame 登录",
+            "ACCOUNT_SELECT": "wegame登录和游戏启动",
             "Hazard_Operations": "游戏内导航",
             "Tech_Center": "设施操作",
+            "Produce_TechCenter": "产出项设置",
             "MAKE": "制造操作",
-            "Warehouse": "一键出售",
             "EMAIL_MAIL": "邮箱货币",
+            "Warehouse": "一键出售",
         }
         produce_vars = {"Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"}
         produce_order = ["Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"]
