@@ -110,7 +110,7 @@ class TemplateCaptureWizard:
         ttk.Label(header, text=f"当前分辨率：{self.resolution_key}",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.RIGHT)
 
-        ttk.Label(self.win, text="请按照提示逐个截取模板图片。点击「截取」后，在屏幕上框选需要识别的区域。",
+        ttk.Label(self.win, text="请按照提示逐个截取模板图片，点击「截取」",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(padx=30, anchor='w')
 
         # 进度
@@ -119,7 +119,7 @@ class TemplateCaptureWizard:
         self.progress_label = ttk.Label(prog_frame, text="", font=('Microsoft YaHei UI', 9))
         self.progress_label.pack(side=tk.LEFT)
         self.progress_bar = ttk.Progressbar(prog_frame, length=200, mode='determinate')
-        self.progress_bar.pack(side=tk.RIGHT)
+        self.progress_bar.pack(side=tk.LEFT, padx=(0, 8))
 
         # 底部按钮（先 pack 到底部，确保始终可见）
         btn_frame = ttk.Frame(self.win)
@@ -163,6 +163,15 @@ class TemplateCaptureWizard:
             except tk.TclError:
                 pass
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # ORB批量匹配上传按钮（列表顶部）
+        orb_frame = ttk.Frame(self.scroll_frame)
+        orb_frame.pack(fill=tk.X, pady=(5, 5))
+        orb_btn = ttk.Button(orb_frame, text="🔍 图片匹配上传", style='Accent.TButton',
+                             command=self._image_match_upload, width=30)
+        orb_btn.pack(side=tk.LEFT, padx=2)
+        ttk.Label(orb_frame, text="上传截图自动匹配最佳模板",
+                  font=('Microsoft YaHei UI', 8), foreground='#7f8c8d').pack(side=tk.LEFT, padx=5)
 
         # 分组定义：(标题, 起始变量名集合)
         section_headers = {
@@ -276,7 +285,7 @@ class TemplateCaptureWizard:
     def _update_progress(self):
         done = sum(1 for s in self.status.values() if s == "done")
         total = len(self.status)
-        self.progress_label.config(text=f"已完成 {done}/{total}")
+        self.progress_label.config(text=f"{done}/{total}")
         self.progress_bar['maximum'] = total
         self.progress_bar['value'] = done
 
@@ -989,6 +998,238 @@ class TemplateCaptureWizard:
         px = (win.winfo_screenwidth() - pw) // 2
         py = (win.winfo_screenheight() - ph) // 2
         win.geometry(f"+{px}+{py}")
+
+    def _image_match_upload(self):
+        self._show_match_results()
+
+    def _run_matching(self, img_data):
+        """使用 pHash 感知哈希算法进行图片匹配"""
+        import cv2
+        import numpy as np
+        user_img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
+        if user_img is None:
+            return []
+
+        def _phash(img):
+            img32 = cv2.resize(img, (32, 32), interpolation=cv2.INTER_AREA)
+            img32f = np.float32(img32)
+            dct = cv2.dct(img32f)
+            dct_low = dct[:8, :8]
+            avg = np.mean(dct_low[1:])
+            return np.ravel(dct_low > avg).astype(np.uint8)
+
+        hash_user = _phash(user_img)
+        results = []
+        for var_name, rel_path, name, hint in self.capture_list:
+            default_path = config.resource_path(rel_path)
+            if not os.path.exists(default_path):
+                continue
+            tpl_data = np.fromfile(default_path, dtype=np.uint8)
+            template_img = cv2.imdecode(tpl_data, cv2.IMREAD_GRAYSCALE)
+            if template_img is None:
+                continue
+            hash_tpl = _phash(template_img)
+            hamming = np.sum(hash_user != hash_tpl)
+            score = max(0, 64 - hamming * 1.5)
+            match_count = 64 - hamming
+            results.append((score, match_count, 0, var_name, name, rel_path))
+        results.sort(key=lambda x: x[0], reverse=True)
+        return results
+
+    def _show_match_results(self, file_path=None):
+        import cv2, shutil, numpy as np
+        from PIL import Image, ImageTk
+        current_idx = [0]
+        current_file = [file_path]
+        current_results = [[]]
+        win = tk.Toplevel(self.win)
+        win.title("图片匹配")
+        win.resizable(True, True)
+        win.minsize(680, 520)
+        win.transient(self.win)
+        win.grab_set()
+        utils.set_window_icon(win)
+
+        conf_var = tk.StringVar(value="请上传图片开始匹配")
+        progress_var = tk.StringVar(value="已保存: 0/0")
+        ttk.Label(win, textvariable=progress_var, font=("Microsoft YaHei UI", 9), foreground="#999").pack(pady=(0, 2), padx=15, anchor="w")
+        ttk.Label(win, textvariable=conf_var, font=("Microsoft YaHei UI", 12, "bold"), foreground="#e67e22").pack(pady=(0, 2), padx=15, anchor="w")
+        img_frame = ttk.Frame(win)
+        img_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        left_frame = ttk.LabelFrame(img_frame, text=" 匹配到的模板 ", padding=5)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        right_frame = ttk.LabelFrame(img_frame, text=" 你上传的图片 ", padding=5)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        left_canvas = tk.Canvas(left_frame, width=160, height=140, bg="#f5f5f5", highlightthickness=0)
+        left_canvas.pack(fill=tk.BOTH, expand=True)
+        right_canvas = tk.Canvas(right_frame, width=160, height=140, bg="#f5f5f5", highlightthickness=0)
+        right_canvas.pack(fill=tk.BOTH, expand=True)
+        img_refs = {}
+        def _cx(cv):
+            try:
+                cv.update_idletasks()
+                return max(cv.winfo_width() // 2, 60)
+            except Exception:
+                return 80
+        def _cy(cv):
+            try:
+                cv.update_idletasks()
+                return max(cv.winfo_height() // 2, 50)
+            except Exception:
+                return 70
+        def load_and_display(cv, img_path, max_size=(180, 180)):
+            try:
+                pil_img = Image.open(img_path)
+                pil_img.thumbnail(max_size, Image.LANCZOS)
+                tk_img = ImageTk.PhotoImage(pil_img)
+                cv.delete("all")
+                cv.create_image(_cx(cv), _cy(cv), image=tk_img, anchor=tk.CENTER)
+                return tk_img
+            except Exception:
+                cv.delete("all")
+                cv.create_text(_cx(cv), _cy(cv), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+                return None
+        def do_matching(fp):
+            if not fp:
+                return
+            img_data = np.fromfile(fp, dtype=np.uint8)
+            results = self._run_matching(img_data)
+            current_results[0] = results
+            done = sum(1 for s in self.status.values() if s == "done")
+            total = len(self.status)
+            progress_var.set(f"已保存: {done}/{total}")
+            if results:
+                current_idx[0] = 0
+                show_result(0)
+            else:
+                conf_var.set("pHash：未匹配到任何模板，请上传其他图片")
+                left_canvas.delete("all")
+                left_canvas.create_text(_cx(left_canvas), _cy(left_canvas), text="无匹配", fill="#999", font=("", 12), anchor=tk.CENTER)
+                right_canvas.delete("all")
+                right_canvas.create_text(_cx(right_canvas), _cy(right_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+        def show_result(idx):
+            results = current_results[0]
+            total = len(results)
+            if not results or idx < 0 or idx >= total:
+                return
+            score, match_count, ratio, var_name, name, rel_path = results[idx]
+            conf_var.set(f"{name}  —  相似度：{score:.1f}（汉明距离：{64 - match_count}）")
+            default_path = config.resource_path(rel_path)
+            user_path = config.user_template_path(os.path.basename(rel_path))
+            tpl_path = user_path if os.path.exists(user_path) else default_path
+            img_refs["left"] = load_and_display(left_canvas, tpl_path)
+            if current_file[0]:
+                img_refs["right"] = load_and_display(right_canvas, current_file[0])
+            prev_btn.config(state=tk.NORMAL if idx > 0 else tk.DISABLED)
+            next_btn.config(state=tk.NORMAL if idx < total - 1 else tk.DISABLED)
+            page_var.set(f"{idx + 1} / {total}")
+        nav_frame = ttk.Frame(win)
+        nav_frame.pack(fill=tk.X, padx=15, pady=(8, 8))
+        prev_btn = ttk.Button(nav_frame, text="◀ 上一个", width=10,
+                              command=lambda: [current_idx.__setitem__(0, current_idx[0] - 1), show_result(current_idx[0])])
+        prev_btn.pack(side=tk.LEFT, padx=(0, 5))
+        page_var = tk.StringVar()
+        ttk.Label(nav_frame, textvariable=page_var, font=("Microsoft YaHei UI", 9)).pack(side=tk.LEFT, padx=10)
+        next_btn = ttk.Button(nav_frame, text="下一个 ▶", width=10,
+                              command=lambda: [current_idx.__setitem__(0, current_idx[0] + 1), show_result(current_idx[0])])
+        next_btn.pack(side=tk.LEFT, padx=(0, 8))
+        upload_btn = ttk.Button(nav_frame, text="\U0001f4c1 上传图片", style="Accent.TButton",
+                                command=lambda: _upload_image())
+        upload_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        pending_files = []
+        def _load_next():
+            if not pending_files:
+                return
+            fp = pending_files.pop(0)
+            if fp is None:
+                pending_files.clear()
+                save_btn.config(text="保存")
+                return
+            test_data = np.fromfile(fp, dtype=np.uint8)
+            test_img = cv2.imdecode(test_data, cv2.IMREAD_GRAYSCALE)
+            if test_img is None:
+                _load_next()
+                return
+            current_file[0] = fp
+            do_matching(fp)
+
+
+        def on_save():
+            results = current_results[0]
+            idx = current_idx[0]
+            if not results or idx >= len(results):
+                messagebox.showwarning("提示", "没有可保存的匹配结果", parent=win)
+                return
+            score, match_count, ratio, var_name, name, rel_path = results[idx]
+            try:
+                os.makedirs(config.USER_TEMPLATE_DIR, exist_ok=True)
+                save_path = config.user_template_path(os.path.basename(rel_path))
+                shutil.copy2(current_file[0], save_path)
+                self.status[var_name] = "done"
+                if var_name in self.rows:
+                    status_lbl, _ = self.rows[var_name]
+                    status_lbl.config(text="✅")
+                self._update_progress()
+                self._save_status()
+                utils_clear_cache()
+                # 更新进度显示
+                done = sum(1 for s in self.status.values() if s == "done")
+                total = len(self.status)
+                progress_var.set(f"已保存: {done}/{total}")
+                conf_var.set(f"✅ 保存成功：{name}")
+                # 清空界面回到初始状态
+                current_results[0] = []
+                current_file[0] = None
+                left_canvas.delete("all")
+                left_canvas.create_text(_cx(left_canvas), _cy(left_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+                right_canvas.delete("all")
+                right_canvas.create_text(_cx(right_canvas), _cy(right_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+                page_var.set("")
+                prev_btn.config(state=tk.DISABLED)
+                next_btn.config(state=tk.DISABLED)
+                _load_next()
+            except Exception as e:
+                messagebox.showerror("错误", f"保存模板失败：{e}", parent=win)
+        def _upload_image():
+            choice = messagebox.askyesno("上传方式",
+                "选择「是」上传单个或多个图片（文件选择）\\n选择「否」选择整个文件夹（批量匹配）",
+                parent=win)
+            files = []
+            if choice:
+                fps = filedialog.askopenfilenames(title="选择要匹配的截图",
+                    filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp")], parent=win)
+                if not fps:
+                    return
+                files = list(fps)
+            else:
+                folder = filedialog.askdirectory(title="选择包含截图的文件夹", parent=win)
+                if not folder:
+                    return
+                import os
+                ext = (".png", ".jpg", ".jpeg", ".bmp")
+                files = [os.path.join(folder, f) for f in sorted(os.listdir(folder))
+                         if f.lower().endswith(ext)]
+                if not files:
+                    messagebox.showinfo("提示", "文件夹中没有找到图片文件", parent=win)
+                    return
+            pending_files.clear()
+            pending_files.extend(files)
+            pending_files.append(None)
+            _load_next()
+            save_btn.config(text="保存并下一张")
+        save_btn = ttk.Button(nav_frame, text="保存", style="Accent.TButton", command=on_save, width=12)
+        save_btn.pack(side=tk.RIGHT, padx=(0, 5))
+        ttk.Button(nav_frame, text="取消", command=win.destroy, width=10).pack(side=tk.RIGHT, padx=(0, 5))
+        if current_file[0]:
+            do_matching(current_file[0])
+        else:
+            done = sum(1 for s in self.status.values() if s == "done")
+            total = len(self.status)
+            progress_var.set(f"已保存: {done}/{total}")
+            left_canvas.create_text(_cx(left_canvas), _cy(left_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+            right_canvas.create_text(_cx(right_canvas), _cy(right_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+        utils.bind_window_geometry(win, "match_geometry", "720x540", (680, 520))
 
     def _save_status(self):
         """保存当前上传状态到设置文件"""

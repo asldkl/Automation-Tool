@@ -838,7 +838,7 @@ class App:
         list_frame.pack(fill=tk.BOTH, expand=True)
         columns = ("name", "asset", "next_run", "note")
         self.account_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
-        self.account_tree.heading("name", text="账号名称")
+        self.account_tree.heading("name", text="QQ账号")
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("next_run", text="下次运行时间")
         self.account_tree.heading("note", text="备注")
