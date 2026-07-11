@@ -688,25 +688,36 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
-v1.3.4 (2026-07-04)
+v1.3.4 (2026-07-11)
 ----------------------------------------
 
-- 代码清理：
-  - 删除 migrate_cooldown_keys() 和 get_cooldown_key() 死代码（冷却 key 已统一为 normalize_key）
-  - 删除 account_manager.py 旧版纯列表格式兼容（项目未分发过，无需保留）
-  - 简化 automation_runner.py 备注多 key 回退查找（key 已统一为短名称）
-  - 删除向后兼容测试用例
+- 新增功能：
+  - 图片匹配上传：pHash 感知哈希匹配，支持单图/多图/文件夹顺序匹配
+  - 模板向导按主流程顺序排序（登录→导航→设施→制造→邮箱→出售）
+  - 新增 ENSURE 可选确认步骤（游戏启动后的「确定」按钮，蓝色非必需标记）
+  - 每个账号运行前自动取消待执行关机计划
 - Bug 修复：
-  - 修复 _run_single_account_main 未设置 app._current_account_name，导致单账号模式资产识别成功后无法记录
-- 日志优化：
-  - kill_process 未找到进程时静默返回（避免每次清理重复输出）
-  - record_run 创建定时任务兜底时去重重复调用（仅最早冷却时间变化时更新）
-  - cooldown_watcher 冷却移除日志去重（仅内容变化时输出）
-- Bug 修复：
+  - 修复 _run_single_account_main 未设置 app._current_account_name，导致单账号资产识别不记录
   - 修复清除资产记录后重启旧数据重新出现（_clear_asset_records 未保存 accounts.json）
   - 修复资产识别结果重启后丢失（_recognize_and_store_asset 未保存 accounts.json）
   - 修复单账号运行重置已有冷却（改为保留剩余冷却时间）
   - 修复单账号运行触发延时关机和邮件提醒（改为跳过）
+- 驱动修复：
+  - Interception 安装：服务名改为 keyboard（与官方一致），新增 sc start 启动驱动
+  - 安装程序新增释放 interception.dll 到程序目录
+  - install_interception.bat 支持一键安装并启动驱动
+- 代码清理：
+  - 删除 migrate_cooldown_keys() 和 get_cooldown_key() 死代码
+  - 删除旧版纯列表格式兼容、备注多 key 回退查找、向后兼容测试
+  - 删除 account_manager.py 重复的 _get_cooldown_key 别名
+- 日志优化：
+  - kill_process 未找到进程时静默返回
+  - record_run 定时任务兜底去重（仅最早冷却时间变化时更新）
+  - cooldown_watcher 冷却移除日志去重
+- UI 改进：
+  - 模板向导进度文字改为 4/31 格式，打开即显示
+  - 匹配窗口：居中显示、待上传文本、取消/保存与导航同行
+  - 主界面「账号名称」改为「QQ账号」
 
 v1.3.3 (2026-06-29)
 ----------------------------------------
