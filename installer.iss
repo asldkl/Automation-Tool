@@ -64,10 +64,18 @@ var
   ResultCode: Integer;
 begin
   Result := False;
-  if Exec('sc.exe', 'query interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  if Exec('sc.exe', 'query keyboard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     if ResultCode = 0 then
       Result := True;
+  end;
+  if not Result then
+  begin
+    if Exec('sc.exe', 'query interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      if ResultCode = 0 then
+        Result := True;
+    end;
   end;
 end;
 
@@ -79,18 +87,14 @@ begin
   begin
     if IsTaskSelected('install_driver') and (not IsInterceptionInstalled) then
     begin
-      FileCopy(ExpandConstant('{app}\interception.sys'),
-               ExpandConstant('{sys}\drivers\interception.sys'), False);
-      Exec('sc.exe', 'create interception type= kernel binPath= "' +
-           ExpandConstant('{sys}\drivers\interception.sys') + '"',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      if MsgBox('Interception driver installed. Reboot required.' + #13#10 +
-                'Reboot now?' + #13#10 + #13#10 +
-                '(Without reboot, driver will not be available)',
-                mbConfirmation, MB_YESNO) = IDYES then
+      if Exec(ExpandConstant('{app}\install_interception.bat'), '',
+              '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
       begin
-        Exec('shutdown.exe', '/r /t 5 /c "Reboot to load Interception driver"',
-             '', SW_HIDE, ewNoWait, ResultCode);
+        if MsgBox('Interception driver installed.' + #13#10 +
+                  'Reboot now to ensure the driver is loaded?', mbConfirmation, MB_YESNO) = IDYES then
+        begin
+          Exec('shutdown.exe', '/r /t 5', '', SW_HIDE, ewNoWait, ResultCode);
+        end;
       end;
     end;
   end;
