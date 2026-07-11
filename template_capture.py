@@ -190,6 +190,7 @@ class TemplateCaptureWizard:
             "Warehouse": "一键出售",
         }
         produce_vars = {"Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"}
+        optional_vars = {"ENSURE"}
         produce_order = ["Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"]
         self.rows = {}
 
@@ -209,7 +210,12 @@ class TemplateCaptureWizard:
                 _add_section_header(section_headers[var_name])
 
             is_produce = var_name in produce_vars
-            if is_produce:
+            is_optional = var_name in optional_vars
+            if is_optional:
+                row = tk.Frame(self.scroll_frame, bg='#E8F4FD', bd=1, relief='solid',
+                               highlightbackground='#4A90D9', highlightthickness=2)
+                row.pack(fill=tk.X, pady=2, padx=2)
+            elif is_produce:
                 row = tk.Frame(self.scroll_frame, bg='#FFF8F0', bd=1, relief='solid',
                                highlightbackground='#FF8C00', highlightthickness=2)
                 row.pack(fill=tk.X, pady=2, padx=2)
@@ -219,7 +225,10 @@ class TemplateCaptureWizard:
 
             # 序号
             seq_num += 1
-            if is_produce:
+            if is_optional:
+                seq_lbl = tk.Label(row, text=f"{seq_num}.", width=3, font=('Microsoft YaHei UI', 9),
+                                   bg='#E8F4FD', fg='#4A90D9', anchor='e')
+            elif is_produce:
                 seq_lbl = tk.Label(row, text=f"{seq_num}.", width=3, font=('Microsoft YaHei UI', 9),
                                    bg='#FFF8F0', fg='#B8860B', anchor='e')
             else:
@@ -228,7 +237,10 @@ class TemplateCaptureWizard:
             seq_lbl.pack(side=tk.LEFT, padx=(2, 2))
 
             # 状态图标
-            if is_produce:
+            if is_optional:
+                status_lbl = tk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
+                                      bg='#E8F4FD', fg='#4A90D9', anchor='center')
+            elif is_produce:
                 status_lbl = tk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
                                       bg='#FFF8F0', fg='#FF8C00', anchor='center')
             else:
@@ -237,7 +249,14 @@ class TemplateCaptureWizard:
             status_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
             # 名称和提示
-            if is_produce:
+            if is_optional:
+                info_frame = tk.Frame(row, bg='#E8F4FD')
+                info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                tk.Label(info_frame, text=f"{name}（非必需）", font=('Microsoft YaHei UI', 9, 'bold'),
+                         bg='#E8F4FD', fg='#2C7BB6').pack(anchor='w')
+                tk.Label(info_frame, text=hint, font=('Microsoft YaHei UI', 8),
+                         bg='#E8F4FD', fg='#4A90D9').pack(anchor='w')
+            elif is_produce:
                 info_frame = tk.Frame(row, bg='#FFF8F0')
                 info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
                 tk.Label(info_frame, text=f"★ {name}", font=('Microsoft YaHei UI', 9, 'bold'),
