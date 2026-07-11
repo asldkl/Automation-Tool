@@ -217,6 +217,7 @@ def _run_single_account_main(app, img_path):
         app._current_account_name = file_name
         total = len(app.qq_account_images)
         print(f"🟢 单账号运行：{file_name}")
+        utils.cancel_shutdown()  # 取消待执行的关机计划
 
         if not _validate_daily(app):
             return
@@ -1003,6 +1004,7 @@ def run_script_main(app):
             file_name = _get_cooldown_key(img_path)
             app._current_account_name = file_name
             app._last_account_error = ""  # 每个账号开始前清除上一个账号的错误
+            utils.cancel_shutdown()  # 取消待执行的关机计划，防止账号运行中关机
 
             if cooldown_manager.is_account_paused(file_name):
                 print(f"⏸️ 账号 {file_name} 已暂停，跳过。")

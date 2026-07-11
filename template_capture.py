@@ -120,6 +120,12 @@ class TemplateCaptureWizard:
         self.progress_label.pack(side=tk.LEFT)
         self.progress_bar = ttk.Progressbar(prog_frame, length=200, mode='determinate')
         self.progress_bar.pack(side=tk.LEFT, padx=(0, 8))
+        # 初始进度显示
+        done_init = sum(1 for s in self.status.values() if s == "done")
+        total_init = len(self.status)
+        self.progress_label.config(text=f"{done_init}/{total_init}")
+        self.progress_bar["maximum"] = total_init
+        self.progress_bar["value"] = done_init
 
         # 底部按钮（先 pack 到底部，确保始终可见）
         btn_frame = ttk.Frame(self.win)

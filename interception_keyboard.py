@@ -108,12 +108,14 @@ def _load_dll():
     meipass = getattr(sys, '_MEIPASS', None)
 
     search_paths = [
+        os.path.join(os.path.dirname(sys.executable), "interception.dll"),
         os.path.join(script_dir, "interception.dll"),
         os.path.join(script_dir, "Interception-master", "library", "interception.dll"),
         os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "interception.dll"),
     ]
     if meipass:
         search_paths.insert(0, os.path.join(meipass, "interception.dll"))
+    search_paths = [p for p in search_paths if p is not None]
 
     for dll_path in search_paths:
         if os.path.exists(dll_path):

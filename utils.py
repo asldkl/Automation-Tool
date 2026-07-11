@@ -469,6 +469,21 @@ def schedule_shutdown(delay_seconds=120):
         return False
 
 
+def cancel_shutdown():
+    """取消待执行的关机计划"""
+    import subprocess
+    try:
+        subprocess.run(
+            ["shutdown", "/a"],
+            check=True, capture_output=True, timeout=5
+        )
+        print("🔌 已取消自动关机计划")
+        return True
+    except Exception:
+        # 没有待执行的关机时 shutdown /a 会报错，忽略
+        return False
+
+
 # ==================== 邮件通知 ====================
 def send_email_notification(smtp_code, sender_email, receiver_email, subject, body):
     """
