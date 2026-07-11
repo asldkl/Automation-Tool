@@ -23,10 +23,7 @@ def _account_key_from_path(path):
     return os.path.splitext(name)[0]
 
 
-# 统一使用 cooldown_manager.normalize_key
-def _get_cooldown_key(img_path):
-    """获取冷却数据中使用的 key（统一短名称格式）"""
-    return cooldown_manager.normalize_key(img_path)
+
 
 
 # ---------- 账号持久化 ----------
@@ -466,7 +463,7 @@ def manual_add_cooldown(app, event):
     if idx >= len(app.qq_account_images):
         return
     img_path = app.qq_account_images[idx]
-    account_name = _get_cooldown_key(img_path)
+    account_name = cooldown_manager.normalize_key(img_path)
 
     if not app.settings.get("enable_cooldown", False):
         messagebox.showinfo("提示",
@@ -513,7 +510,7 @@ def reset_selected_cooldown(app):
     if idx >= len(app.qq_account_images):
         return
     img_path = app.qq_account_images[idx]
-    account_name = _get_cooldown_key(img_path)
+    account_name = cooldown_manager.normalize_key(img_path)
     cooling, next_time = cooldown_manager.is_cooling_down(account_name)
     if not cooling:
         messagebox.showinfo("提示", f"「{account_name}」当前没有在冷却中。", parent=app.root)
@@ -537,7 +534,7 @@ def custom_cooldown_time(app):
     if idx >= len(app.qq_account_images):
         return
     img_path = app.qq_account_images[idx]
-    account_name = _get_cooldown_key(img_path)
+    account_name = cooldown_manager.normalize_key(img_path)
 
     # 弹出输入对话框
     dialog = tk.Toplevel(app.root)
