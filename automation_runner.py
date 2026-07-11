@@ -255,6 +255,7 @@ def _run_single_account_main(app, img_path):
                     account_failed = True
                 else:
                     print("✅ 游戏启动中，等待进入大厅...")
+                    time.sleep(1)
                     # 查找并点击「确定」按钮
                     if utils.find_and_click_smart(config.ENSURE, timeout=5):
                         print("✅ 已点击确认按钮")
@@ -619,6 +620,7 @@ def _launch_game(app):
         utils.kill_process(config.WEGAME_PROCESS)
         return False
 
+    time.sleep(1)  # 等待游戏加载
     # 查找并点击「确定」按钮（部分用户会出现的确认步骤）
     if utils.find_and_click_smart(config.ENSURE, timeout=5):
         print("✅ 已点击确认按钮")
