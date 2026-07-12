@@ -15,7 +15,8 @@ a = Analysis(
            ('picture\\Facility_Controls', 'picture\\Facility_Controls'),
            ('picture\\Navigation', 'picture\\Navigation'),
            ('picture\\wegame_login', 'picture\\wegame_login'),
-           ('picture\\icon', 'picture\\icon')] + _rapidocr_datas + _onnxrt_datas,
+           ('picture\\icon', 'picture\\icon'),
+           ('picture\\sniper', 'picture\\sniper')] + _rapidocr_datas + _onnxrt_datas,
     hiddenimports=[
         'config', 'utils', 'settings_window', 'template_capture', 'cooldown_manager', 'automation', 'machine_fingerprint', 'relative_mouse_move',
         'email_notifier', 'account_manager', 'scheduler', 'cooldown_watcher', 'server_client', 'automation_runner', 'asset_db', 'interception_keyboard',

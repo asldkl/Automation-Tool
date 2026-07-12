@@ -32,7 +32,7 @@ def ensure_single_instance():
             # 2. 查找已有窗口
             hwnd = win32gui.FindWindow(None, "三角洲行动自动化工具")
             if hwnd:
-                # 最小化状态 → 通过 WM_SYSCOMMAND/SC_RESTORE 恢复（tkinter 自身处理，安全）
+                # 最小化状态 → 通过 WM_SYSCOMMAND/SC_RESTORE 恢复（tkinter 自身处理，安全）将修改上传到git
                 if win32gui.IsIconic(hwnd):
                     win32gui.SendMessage(hwnd, win32con.WM_SYSCOMMAND, win32con.SC_RESTORE, 0)
                 # 隐藏状态（托盘 withdraw）→ 不调用 ShowWindow，靠事件通知实例自行 deiconify

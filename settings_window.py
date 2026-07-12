@@ -692,6 +692,53 @@ class SettingsWindow:
         self._dev_ocr_status = ttk.Label(frame_ocr, text="", style='SettingsSmall.TLabel')
         self._dev_ocr_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
+        # ----- 皮肤抢购测试 -----
+        # ----- 皮肤抢购测试 -----
+        frame_sniper = ttk.LabelFrame(parent, text="  皮肤抢购测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_sniper.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_sniper, text="OCR监控倒计时 + 余额检测 + 超时自动停止",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        sniper_r1 = ttk.Frame(frame_sniper, style='SettingsInner.TFrame')
+        sniper_r1.pack(fill=tk.X, padx=5, pady=2)
+        self._sniper_status = ttk.Label(sniper_r1, text="未启动", style='SettingsSmall.TLabel')
+        self._sniper_status.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(sniper_r1, text="启动抢购", command=self._sniper_start, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sniper_r1, text="停止", command=self._sniper_stop, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sniper_r1, text="测试倒计时", command=self._sniper_test_ocr, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sniper_r1, text="测试余额", command=self._sniper_test_balance, width=10).pack(side=tk.LEFT, padx=2)
+
+        sniper_r2 = ttk.Frame(frame_sniper, style='SettingsInner.TFrame')
+        sniper_r2.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(sniper_r2, text="倒计时区域:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._sniper_region_var = tk.StringVar(value="100,100,200,50")
+        ttk.Entry(sniper_r2, textvariable=self._sniper_region_var, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(sniper_r2, text="设置", command=lambda: self._sniper_set_region("countdown"), width=5).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(sniper_r2, text="触发(秒):", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 2))
+        self._sniper_threshold_var = tk.StringVar(value="5")
+        ttk.Entry(sniper_r2, textvariable=self._sniper_threshold_var, width=4).pack(side=tk.LEFT)
+
+        sniper_r3 = ttk.Frame(frame_sniper, style='SettingsInner.TFrame')
+        sniper_r3.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(sniper_r3, text="余额区域:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._sniper_balance_var = tk.StringVar(value="")
+        ttk.Entry(sniper_r3, textvariable=self._sniper_balance_var, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(sniper_r3, text="设置", command=lambda: self._sniper_set_region("balance"), width=5).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(sniper_r3, text="变化阈值:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 2))
+        self._sniper_balance_threshold_var = tk.StringVar(value="0")
+        ttk.Entry(sniper_r3, textvariable=self._sniper_balance_threshold_var, width=5).pack(side=tk.LEFT)
+
+        sniper_r4 = ttk.Frame(frame_sniper, style='SettingsInner.TFrame')
+        sniper_r4.pack(fill=tk.X, padx=5, pady=(2, 5))
+        ttk.Label(sniper_r4, text="超时(分钟,0=不限制):", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._sniper_timeout_var = tk.StringVar(value="30")
+        ttk.Entry(sniper_r4, textvariable=self._sniper_timeout_var, width=6).pack(side=tk.LEFT)
+        ttk.Separator(sniper_r4, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        ttk.Label(sniper_r4, text="倒计时:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 2))
+        self._sniper_countdown_label = ttk.Label(sniper_r4, text="--", font=('Microsoft YaHei UI', 11, 'bold'), foreground='#e67e22')
+        self._sniper_countdown_label.pack(side=tk.LEFT)
+
         # ----- 图片识别置信度测试 -----
         frame_conf = ttk.LabelFrame(parent, text="  图片识别置信度测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_conf.pack(fill=tk.X, pady=(0, 8))
@@ -829,6 +876,185 @@ class SettingsWindow:
                 pass
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _on_close)
+
+    def _sniper_start(self):
+        """启动皮肤抢购"""
+        if not hasattr(self, '_sniper') or self._sniper is None:
+            from skin_sniper import SkinSniper
+            self._sniper = SkinSniper()
+        try:
+            region = eval(self._sniper_region_var.get().strip())
+            if isinstance(region, (list, tuple)) and len(region) == 4:
+                self._sniper.countdown_region = tuple(region)
+        except Exception:
+            pass
+        try:
+            self._sniper.buy_threshold = int(self._sniper_threshold_var.get().strip())
+        except Exception:
+            pass
+        self._sniper.set_callbacks(
+            status_cb=lambda s: self.win.after(0, lambda: self._sniper_status.config(text=s)),
+        )
+        self._sniper.start()
+        self._sniper_status.config(text="启动中...", foreground="#3498db")
+        self._update_sniper_countdown()
+
+    def _update_sniper_countdown(self):
+        """定时更新倒计时显示（每100ms）"""
+        if not hasattr(self, '_sniper') or not self._sniper or not self._sniper.is_running:
+            return
+        d = self._sniper._get_display_countdown()
+        if d is not None:
+            self._sniper_countdown_label.config(text=f"{d:.0f}s", foreground="#e67e22")
+        else:
+            self._sniper_countdown_label.config(text="--", foreground="#999")
+        self.win.after(100, self._update_sniper_countdown)
+
+    def _sniper_set_region(self, target):
+        """全屏拖拽选择区域"""
+        import tkinter as tk_overlay
+        # 释放开发者测试窗口的鼠标捕获，使覆盖层能接收事件
+        if hasattr(self, '_dev_win') and self._dev_win:
+            try:
+                self._dev_win.grab_release()
+            except Exception:
+                pass
+        overlay = tk_overlay.Toplevel(self.win)
+        overlay.attributes('-fullscreen', True)
+        overlay.attributes('-alpha', 0.3)
+        overlay.attributes('-topmost', True)
+        overlay.configure(bg='black')
+        overlay.config(cursor="crosshair")
+
+        canvas = tk_overlay.Canvas(overlay, highlightthickness=0, bg='black')
+        canvas.pack(fill=tk.BOTH, expand=True)
+
+        hint = tk_overlay.Label(overlay, text="请拖动鼠标框选识别区域，按 Esc 取消",
+                                font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
+        hint.place(relx=0.5, rely=0.05, anchor='center')
+
+        rect_id = None
+        start_x = start_y = 0
+        result = None
+
+        def on_press(event):
+            nonlocal start_x, start_y, rect_id
+            start_x, start_y = event.x, event.y
+            if rect_id:
+                canvas.delete(rect_id)
+            rect_id = canvas.create_rectangle(start_x, start_y, start_x, start_y,
+                                              outline='red', width=2)
+
+        def on_drag(event):
+            if rect_id:
+                canvas.coords(rect_id, start_x, start_y, event.x, event.y)
+
+        def on_release(event):
+            nonlocal result
+            x1, y1 = min(start_x, event.x), min(start_y, event.y)
+            x2, y2 = max(start_x, event.x), max(start_y, event.y)
+            if x2 - x1 > 10 and y2 - y1 > 10:
+                result = [x1, y1, x2 - x1, y2 - y1]
+            overlay.destroy()
+
+        def on_escape(event):
+            overlay.destroy()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+        overlay.bind("<Escape>", on_escape)
+
+        self.win.wait_window(overlay)
+
+        if result:
+            if target == "countdown":
+                self._sniper_region_var.set(str(result))
+            elif target == "balance":
+                self._sniper_balance_var.set(str(result))
+
+    def _sniper_stop(self):
+        """停止皮肤抢购"""
+        if hasattr(self, '_sniper') and self._sniper:
+            self._sniper.stop()
+        self._sniper_status.config(text="已停止", foreground="#e74c3c")
+
+    def _sniper_test_balance(self):
+        """测试余额OCR识别"""
+        try:
+            region_str = self._sniper_balance_var.get().strip()
+            if not region_str:
+                self._sniper_status.config(text="请先设置余额区域", foreground="#e74c3c")
+                return
+            region = eval(region_str)
+            if not isinstance(region, (list, tuple)) or len(region) != 4:
+                raise ValueError
+            region = tuple(region)
+        except Exception:
+            self._sniper_status.config(text="余额区域格式错误", foreground="#e74c3c")
+            return
+        import threading
+        def _run():
+            from skin_sniper import SkinSniper
+            sniper = SkinSniper()
+            sniper.balance_region = region
+            for _ in range(5):
+                val = sniper._read_balance()
+                if val is not None:
+                    self.win.after(0, lambda v=val: self._sniper_status.config(
+                        text=f"余额: {v}", foreground="#27ae60"))
+                else:
+                    self.win.after(0, lambda: self._sniper_status.config(
+                        text="未识别到余额", foreground="#e74c3c"))
+                time.sleep(0.5)
+            self.win.after(0, lambda: self._sniper_status.config(text="余额测试完成"))
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _sniper_test_ocr(self):
+        """测试倒计时OCR识别"""
+        try:
+            region = eval(self._sniper_region_var.get().strip())
+            if not isinstance(region, (list, tuple)) or len(region) != 4:
+                raise ValueError
+            region = tuple(region)
+        except Exception:
+            self._sniper_status.config(text="区域格式错误，应为 x,y,w,h", foreground="#e74c3c")
+            return
+        self._sniper_status.config(text="正在测试倒计时...", foreground="#f39c12")
+        print("[测试] 开始倒计时OCR测试")
+        import threading
+        def _run():
+            try:
+                from skin_sniper import SkinSniper
+                sniper = SkinSniper()
+                sniper.countdown_region = region
+                found = False
+                for i in range(10):
+                    val = sniper._read_countdown()
+                    if val is not None:
+                        found = True
+                    for j in range(5):
+                        display = sniper._get_display_countdown()
+                        if display is not None:
+                            self.win.after(0, lambda d=display: self._sniper_status.config(
+                                text=f"倒计时: {d:.0f}秒", foreground="#27ae60"))
+                        else:
+                            self.win.after(0, lambda: self._sniper_status.config(
+                                text="未识别到倒计时", foreground="#e74c3c"))
+                        time.sleep(0.1)
+                        if sniper._stop_event.is_set():
+                            break
+                    if sniper._stop_event.is_set():
+                        break
+                self.win.after(0, lambda f=found: self._sniper_status.config(
+                    text="测试完成" if f else "未识别到倒计时"))
+            except Exception as e:
+                print(f"[测试] 异常: {e}")
+                import traceback
+                traceback.print_exc()
+                self.win.after(0, lambda e=e: self._sniper_status.config(
+                    text=f"测试异常: {e}", foreground="#e74c3c"))
+        threading.Thread(target=_run, daemon=True).start()
 
     def _test_account_login(self):
         """测试账号登录流程（WeGame 直接登录）"""
