@@ -914,6 +914,40 @@ def remove_cooldown_scheduled_task():
         return False
 
 
+# ==================== 窗口导航栈 ====================
+_nav_stack = []  # [(parent_win, restore_callback), ...]
+
+def nav_push(current_win, open_child_callback):
+    """打开子窗口：隐藏当前窗口，记录到栈中"""
+    try:
+        current_win.withdraw()
+    except Exception:
+        pass
+    _nav_stack.append((current_win, None))
+    open_child_callback()
+
+def nav_pop(child_win):
+    """关闭子窗口：从栈中恢复上一个窗口"""
+    try:
+        child_win.destroy()
+    except Exception:
+        pass
+    if _nav_stack:
+        parent_win, _ = _nav_stack.pop()
+        try:
+            parent_win.deiconify()
+            parent_win.lift()
+        except Exception:
+            pass
+
+def nav_replace(current_win, open_new_win_callback):
+    """替换当前窗口（不 push，关闭当前直接打开新的）"""
+    try:
+        current_win.destroy()
+    except Exception:
+        pass
+    open_new_win_callback()
+
 # ==================== 窗口大小记忆 ====================
 def restore_window_geometry(win, settings_key, default_size="550x700", min_size=None):
     """恢复窗口大小和位置，返回 True=已恢复，False=使用默认"""

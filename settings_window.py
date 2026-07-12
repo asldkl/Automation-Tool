@@ -94,8 +94,6 @@ class SettingsWindow:
 
     def _on_close(self):
         """窗口关闭时清理资源，防止内存泄漏"""
-        # 保存窗口大小和位置
-        utils.save_window_geometry(self.win, "settings_window_geometry")
         # 保存售卖物品元数据（防止未点保存按钮就关闭窗口）
         if hasattr(self, '_sell_items_meta'):
             self._save_sell_items_meta()
@@ -108,6 +106,8 @@ class SettingsWindow:
             except Exception:
                 pass
         self._trace_ids.clear()
+        # 导航返回上一窗口
+        utils.nav_pop(self.win)
         self.win.destroy()
 
     def _setup_styles(self):
@@ -292,7 +292,7 @@ class SettingsWindow:
             res_text += "  ✅ 与模板一致"
         ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(res_frame, text="上传模板图片", style='Accent.TButton',
-                   command=self._open_capture_wizard, width=14).pack(side=tk.RIGHT)
+                   command=self._open_capture_wizard_nav, width=14).pack(side=tk.RIGHT)
 
         # ----- 资产识别设置 -----
         asset_frame = ttk.LabelFrame(parent, text="  资产识别  ", style='SettingsCard.TLabelframe', padding=12)
@@ -563,41 +563,35 @@ class SettingsWindow:
 
     def _open_dev_test_window(self):
         """打开开发者测试独立窗口"""
-        win = tk.Toplevel(self.win)
-        win.title("开发者测试")
-        win.resizable(True, True)
-        win.transient(self.win)
-        win.grab_set()
-        utils.set_window_icon(win)
-
-        # 恢复窗口大小 + 关闭时自动保存
-        utils.bind_window_geometry(win, "dev_test_geometry", "500x600")
-
-        # 滚动容器
-        canvas = tk.Canvas(win, highlightthickness=0, bg='#ffffff')
-        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
-        inner_frame = ttk.Frame(canvas)
-        inner_frame_id = canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        def _on_frame_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        def _on_canvas_configure(event):
-            canvas.itemconfig(inner_frame_id, width=event.width)
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        inner_frame.bind("<Configure>", _on_frame_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-        inner_frame.bind("<MouseWheel>", _on_mousewheel)
-
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # 保存当前状态标签引用
-        self._dev_win = win
-        self._build_dev_test_tab(inner_frame)
+        def _open():
+            win = tk.Toplevel(self.win)
+            win.title("开发者测试")
+            win.resizable(True, True)
+            win.transient(self.win)
+            win.grab_set()
+            utils.set_window_icon(win)
+            utils.bind_window_geometry(win, "dev_test_geometry", "500x600")
+            canvas = tk.Canvas(win, highlightthickness=0, bg='#ffffff')
+            scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+            inner_frame = ttk.Frame(canvas)
+            inner_frame_id = canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
+            canvas.configure(yscrollcommand=scrollbar.set)
+            def _on_frame_configure(event):
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            def _on_canvas_configure(event):
+                canvas.itemconfig(inner_frame_id, width=event.width)
+            def _on_mousewheel(event):
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            inner_frame.bind("<Configure>", _on_frame_configure)
+            canvas.bind("<Configure>", _on_canvas_configure)
+            canvas.bind("<MouseWheel>", _on_mousewheel)
+            inner_frame.bind("<MouseWheel>", _on_mousewheel)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self._dev_win = win
+            win.protocol("WM_DELETE_WINDOW", lambda: utils.nav_pop(win))
+            self._build_dev_test_tab(inner_frame)
+        utils.nav_push(self.win, _open)
 
     def _build_dev_test_tab(self, parent):
         """开发者测试内容"""
@@ -1857,11 +1851,18 @@ class SettingsWindow:
             self.win.deiconify()
             messagebox.showerror("测试失败", f"识别出错：{e}", parent=self.win)
 
+    def _open_capture_wizard_nav(self):
+        """打开模板上传向导（带导航栈）"""
+        def _open():
+            self._open_capture_wizard()
+        utils.nav_push(self.win, _open)
+
     def _open_capture_wizard(self):
         """打开模板截图向导"""
         from template_capture import TemplateCaptureWizard
         current_res = config.get_resolution_key()
-        TemplateCaptureWizard(self.win, current_res, app=self.app)
+        wizard = TemplateCaptureWizard(self.win, current_res, app=self.app)
+        wizard.win.protocol("WM_DELETE_WINDOW", lambda: utils.nav_pop(wizard.win))
 
     def _get_autostart_state(self):
         try:

@@ -577,17 +577,21 @@ class App:
             self._settings_window.win.lift()
             self._settings_window.win.focus_force()
             return
-        self._settings_window = SettingsWindow(self.root, self)
-        self._settings_window.win.protocol("WM_DELETE_WINDOW", self._on_settings_close)
+        def _open():
+            self._settings_window = SettingsWindow(self.root, self)
+            self._settings_window.win.protocol("WM_DELETE_WINDOW", self._on_settings_close)
+        utils.nav_push(self.root, _open)
 
     def _on_settings_close(self):
+        win = self._settings_window.win if self._settings_window else None
         if self._settings_window:
             try:
                 self._settings_window.win.unbind_all("<MouseWheel>")
             except Exception:
                 pass
-            self._settings_window.win.destroy()
             self._settings_window = None
+        if win:
+            utils.nav_pop(win)
 
     def apply_auto_settings_from_window(self):
         sched.apply_auto_settings(self)
