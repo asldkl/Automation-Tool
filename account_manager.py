@@ -12,7 +12,9 @@ import utils
 import cooldown_manager
 import asset_db
 
-ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
+APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "DeltaAutoTool")
+ACCOUNTS_JSON_PATH = os.path.join(APP_DATA_DIR, "accounts.json")
+ACCOUNTS_JSON_BACKUP = ACCOUNTS_JSON_PATH + ".bak"
 
 
 def _account_key_from_path(path):
@@ -33,9 +35,17 @@ def save_accounts(app):
                 "assets": app._account_assets,
                 "asset_history": app._asset_history,
                 "notes": app._account_notes}
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
         tmp_path = ACCOUNTS_JSON_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        # 保存前先备份旧文件
+        if os.path.exists(ACCOUNTS_JSON_PATH):
+            try:
+                import shutil
+                shutil.copy2(ACCOUNTS_JSON_PATH, ACCOUNTS_JSON_BACKUP)
+            except Exception:
+                pass
         os.replace(tmp_path, ACCOUNTS_JSON_PATH)
     except Exception as e:
         print(f"⚠️ 保存账号列表失败：{e}")
@@ -47,10 +57,19 @@ def save_accounts(app):
 
 
 def load_accounts(app):
-    if not os.path.exists(ACCOUNTS_JSON_PATH):
+    path = ACCOUNTS_JSON_PATH
+    # 主文件不存在时尝试从备份恢复
+    if not os.path.exists(path) and os.path.exists(ACCOUNTS_JSON_BACKUP):
+        try:
+            import shutil
+            shutil.copy2(ACCOUNTS_JSON_BACKUP, path)
+            print("🔄 账号数据已从备份恢复")
+        except Exception:
+            pass
+    if not os.path.exists(path):
         return
     try:
-        with open(ACCOUNTS_JSON_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         app.qq_account_images = list(data.get("qq", []))
         # 只保留当前存在的账号对应的资产和备注数据
@@ -63,6 +82,15 @@ def load_accounts(app):
         print(f"✅ 已加载 {len(app.qq_account_images)} 个账号")
     except Exception as e:
         print(f"⚠️ 加载历史账号失败：{e}")
+        # 主文件损坏时尝试从备份恢复
+        if os.path.exists(ACCOUNTS_JSON_BACKUP):
+            try:
+                import shutil
+                shutil.copy2(ACCOUNTS_JSON_BACKUP, path)
+                print("🔄 已从备份恢复账号数据，重新加载...")
+                load_accounts(app)  # 递归重试
+            except Exception as be:
+                print(f"⚠️ 备份恢复也失败: {be}")
 
 
 def add_account(app):

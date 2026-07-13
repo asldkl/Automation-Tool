@@ -6,8 +6,10 @@ import os
 import json
 import datetime
 import threading
+import config
+import utils
 
-COOLDOWN_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown.json")
+COOLDOWN_JSON_PATH = os.path.join(config.APP_DATA_DIR, "cooldown.json")
 
 
 def normalize_key(img_path):
@@ -121,8 +123,6 @@ def record_run(account_name, cooldown_hours=8):
     # 新增：创建定时任务兜底（在锁外调用，避免死锁）
     # 不重复创建：只有最早冷却时间变化时才更新
     try:
-        import config
-        import utils
         settings = config.load_settings()
         if settings.get("cooldown_scheduled_task_enabled", True):
             earliest = find_earliest_cooldown(data)

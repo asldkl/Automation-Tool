@@ -6,9 +6,10 @@ import os
 import sqlite3
 import datetime
 
+import config
 from utils import parse_asset_value, format_asset_num
 
-DB_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_assets.db")
+DB_PATH = os.path.join(config.APP_DATA_DIR, "assets.db")
 
 # 单例连接：避免每次操作都重新建表和创建连接
 _conn = None

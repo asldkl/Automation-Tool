@@ -36,7 +36,7 @@ except ImportError:
 
 # -------------------- 有效期由服务器端统一校验 --------------------
 
-ACCOUNTS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_accounts.json")
+ACCOUNTS_JSON_PATH = os.path.join(config.APP_DATA_DIR, "accounts.json")
 
 
 class RedirectText:

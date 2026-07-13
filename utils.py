@@ -813,7 +813,7 @@ def format_asset_num(val):
 
 
 # ==================== 冷却到期定时任务兜底 ====================
-COOLDOWN_SIGNAL_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_cooldown_signal")
+COOLDOWN_SIGNAL_PATH = os.path.join(config.APP_DATA_DIR, "cooldown_signal")
 COOLDOWN_TASK_NAME = "DeltaAutoTool_Cooldown"
 
 
