@@ -61,15 +61,10 @@ class TemplateCaptureWizard:
         # 从设置中加载上次的上传状态
         settings = config.load_settings()
         saved_status = settings.get("template_upload_status", {})
-        ocr_configs = settings.get("ocr_configs", {})
-
         for item in self.capture_list:
             var_name = item[0]
-            # 如果有 OCR 配置（含有效文本），直接标记为已完成
-            if var_name in ocr_configs and ocr_configs[var_name].get("text"):
-                self.status[var_name] = "done"
             # 如果有保存的状态且模板文件存在，标记为已完成
-            elif saved_status.get(var_name) == "done":
+            if saved_status.get(var_name) == "done":
                 basename = os.path.basename(item[1])
                 user_path = config.user_template_path(basename)
                 if os.path.exists(user_path):
@@ -132,7 +127,7 @@ class TemplateCaptureWizard:
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(5, 15))
         ttk.Button(btn_frame, text="一键重置", command=self._reset_all_templates, width=12).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="完成", command=self._finish, width=12).pack(side=tk.RIGHT, padx=(0, 8))
-        ttk.Button(btn_frame, text="全局OCR设置", command=self._open_global_ocr_settings, width=14).pack(anchor='center')
+
 
         # 加载中提示
         self._loading_label = ttk.Label(self.win, text="正在加载模板列表...",
@@ -291,22 +286,6 @@ class TemplateCaptureWizard:
         ttk.Label(self.win, text="售卖物品请在 设置 → 售卖物品 中管理",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.BOTTOM, pady=(0, 5))
 
-    def _refresh_status_from_ocr_configs(self):
-        """根据 ocr_configs 和 global_ocr_texts 刷新所有模板的状态图标"""
-        settings = config.load_settings()
-        ocr_configs = settings.get("ocr_configs", {})
-        global_texts = settings.get("global_ocr_texts", {})
-        for item in self.capture_list:
-            var_name = item[0]
-            has_text = (var_name in ocr_configs and ocr_configs[var_name].get("text")) or \
-                       (var_name in global_texts and global_texts[var_name])
-            if has_text:
-                self.status[var_name] = "done"
-                if var_name in self.rows:
-                    status_lbl, _ = self.rows[var_name]
-                    status_lbl.config(text="✅")
-        self._update_progress()
-
     def _update_progress(self):
         done = sum(1 for s in self.status.values() if s == "done")
         total = len(self.status)
@@ -397,18 +376,13 @@ class TemplateCaptureWizard:
         utils_clear_cache()
 
     def _restore_template(self, var_name, rel_path):
-        """恢复指定模板为内置默认图片，并清除 OCR 配置"""
+        """恢复指定模板为内置默认图片"""
         user_path = config.user_template_path(os.path.basename(rel_path))
-        has_ocr = False
-        settings = config.load_settings()
-        ocr_configs = settings.get("ocr_configs", {})
-        if var_name in ocr_configs:
-            has_ocr = True
 
-        if not os.path.exists(user_path) and not has_ocr:
+        if not os.path.exists(user_path):
             messagebox.showinfo("提示", "当前使用的是内置默认图片，无需恢复。")
             return
-        if not messagebox.askyesno("确认", "确定恢复该模板为内置默认图片？\n将同时清除 OCR 识别配置。"):
+        if not messagebox.askyesno("确认", "确定恢复该模板为内置默认图片？"):
             return
 
         # 删除用户自定义模板
@@ -418,12 +392,6 @@ class TemplateCaptureWizard:
         except Exception:
             pass
 
-        # 清除 OCR 配置
-        if var_name in ocr_configs:
-            del ocr_configs[var_name]
-            settings["ocr_configs"] = ocr_configs
-            config.save_settings(settings)
-
         # 更新状态为未完成
         self.status[var_name] = "pending"
         if var_name in self.rows:
@@ -432,497 +400,6 @@ class TemplateCaptureWizard:
         self._update_progress()
         utils_clear_cache()
 
-    def _setup_ocr(self, var_name, name):
-        """设置 OCR 识别区域和目标文本（全局模式下跳过区域选择）"""
-        # 加载现有配置
-        settings = config.load_settings()
-        ocr_configs = settings.get("ocr_configs", {})
-        existing = ocr_configs.get(var_name, {})
-
-        global_enabled = settings.get("global_ocr_enabled", False)
-        global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
-
-        # 决定识别区域：全局模式使用全局区域，否则让用户框选
-        if global_enabled and global_region[2] > 0 and global_region[3] > 0:
-            result_region = tuple(global_region)
-        else:
-            # 释放 grab 并隐藏当前窗口，让覆盖层能接收鼠标事件
-            self.win.grab_release()
-            self.win.withdraw()
-            import time
-            time.sleep(0.3)
-
-            # 创建全屏半透明覆盖层
-            overlay = tk.Toplevel(self.win)
-            overlay.attributes('-fullscreen', True)
-            overlay.attributes('-alpha', 0.3)
-            overlay.attributes('-topmost', True)
-            overlay.configure(bg='black')
-            overlay.cursor = "crosshair"
-
-            canvas = tk.Canvas(overlay, highlightthickness=0, bg='black')
-            canvas.pack(fill=tk.BOTH, expand=True)
-
-            # 提示标签
-            hint_label = tk.Label(overlay, text="请拖动鼠标框选 OCR 识别区域，按 Esc 取消",
-                                  font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
-            hint_label.place(relx=0.5, rely=0.05, anchor='center')
-
-            rect_id = None
-            start_x = start_y = 0
-            result_region = None
-
-            def on_press(event):
-                nonlocal start_x, start_y, rect_id
-                start_x, start_y = event.x, event.y
-                if rect_id:
-                    canvas.delete(rect_id)
-                rect_id = canvas.create_rectangle(start_x, start_y, start_x, start_y,
-                                                  outline='red', width=2)
-
-            def on_drag(event):
-                nonlocal rect_id
-                if rect_id:
-                    canvas.coords(rect_id, start_x, start_y, event.x, event.y)
-
-            def on_release(event):
-                nonlocal result_region
-                x1, y1 = min(start_x, event.x), min(start_y, event.y)
-                x2, y2 = max(start_x, event.x), max(start_y, event.y)
-                if x2 - x1 > 10 and y2 - y1 > 10:
-                    result_region = (x1, y1, x2 - x1, y2 - y1)
-                overlay.destroy()
-
-            def on_escape(event):
-                overlay.destroy()
-
-            canvas.bind("<ButtonPress-1>", on_press)
-            canvas.bind("<B1-Motion>", on_drag)
-            canvas.bind("<ButtonRelease-1>", on_release)
-            overlay.bind("<Escape>", on_escape)
-
-            # 等待覆盖层关闭
-            self.win.wait_window(overlay)
-
-            # 恢复窗口
-            self.win.deiconify()
-
-            if result_region is None:
-                return
-
-        # 弹出输入对话框获取目标文本
-        dialog = tk.Toplevel(self.win)
-        dialog.title(f"OCR 识别设置 - {name}")
-        dialog.resizable(True, True)
-        dialog.minsize(320, 200)
-        dialog.transient(self.win)
-        dialog.grab_set()
-        self._set_dialog_icon(dialog)
-        # 恢复窗口大小 + 关闭时自动保存
-        utils.bind_window_geometry(dialog, "ocr_template_setting_geometry", "350x240", (320, 200))
-
-        ttk.Label(dialog, text=f"模板：{name}", font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(15, 5))
-        if global_enabled and global_region[2] > 0 and global_region[3] > 0:
-            region_text = f"识别区域（全局）: ({result_region[0]}, {result_region[1]}, {result_region[2]}, {result_region[3]})"
-        else:
-            region_text = f"识别区域: ({result_region[0]}, {result_region[1]}, {result_region[2]}, {result_region[3]})"
-        ttk.Label(dialog, text=region_text,
-                  font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack()
-
-        ttk.Label(dialog, text="目标识别文本：").pack(pady=(10, 2))
-        global_texts = settings.get("global_ocr_texts", {})
-        default_text = existing.get("text", "") or global_texts.get(var_name, "")
-        text_var = tk.StringVar(value=default_text)
-        text_entry = ttk.Entry(dialog, textvariable=text_var, width=30)
-        text_entry.pack(pady=2)
-
-        conf_frame = ttk.Frame(dialog)
-        conf_frame.pack(pady=5)
-        ttk.Label(conf_frame, text="置信度：").pack(side=tk.LEFT)
-        default_conf = existing.get("confidence") or settings.get("global_ocr_confidence", 0.8)
-        conf_var = tk.DoubleVar(value=default_conf)
-        conf_spin = ttk.Spinbox(conf_frame, from_=0.5, to=1.0, increment=0.05,
-                                textvariable=conf_var, width=6)
-        conf_spin.pack(side=tk.LEFT, padx=5)
-
-        def save_ocr():
-            text = text_var.get().strip()
-            if not text:
-                messagebox.showwarning("提示", "请输入目标识别文本", parent=dialog)
-                return
-            ocr_configs[var_name] = {
-                "region": list(result_region),
-                "text": text,
-                "confidence": conf_var.get()
-            }
-            settings["ocr_configs"] = ocr_configs
-            config.save_settings(settings)
-            # 标记该模板为已完成
-            self.status[var_name] = "done"
-            if var_name in self.rows:
-                status_lbl, _ = self.rows[var_name]
-                status_lbl.config(text="✅")
-            self._update_progress()
-            messagebox.showinfo("保存成功",
-                                f"OCR 配置已保存：\n区域：{result_region}\n文本：{text}\n置信度：{conf_var.get()}",
-                                parent=dialog)
-            dialog.destroy()
-
-        ttk.Button(dialog, text="保存", command=save_ocr).pack(pady=10)
-
-        # 等待对话框关闭后恢复 grab
-        self.win.wait_window(dialog)
-        self.win.grab_set()
-
-    def _open_global_ocr_settings(self):
-        """打开全局 OCR 设置对话框"""
-        settings = config.load_settings()
-
-        dialog = tk.Toplevel(self.win)
-        dialog.title("全局 OCR 设置")
-        dialog.resizable(True, True)
-        dialog.minsize(450, 350)
-        dialog.transient(self.win)
-        dialog.grab_set()
-        self._set_dialog_icon(dialog)
-        # 恢复窗口大小 + 关闭时自动保存
-        utils.bind_window_geometry(dialog, "global_ocr_geometry", "500x420", (450, 350))
-
-        ttk.Label(dialog, text="全局 OCR 设置", font=('Microsoft YaHei UI', 12, 'bold')).pack(pady=(15, 10))
-
-        global_enabled_var = tk.BooleanVar(value=settings.get("global_ocr_enabled", False))
-        ttk.Checkbutton(dialog, text="启用全局 OCR 设置（模板无需单独框选区域，使用全局区域）",
-                        variable=global_enabled_var).pack(anchor='w', padx=25)
-
-        # 区域显示
-        global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
-        region_text = f"({global_region[0]}, {global_region[1]}, {global_region[2]}, {global_region[3]})"
-        if global_region[2] <= 0 or global_region[3] <= 0:
-            region_text = "未设置"
-
-        region_label = ttk.Label(dialog, text=f"当前全局区域：{region_text}",
-                                 font=('Microsoft YaHei UI', 9), foreground='#7f8c8d', wraplength=450)
-        region_label.pack(anchor='w', padx=25, pady=(5, 5))
-
-        result_region = list(global_region)
-
-        def set_global_region():
-            nonlocal result_region
-            dialog.grab_release()
-            dialog.withdraw()
-            self.win.withdraw()
-            import time
-            time.sleep(0.3)
-
-            overlay = tk.Toplevel(dialog)
-            overlay.attributes('-fullscreen', True)
-            overlay.attributes('-alpha', 0.3)
-            overlay.attributes('-topmost', True)
-            overlay.configure(bg='black')
-            overlay.cursor = "crosshair"
-
-            canvas = tk.Canvas(overlay, highlightthickness=0, bg='black')
-            canvas.pack(fill=tk.BOTH, expand=True)
-
-            hint_label = tk.Label(overlay, text="请拖动鼠标框选全局 OCR 识别区域，按 Esc 取消",
-                                  font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
-            hint_label.place(relx=0.5, rely=0.05, anchor='center')
-
-            rect_id = None
-            start_x = start_y = 0
-            overlay_result = [None]
-
-            def on_press(event):
-                nonlocal start_x, start_y, rect_id
-                start_x, start_y = event.x, event.y
-                if rect_id:
-                    canvas.delete(rect_id)
-                rect_id = canvas.create_rectangle(start_x, start_y, start_x, start_y,
-                                                  outline='red', width=2)
-
-            def on_drag(event):
-                nonlocal rect_id
-                if rect_id:
-                    canvas.coords(rect_id, start_x, start_y, event.x, event.y)
-
-            def on_release(event):
-                nonlocal overlay_result
-                x1, y1 = min(start_x, event.x), min(start_y, event.y)
-                x2, y2 = max(start_x, event.x), max(start_y, event.y)
-                if x2 - x1 > 10 and y2 - y1 > 10:
-                    overlay_result[0] = (x1, y1, x2 - x1, y2 - y1)
-                overlay.destroy()
-
-            def on_escape(event):
-                overlay.destroy()
-
-            canvas.bind("<ButtonPress-1>", on_press)
-            canvas.bind("<B1-Motion>", on_drag)
-            canvas.bind("<ButtonRelease-1>", on_release)
-            overlay.bind("<Escape>", on_escape)
-
-            dialog.wait_window(overlay)
-
-            self.win.deiconify()
-            dialog.deiconify()
-            dialog.grab_set()
-
-            if overlay_result[0]:
-                result_region[:] = list(overlay_result[0])
-                region_label.config(text=f"当前全局区域：{overlay_result[0]}")
-
-        ttk.Button(dialog, text="设置全局识别区域", command=set_global_region, width=18).pack(anchor='w', padx=25, pady=(0, 5))
-
-        # 全局置信度
-        conf_frame = ttk.Frame(dialog)
-        conf_frame.pack(anchor='w', padx=25, pady=(5, 5))
-        ttk.Label(conf_frame, text="全局默认置信度：").pack(side=tk.LEFT)
-        global_conf_var = tk.DoubleVar(value=settings.get("global_ocr_confidence", 0.8))
-        ttk.Spinbox(conf_frame, from_=0.5, to=1.0, increment=0.05,
-                    textvariable=global_conf_var, width=6).pack(side=tk.LEFT, padx=5)
-        ttk.Label(conf_frame, text="（模板未单独配置时使用此值）",
-                  font=('Microsoft YaHei UI', 8), foreground='#7f8c8d',
-                  wraplength=250).pack(side=tk.LEFT)
-
-        # 启用全局文本配置
-        global_text_enabled_var = tk.BooleanVar(value=settings.get("global_text_enabled", False))
-        ttk.Checkbutton(dialog, text="启用全局文本配置（一键配置所有模板的识别文本）",
-                        variable=global_text_enabled_var).pack(anchor='w', padx=25, pady=(5, 5))
-
-        # 全局文本配置按钮
-        ttk.Button(dialog, text="全局文本配置", command=lambda: self._open_global_text_config(dialog),
-                   width=18).pack(anchor='w', padx=25, pady=(0, 5))
-
-        # OCR 降级开关
-        downgrade_var = tk.BooleanVar(value=settings.get("ocr_downgrade_enabled", True))
-        ttk.Checkbutton(dialog, text="OCR 超时降级到图片匹配（关闭后 OCR 未识别到则不使用图片匹配）",
-                        variable=downgrade_var).pack(anchor='w', padx=25, pady=(5, 5))
-
-        def save_global():
-            # 重新加载设置，避免覆盖全局文本配置对话框的修改
-            fresh = config.load_settings()
-            fresh["global_ocr_enabled"] = global_enabled_var.get()
-            fresh["global_ocr_region"] = result_region
-            fresh["global_ocr_confidence"] = global_conf_var.get()
-            fresh["global_text_enabled"] = global_text_enabled_var.get()
-            fresh["ocr_downgrade_enabled"] = downgrade_var.get()
-
-            ocr_configs = fresh.get("ocr_configs", {})
-            global_texts = fresh.get("global_ocr_texts", {})
-
-            # 取消启用全局 OCR 时，清除使用全局区域的 ocr_configs 条目
-            if not global_enabled_var.get():
-                for vn in list(ocr_configs.keys()):
-                    cfg = ocr_configs[vn]
-                    if not cfg.get("region"):
-                        del ocr_configs[vn]
-
-            # 取消启用全局文本配置时，清除全局文本和对应 ocr_configs
-            if not global_text_enabled_var.get():
-                for vn in list(global_texts.keys()):
-                    if vn in ocr_configs:
-                        del ocr_configs[vn]
-                fresh["global_ocr_texts"] = {}
-            elif global_texts:
-                # 启用时，将 global_ocr_texts 同步到 ocr_configs
-                use_global_region = global_enabled_var.get() and result_region[2] > 0 and result_region[3] > 0
-                for var_name, text_val in global_texts.items():
-                    existing = ocr_configs.get(var_name, {})
-                    region = existing.get("region")
-                    if not region and use_global_region:
-                        region = list(result_region)
-                    ocr_configs[var_name] = {
-                        "region": region or [],
-                        "text": text_val,
-                        "confidence": existing.get("confidence") or global_conf_var.get(),
-                    }
-
-            fresh["ocr_configs"] = ocr_configs
-            config.save_settings(fresh)
-            messagebox.showinfo("保存成功",
-                                f"全局 OCR 设置已保存\n"
-                                f"启用：{'是' if global_enabled_var.get() else '否'}\n"
-                                f"区域：{tuple(result_region)}\n"
-                                f"置信度：{global_conf_var.get()}\n"
-                                f"全局文本：{'已启用' if global_text_enabled_var.get() else '未启用'}\n"
-                f"OCR 降级：{'已启用' if downgrade_var.get() else '已关闭'}",
-                                parent=dialog)
-            dialog.destroy()
-            self._refresh_status_from_ocr_configs()
-
-        ttk.Button(dialog, text="保存", command=save_global, width=10).pack(pady=10)
-
-    def _open_global_text_config(self, parent_dialog):
-        """打开全局文本配置对话框"""
-        # 每次打开重新加载设置，避免空白窗口
-        settings = config.load_settings()
-        saved_texts = settings.get("global_ocr_texts", {})
-
-        win = tk.Toplevel(parent_dialog)
-        win.title("全局文本配置")
-        win.resizable(True, True)
-        win.minsize(480, 400)
-        win.transient(parent_dialog)
-        win.grab_set()
-        self._set_dialog_icon(win)
-        # 恢复窗口大小 + 关闭时自动保存
-        utils.bind_window_geometry(win, "global_text_config_geometry", "540x620", (480, 400))
-
-        # 标题
-        ttk.Label(win, text="全局文本配置", font=('Microsoft YaHei UI', 12, 'bold')).pack(pady=(10, 5))
-
-        # 全选
-        select_all_var = tk.BooleanVar(value=False)
-        select_all_cb = ttk.Checkbutton(win, text="全选", variable=select_all_var)
-        select_all_cb.pack(anchor='w', padx=20)
-
-        # 滚动区域
-        list_frame = ttk.Frame(win)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
-
-        canvas = tk.Canvas(list_frame, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=canvas.yview)
-        scroll_frame = ttk.Frame(canvas)
-
-        scroll_frame.bind("<Configure>",
-                          lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroll_frame, anchor='nw')
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        def _on_mousewheel(event):
-            try:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        # 构建每行：先普通项，后不可识别项
-        check_vars = {}  # var_name -> BooleanVar
-        text_vars = {}   # var_name -> StringVar (only for editable items)
-
-        # 分离普通项和不可识别项
-        normal_items = []
-        disabled_items = []
-        for var_name, (display_name, default_text) in GLOBAL_TEXT_DEFAULTS.items():
-            if default_text is None:
-                disabled_items.append((var_name, display_name, default_text))
-            else:
-                normal_items.append((var_name, display_name, default_text))
-
-        all_items = normal_items + disabled_items  # 不可识别项放最后
-
-        for var_name, display_name, default_text in all_items:
-            row = ttk.Frame(scroll_frame)
-            row.pack(fill=tk.X, pady=1)
-
-            is_disabled = default_text is None
-            initial_checked = var_name in saved_texts and bool(saved_texts[var_name])
-            chk_var = tk.BooleanVar(value=initial_checked)
-            check_vars[var_name] = chk_var
-
-            if is_disabled:
-                cb = ttk.Checkbutton(row, variable=chk_var, state='disabled', width=4)
-                cb.pack(side=tk.LEFT)
-                ttk.Label(row, text=f"{display_name}（不可文字识别）",
-                          font=('Microsoft YaHei UI', 9), foreground='#999').pack(side=tk.LEFT, padx=(5, 0))
-            else:
-                cb = ttk.Checkbutton(row, variable=chk_var, width=4)
-                cb.pack(side=tk.LEFT)
-                ttk.Label(row, text=f"{display_name}：",
-                          font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT, padx=(5, 0))
-                t_var = tk.StringVar(value=saved_texts.get(var_name, default_text))
-                text_vars[var_name] = t_var
-                ttk.Entry(row, textvariable=t_var, width=22,
-                          font=('Microsoft YaHei UI', 9)).pack(side=tk.RIGHT, padx=(5, 10))
-
-        # 全选联动
-        def toggle_all():
-            val = select_all_var.get()
-            for v, chk in check_vars.items():
-                if GLOBAL_TEXT_DEFAULTS[v][1] is not None:
-                    chk.set(val)
-
-        select_all_cb.configure(command=toggle_all)
-
-        # 一键重置文本
-        def reset_texts():
-            if not messagebox.askyesno("确认重置", "确定将所有文本重置为默认值？", parent=win):
-                return
-            for var_name, t_var in text_vars.items():
-                default_text = GLOBAL_TEXT_DEFAULTS[var_name][1]
-                if default_text is not None:
-                    t_var.set(default_text)
-            messagebox.showinfo("重置完成", "所有文本已重置为默认值", parent=win)
-
-        # 保存
-        def save_texts():
-            new_texts = {}
-            unchecked_names = []
-            for var_name, chk in check_vars.items():
-                if chk.get() and var_name in text_vars:
-                    text_val = text_vars[var_name].get().strip()
-                    if text_val:
-                        new_texts[var_name] = text_val
-                    else:
-                        unchecked_names.append(GLOBAL_TEXT_DEFAULTS[var_name][0])
-                elif not chk.get() and GLOBAL_TEXT_DEFAULTS[var_name][1] is not None:
-                    unchecked_names.append(GLOBAL_TEXT_DEFAULTS[var_name][0])
-
-            # 警告未配置项
-            if unchecked_names:
-                warn_msg = "以下模板未配置，将使用原图片识别：\n" + "、".join(unchecked_names[:10])
-                if len(unchecked_names) > 10:
-                    warn_msg += f"\n...等共 {len(unchecked_names)} 项"
-                if not messagebox.askyesno("确认", warn_msg + "\n\n是否继续保存？", parent=win):
-                    return
-
-            # 保存全局文本
-            settings["global_ocr_texts"] = new_texts
-
-            # 同步更新 ocr_configs
-            ocr_configs = settings.get("ocr_configs", {})
-            global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
-            global_conf = settings.get("global_ocr_confidence", 0.8)
-            use_global_region = settings.get("global_ocr_enabled", False) and global_region[2] > 0 and global_region[3] > 0
-
-            for var_name, text_val in new_texts.items():
-                existing = ocr_configs.get(var_name, {})
-                region = existing.get("region")
-                if not region and use_global_region:
-                    region = list(global_region)
-                ocr_configs[var_name] = {
-                    "region": region or [],
-                    "text": text_val,
-                    "confidence": existing.get("confidence") or global_conf,
-                }
-
-            settings["ocr_configs"] = ocr_configs
-            config.save_settings(settings)
-
-            configured_count = len(new_texts)
-            messagebox.showinfo("保存成功",
-                                f"全局文本配置已保存\n"
-                                f"已配置 {configured_count} 个模板的识别文本",
-                                parent=win)
-            win.destroy()
-            self._refresh_status_from_ocr_configs()
-
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(fill=tk.X, padx=20, pady=(5, 10))
-        ttk.Button(btn_frame, text="一键重置文本", command=reset_texts, width=14).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text="保存", command=save_texts, width=10).pack(side=tk.RIGHT)
-        ttk.Button(btn_frame, text="取消", command=win.destroy, width=10).pack(side=tk.RIGHT, padx=8)
-
-        # 使用说明
-        tips_text = (
-            "说明：勾选需要识别的模板并填写对应文字，保存后将自动配置 OCR。\n"
-            "未勾选的模板将使用图片识别，不可识别的模板（如游戏币、降价按钮）无法勾选。"
-        )
-        ttk.Label(win, text=tips_text, font=('Microsoft YaHei UI', 8),
-                  foreground='#7f8c8d', justify=tk.LEFT, wraplength=500).pack(anchor='w', padx=20, pady=(0, 8))
 
     def _set_dialog_icon(self, dialog):
         """为对话框设置图标"""
@@ -985,14 +462,6 @@ class TemplateCaptureWizard:
         ttk.Label(win, text=info_text, font=('Microsoft YaHei UI', 9),
                   foreground='#7f8c8d').pack(padx=10, pady=(0, 8))
 
-        # 检查 OCR 配置状态
-        settings = config.load_settings()
-        ocr_configs = settings.get("ocr_configs", {})
-        global_texts = settings.get("global_ocr_texts", {})
-        has_ocr_text = bool(ocr_configs.get(var_name, {}).get("text")) or bool(global_texts.get(var_name))
-        ocr_cfg_text = ocr_configs.get(var_name, {}).get("text") or global_texts.get(var_name, "")
-        ocr_status = f"（已配置：{ocr_cfg_text}）" if has_ocr_text else "（未配置）"
-
         # 按钮区
         btn_frame = ttk.Frame(win)
         btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -1004,15 +473,9 @@ class TemplateCaptureWizard:
         def do_restore():
             win.destroy()
             self._restore_template(var_name, rel_path)
-
-        def do_ocr():
-            win.destroy()
             self._setup_ocr(var_name, name)
 
         # 不可文字识别的模板不显示 OCR 按钮
-        ocr_default = GLOBAL_TEXT_DEFAULTS.get(var_name, (None, None))
-        if ocr_default[1] is not None:
-            ttk.Button(btn_frame, text=f"OCR识别 {ocr_status}", command=do_ocr, width=20).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.LEFT)
 
@@ -1187,38 +650,34 @@ class TemplateCaptureWizard:
                 messagebox.showwarning("提示", "没有可保存的匹配结果", parent=win)
                 return
             score, match_count, ratio, var_name, name, rel_path = results[idx]
-            try:
-                os.makedirs(config.USER_TEMPLATE_DIR, exist_ok=True)
-                save_path = config.user_template_path(os.path.basename(rel_path))
-                shutil.copy2(current_file[0], save_path)
-                self.status[var_name] = "done"
-                if var_name in self.rows:
-                    status_lbl, _ = self.rows[var_name]
-                    status_lbl.config(text="✅")
-                self._update_progress()
-                self._save_status()
-                utils_clear_cache()
-                # 更新进度显示
-                done = sum(1 for s in self.status.values() if s == "done")
-                total = len(self.status)
-                progress_var.set(f"已保存: {done}/{total}")
-                conf_var.set(f"✅ 保存成功：{name}")
-                # 清空界面回到初始状态
-                current_results[0] = []
-                current_file[0] = None
-                left_canvas.delete("all")
-                left_canvas.create_text(_cx(left_canvas), _cy(left_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
-                right_canvas.delete("all")
-                right_canvas.create_text(_cx(right_canvas), _cy(right_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
-                page_var.set("")
-                prev_btn.config(state=tk.DISABLED)
-                next_btn.config(state=tk.DISABLED)
-                _load_next()
-            except Exception as e:
-                messagebox.showerror("错误", f"保存模板失败：{e}", parent=win)
-        def _upload_image():
+            os.makedirs(config.USER_TEMPLATE_DIR, exist_ok=True)
+            save_path = config.user_template_path(os.path.basename(rel_path))
+            shutil.copy2(current_file[0], save_path)
+            self.status[var_name] = "done"
+            if var_name in self.rows:
+                status_lbl, _ = self.rows[var_name]
+                status_lbl.config(text="✅")
+            self._update_progress()
+            self._save_status()
+            utils_clear_cache()
+            # 更新进度显示
+            done = sum(1 for s in self.status.values() if s == "done")
+            total = len(self.status)
+            progress_var.set(f"已保存: {done}/{total}")
+            conf_var.set(f"✅ 保存成功：{name}")
+            # 清空界面回到初始状态
+            current_results[0] = []
+            current_file[0] = None
+            left_canvas.delete("all")
+            left_canvas.create_text(_cx(left_canvas), _cy(left_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+            right_canvas.delete("all")
+            right_canvas.create_text(_cx(right_canvas), _cy(right_canvas), text="待上传", fill="#999", font=("", 12), anchor=tk.CENTER)
+            page_var.set("")
+            prev_btn.config(state=tk.DISABLED)
+            next_btn.config(state=tk.DISABLED)
+            _load_next()
             choice = messagebox.askyesno("上传方式",
-                "选择「是」上传单个或多个图片（文件选择）\\n选择「否」选择整个文件夹（批量匹配）",
+            "选择「是」上传单个或多个图片（文件选择）\\n选择「否」选择整个文件夹（批量匹配）",
                 parent=win)
             files = []
             if choice:
@@ -1285,9 +744,6 @@ class TemplateCaptureWizard:
                     pass
 
         # 清除所有 OCR 配置（含全局开关）
-        settings["ocr_configs"] = {}
-        settings["global_ocr_texts"] = {}
-        settings["global_ocr_enabled"] = False
         settings["global_text_enabled"] = False
         config.save_settings(settings)
 

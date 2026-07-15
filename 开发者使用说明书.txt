@@ -3,7 +3,7 @@
 ================================================================================
 
 版本: v1.3.4
-日期: 2026-06-27
+日期: 2026-07-15
 作者: 开发团队
 
 ================================================================================
@@ -63,9 +63,12 @@
 ├── cooldown_manager.py      # 冷却管理模块
 ├── relative_mouse_move.py   # 贝塞尔曲线鼠标移动模块（v1.1.2 新增）
 ├── asset_db.py              # 资产数据 SQLite 持久化模块（v1.1.1 新增）
+├── skin_sniper.py           # 皮肤抢购模块（图片匹配查找按钮，自动购买确认）
 ├── interception_keyboard.py # Interception 驱动级键盘输入模块（v1.2.0 新增）
-├── interception.dll         # Interception 驱动通信 DLL（打包时自动嵌入 exe）
-├── interception.sys         # Interception 内核驱动文件（安装到系统目录）
+│                           # 支持 DLL 搜索路径：MEIPASS→exe目录→LCA安装目录→System32
+│                           # 自动检测键盘设备号（跳过只读 device 1，使用 device 2+）
+│                           # filter=0 不拦截事件，只用于发送
+├── driver_keyboard.py       # 键盘驱动统一入口（委托 interception_keyboard）
 ├── test_all_features.py     # 全功能测试套件（43 项）
 ├── test_core_modules.py     # 核心模块单元测试（v1.1.4 新增，28 项）
 ├── README.md                # 用户说明文档
@@ -298,79 +301,62 @@ interception.dll 实现驱动级键盘模拟，绕开 WeGame 10 账号限制和 
 7.1 模块结构
 ----------------------------------------
 
-interception_keyboard.py（约 150 行）
+interception_keyboard.py（约 200 行）
     - 通过 ctypes 调用 interception.dll，使用驱动级键盘扫描码方式输入
-    - is_available()：检查 Interception 驱动和 DLL 是否可用
+    - is_available()：检查 DLL 加载 + context 创建（不发送测试按键）
     - send_string(text, interval)：逐字符发送按键（扫描码方式）
     - send_key(char, interval)：发送单个按键事件
+    - _find_keyboard_device(ctx)：扫描设备 2-10，跳过只读 device 1，用
+      interception_get_hardware_id() 检测真实硬件 ID 找到可写入的设备
+    - _device_has_hardware_id(ctx, device)：检测设备是否有真实硬件 ID
     - 字符→扫描码映射表：支持字母、数字、常用符号、Shift 组合键
-    - DLL 搜索路径：项目目录 → Interception-master/library/ → System32 → sys._MEIPASS
-    - 无降级方案：Interception 不可用时返回 False，由调用方处理失败
+    - DLL 搜索路径：MEIPASS → exe 同级目录 → 项目目录 → System32 → LCA 安装目录
+    - 发送时 set_filter=0（不拦截事件，只用于发送）
 
-utils.py 新增函数（冷却定时任务兜底）：
-    - write_cooldown_signal()：写入冷却触发信号文件
-    - check_cooldown_signal()：检查并消费信号文件
-    - create_cooldown_scheduled_task(trigger_time)：创建一次性定时任务
-    - remove_cooldown_scheduled_task()：删除冷却到期定时任务
+driver_keyboard.py
+    - 键盘驱动统一入口
+    - 所有操作委托给 interception_keyboard 模块
 
 automation_runner._login_account()
     - WeGame 直接登录流程：
       1. 杀进程 → 打开 WeGame → 等待窗口出现
-      2. 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空旧账号
+      2. 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace
       3. Interception 驱动级键盘输入账号
       4. 图像识别点击 Input（密码框）→ Interception 输入密码
       5. 图像识别点击 Sign-in 完成登录
-    - 输入前检查 WeGame 窗口聚焦（v1.2.1 新增聚焦保护）
-    - 失败时记录具体错误到 app._last_account_error
 
 ----------------------------------------
 7.2 驱动安装与状态
 ----------------------------------------
 
 文件: interception.sys（内核驱动）
-路径: C:\Windows\System32\drivers\interception.sys
-服务: interception（内核驱动，手动启动）
-签名: Authenticode 有效（GlobalSign CodeSigning CA - G2 签发，时间戳 2012）
+路径: C:\Windows\System32\drivers\keyboard.sys（伪装为系统键盘驱动）
+服务: keyboard（内核驱动，手动启动）
 DLL: interception.dll（项目根目录，打包时嵌入 exe 的根目录）
 
 当前状态：
 - 工作模式：正常模式（Windows 测试签名关闭，无需开启测试模式）
-- 驱动签名已通过 Authenticode 验证（Status: Valid）
-- 本机 Code Integrity 每次启动时自动禁用 WHQL 驱动强制（Event ID 3085）
-- 因此非 WHQL 交叉签名的 Interception 驱动可在正常模式下加载
 
 ----------------------------------------
 7.3 在新电脑部署驱动
 ----------------------------------------
 
-方式一：使用官方安装程序（推荐）
-    以管理员身份运行 install-interception.exe /install
-    注意：64 位 Windows 需绕过 WOW64 重定向，使用 SysNative 路径：
-        C:\Windows\SysNative\cmd.exe /c "install-interception.exe /install"
+方式一：使用安装程序（推荐）
+    运行安装程序时勾选「安装 Interception 键盘驱动」即可自动安装。
 
-方式二：手动安装
-    1. 从官方 Release 或已安装的电脑获取 interception.sys
-    2. 复制到 C:\Windows\System32\drivers\interception.sys
-    3. 以管理员身份执行：
-        sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
-        sc start interception
+方式二：使用 install_interception.bat
+    以管理员身份运行安装目录下的 install_interception.bat，然后重启。
 
 ----------------------------------------
-7.4 驱动加载失败排查
+7.4 设备号说明
 ----------------------------------------
 
-错误 183 "当文件已存在时，无法创建该文件"：
-    - 通常表示驱动已加载或设备对象已存在
-    - 检查：sc query interception
-    - 如果 STOPPED 状态，可能是签名验证失败
+Interception 驱动中，设备 1 是只读中转设备（send 永远返回 0）。
+真实键盘设备从 2 开始。程序自动扫描 device 2-10，通过硬件 ID 检测
+找到可写入的键盘设备。
 
-错误 577 "Windows 无法验证此文件的数字签名"：
-    - Secure Boot 或 HVCI（内存完整性）阻止非 WHQL 驱动
-    - 解决方案：关闭 Secure Boot / HVCI，或在测试模式下运行
-
-驱动签名检查：
-    Get-AuthenticodeSignature C:\Windows\System32\drivers\interception.sys
-    确认 Status 为 "Valid"
+验证方式（管理员 CMD）：
+    sc query keyboard      # 应显示 RUNNING
 
 ================================================================================
 8. 心跳同步机制

@@ -18,53 +18,6 @@ def ensure_app_data_dir():
     """确保数据目录存在"""
     os.makedirs(APP_DATA_DIR, exist_ok=True)
 
-# ==================== 数据迁移（旧 ~/.delta_auto_* → 新 %APPDATA% 路径）====================
-_OLD_PATHS_MAP = {}
-
-def _init_old_paths_map():
-    """延迟构建旧路径映射表"""
-    global _OLD_PATHS_MAP
-    if _OLD_PATHS_MAP:
-        return
-    home = os.path.expanduser("~")
-    _OLD_PATHS_MAP = {
-        os.path.join(home, ".delta_auto_settings.json"):   SETTINGS_JSON_PATH,
-        os.path.join(home, ".delta_auto_accounts.json"):  os.path.join(APP_DATA_DIR, "accounts.json"),
-        os.path.join(home, ".delta_auto_cooldown.json"):  os.path.join(APP_DATA_DIR, "cooldown.json"),
-        os.path.join(home, ".delta_auto_templates"):      os.path.join(APP_DATA_DIR, "templates"),
-        os.path.join(home, ".delta_auto_sell_items"):     os.path.join(APP_DATA_DIR, "sell_items"),
-        os.path.join(home, ".delta_auto_assets.db"):      os.path.join(APP_DATA_DIR, "assets.db"),
-    }
-
-def migrate_old_data():
-    """将旧路径 ~/.delta_auto_* 的数据迁移到 %APPDATA%/DeltaAutoTool/ 下（仅执行一次）"""
-    _init_old_paths_map()
-    ensure_app_data_dir()
-    marker = os.path.join(APP_DATA_DIR, ".migrated")
-    if os.path.exists(marker):
-        return  # 已迁移过，跳过
-    import shutil
-    migrated = False
-    for old_path, new_path in _OLD_PATHS_MAP.items():
-        if os.path.exists(old_path):
-            try:
-                if os.path.isdir(old_path):
-                    if not os.path.exists(new_path):
-                        shutil.copytree(old_path, new_path)
-                else:
-                    os.makedirs(os.path.dirname(new_path), exist_ok=True)
-                    shutil.copy2(old_path, new_path)
-                print(f"📦 迁移数据: {old_path} → {new_path}")
-                migrated = True
-            except Exception as e:
-                print(f"⚠️ 迁移失败 {old_path}: {e}")
-    if migrated:
-        try:
-            with open(marker, "w") as f:
-                f.write("migrated")
-        except Exception:
-            pass
-
 # ==================== 资源路径辅助 ====================
 def resource_path(relative_path):
     if getattr(sys, 'frozen', False):
@@ -220,13 +173,9 @@ DEFAULT_SETTINGS = {
     "asset_history_geometry": "",            # 资产记录窗口大小和位置
     "asset_monitor_geometry": "",            # 资产监测窗口大小和位置
     "dev_test_geometry": "",                 # 开发者测试窗口大小和位置
-    "ocr_test_geometry": "",                 # 文本识别测试窗口大小和位置
     "log_window_geometry": "",               # 日志窗口大小和位置
-    "global_ocr_geometry": "",               # 全局OCR设置窗口大小和位置
     "account_info_geometry": "",             # 账号信息设置窗口大小和位置
-    "ocr_template_setting_geometry": "",     # 模板OCR设置窗口大小和位置
     "confidence_test_geometry": "",          # 置信度测试窗口大小和位置
-    "global_text_config_geometry": "",       # 全局文本配置窗口大小和位置
     "custom_cooldown_geometry": "",          # 自定义冷却时间窗口大小和位置
     "cooldown_window_geometry": "",          # 账号冷却状态窗口大小和位置
     "cooldown_email_enabled": False,  # 冷却结束后发送邮件提醒
@@ -239,14 +188,6 @@ DEFAULT_SETTINGS = {
     # 服务器配置（可通过 ~/.delta_auto_settings.json 覆盖）
     "server_url": "http://112.74.106.69:8000",  # 服务器地址（建议生产环境使用 HTTPS）
     "client_key": "Client_Normal_Key_2026",      # 客户端认证令牌（非加密密钥，仅用于请求校验）
-    # OCR 识别配置
-    "ocr_configs": {},                           # var_name -> {"region": [x,y,w,h], "text": "制造", "confidence": 0.8}
-    "global_ocr_enabled": False,                 # 是否启用全局 OCR（模板无需单独配置区域）
-    "global_ocr_region": [0, 0, 0, 0],           # 全局 OCR 识别区域 [x, y, w, h]
-    "global_ocr_confidence": 0.55,               # 全局 OCR 默认置信度
-    "global_ocr_texts": {},                      # 全局 OCR 文本配置 var_name -> "text"
-    "global_text_enabled": False,                # 是否启用全局文本配置
-    "ocr_downgrade_enabled": True,               # OCR 超时是否降级到图片匹配
     # 资产识别
     "enable_asset_recognition": False,           # 是否启用资产识别
     "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]

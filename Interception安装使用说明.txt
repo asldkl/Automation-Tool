@@ -2,8 +2,8 @@
             Interception 驱动安装与使用说明
 ================================================================================
 
-版本: v2.0
-更新日期: 2026-06-24
+版本: v2.1
+更新日期: 2026-07-15
 适用系统: Windows 10 / 11 64-bit
 
 ================================================================================
@@ -14,8 +14,15 @@ Interception 是一个内核级键盘/鼠标拦截驱动，本工具用它实现
 驱动级键盘输入（绕开 WeGame 10 账号限制和 QQ 同 IP 验证码）。
 
 需要安装两个组件：
-  - interception.sys  — 内核驱动文件（安装到系统目录）
+  - interception.sys  — 内核驱动文件（安装到系统目录，伪装为 keyboard.sys）
   - interception.dll  — 用户态通信 DLL（项目目录已包含）
+
+注意：本工具的安装程序将 interception.sys 伪装为 keyboard.sys 安装到系统，
+驱动服务名也是 keyboard（而非 interception），这是为了兼容系统签名策略。
+后续所有操作请使用 keyboard 作为服务名。
+
+验证驱动状态：
+    sc query keyboard           # 应显示 STATE = RUNNING
 
 ================================================================================
 2. 下载驱动包
@@ -44,90 +51,39 @@ Interception 是一个内核级键盘/鼠标拦截驱动，本工具用它实现
 注意：项目目录中已包含 interception.dll，无需从解压包中复制。
 
 ================================================================================
-3. 安装方法（推荐：手动提取+安装）
+3. 安装方法
 ================================================================================
 
-install-interception.exe 是 32 位程序，在 64 位系统上直接运行会因 WOW64
-文件系统重定向导致安装失败。需要手动提取驱动文件并安装。
+本工具安装程序已包含一键安装脚本（install_interception.bat），
+以管理员身份运行即可。
 
----------- 步骤一：提取 interception.sys 驱动文件 ----------
+---------- 步骤一：以管理员身份运行 install_interception.bat ----------
 
-方法 A：使用项目提供的 Python 脚本提取
+在安装目录中，右键点击 install_interception.bat → 以管理员身份运行。
 
-  在项目目录下运行：
+脚本会自动：
+1. 将 interception.sys 复制到 C:\Windows\System32\drivers\keyboard.sys
+2. 创建驱动服务（服务名：keyboard）
+3. 启动驱动服务
 
-    python -c "
-    import struct
-    with open(r'<解压目录>\Interception\command line installer\install-interception.exe', 'rb') as f:
-        data = f.read()
-    pe_offsets = []
-    i = 0
-    while True:
-        pos = data.find(b'MZ', i)
-        if pos == -1 or pos > len(data) - 100: break
-        try:
-            pe_off = struct.unpack_from('<I', data, pos + 0x3c)[0]
-            if pos + pe_off + 4 < len(data) and data[pos + pe_off:pos + pe_off + 4] == b'PE\x00\x00':
-                pe_offsets.append(pos)
-        except: pass
-        i = pos + 2
-    for idx, pe_start in enumerate(pe_offsets):
-        pe_off = struct.unpack_from('<I', data, pe_start + 0x3c)[0]
-        file_header = pe_start + pe_off + 4
-        machine = struct.unpack_from('<H', data, file_header)[0]
-        opt_offset = file_header + 20
-        subsystem = struct.unpack_from('<H', data, opt_offset + 68)[0]
-        if machine == 0x8664 and subsystem == 1:
-            pe_end = pe_offsets[idx + 1] if idx + 1 < len(pe_offsets) else len(data)
-            driver_data = data[pe_start:pe_end]
-            with open('interception.sys', 'wb') as f:
-                f.write(driver_data)
-            print(f'Extracted: {len(driver_data)} bytes')
-            break
-    "
-
-  输出：interception.sys（约 18536 字节，x64 内核驱动）
-
-方法 B：用 7-Zip 解压
-
-  用 7-Zip 打开 install-interception.exe，找到其中 x64 的内核驱动文件提取出来。
-
----------- 步骤二：复制驱动到系统目录 ----------
-
-以管理员身份打开 PowerShell，执行：
-
-    Copy-Item "interception.sys" "C:\Windows\System32\drivers\interception.sys" -Force
-
-或者用管理员 CMD：
-
-    copy interception.sys C:\Windows\System32\drivers\interception.sys
-
----------- 步骤三：创建驱动服务 ----------
-
-以管理员身份打开 CMD，执行：
-
-    sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
-
----------- 步骤四：重启电脑 ----------
+---------- 步骤二：重启电脑 ----------
 
   ⚠️ 重要：安装后必须重启电脑，驱动才能加载。
-
-  重启后驱动会自动加载（Start=3 手动启动，程序调用时自动激活）。
 
 ================================================================================
 4. 验证安装
 ================================================================================
 
-重启后，在项目目录下运行：
+重启后，打开管理员 CMD，执行：
 
-    python -c "import interception_keyboard; print(interception_keyboard.is_available())"
+    sc query keyboard
 
-输出 True 表示安装成功。
+输出应包含：
+    STATE               : 4  RUNNING
 
-或者检查驱动状态：
+或者运行程序 → 开发者测试 → 检测键盘状态，显示「Interception 可用」。
 
-    sc query interception
-    driverquery | findstr interception
+注意：服务名为 keyboard（非 interception），因为驱动文件伪装为系统键盘驱动。
 
 ================================================================================
 5. 驱动签名说明
@@ -252,30 +208,30 @@ interception_keyboard.py 功能：
 9. 快速安装脚本（一键安装）
 ================================================================================
 
-将以下内容保存为 install_interception.bat，以管理员身份运行：
+安装目录下的 install_interception.bat 内容如下：
 
     @echo off
     echo === Interception 驱动安装 ===
 
     REM 检查是否已安装
-    sc query interception >nul 2>&1
+    sc query keyboard >nul 2>&1
     if %errorlevel% equ 0 (
-        echo 驱动服务已存在，跳过安装。
+        echo 驱动服务已存在（keyboard），跳过安装。
         goto :check
     )
 
-    REM 复制驱动文件
+    REM 复制驱动文件（伪装为 keyboard.sys）
     echo 复制驱动文件...
-    copy /Y "%~dp0interception.sys" "C:\Windows\System32\drivers\interception.sys"
+    copy /Y "%~dp0interception.sys" "C:\Windows\System32\drivers\keyboard.sys"
     if %errorlevel% neq 0 (
         echo 复制失败！请以管理员身份运行此脚本。
         pause
         exit /b 1
     )
 
-    REM 创建服务
+    REM 创建服务（服务名：keyboard）
     echo 创建驱动服务...
-    sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
+    sc create keyboard type= kernel binPath= "C:\Windows\System32\drivers\keyboard.sys"
     if %errorlevel% neq 0 (
         echo 创建服务失败！
         pause
@@ -288,7 +244,7 @@ interception_keyboard.py 功能：
 
     :check
     echo 验证安装：
-    sc query interception
+    sc query keyboard
     echo.
     pause
 

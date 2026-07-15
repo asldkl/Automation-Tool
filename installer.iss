@@ -1,6 +1,6 @@
 ; 三角洲行动自动化工具 安装脚本
 ; Inno Setup 6 编译
-; 更新日期: 2026-06-24
+; 更新日期: 2026-07-15
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -31,9 +31,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "dist\三角洲自动工具.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "interception.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "interception.sys"; DestDir: "{app}"; Flags: ignoreversion
 Source: "install_interception.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "Interception安装使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "使用说明书.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "Interception安装使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标:"

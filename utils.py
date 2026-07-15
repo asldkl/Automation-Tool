@@ -532,30 +532,6 @@ def send_email_notification(smtp_code, sender_email, receiver_email, subject, bo
 # ==================== OCR 识别功能 ====================
 _ocr_engine = None
 _ocr_failed = False                          # True = OCR 引擎初始化失败，全局不可用
-_ocr_failures = {}                           # var_name → [failure_timestamps]，连续失败后临时禁用
-_ocr_failures_lock = threading.Lock()        # 线程安全锁
-_OCR_MAX_FAILURES = 3                        # 连续失败次数阈值
-_OCR_DISABLE_SECONDS = 300                   # 临时禁用时长（5分钟），超时自动恢复
-
-def _ocr_is_disabled(var_name):
-    """检查指定 var_name 是否因连续失败被临时禁用（5分钟后自动恢复）"""
-    with _ocr_failures_lock:
-        timestamps = _ocr_failures.get(var_name, [])
-        now = time.time()
-        cutoff = now - _OCR_DISABLE_SECONDS
-        recent = [t for t in timestamps if t > cutoff]
-        _ocr_failures[var_name] = recent
-        return len(recent) >= _OCR_MAX_FAILURES
-
-def _ocr_record_failure(var_name):
-    """记录一次 OCR 失败"""
-    with _ocr_failures_lock:
-        _ocr_failures.setdefault(var_name, []).append(time.time())
-
-def _ocr_record_success(var_name):
-    """OCR 成功后清除该 var_name 的失败记录"""
-    with _ocr_failures_lock:
-        _ocr_failures.pop(var_name, None)
 
 def init_ocr_engine():
     """预初始化 RapidOCR 引擎。程序启动时调用，失败则标记 _ocr_failed"""
@@ -674,88 +650,12 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
     return False
 
 
-def ocr_find_by_config(var_name, timeout=20):
-    """
-    根据 OCR 配置查找并点击。如果 var_name 没有 OCR 配置，返回 None（表示应使用图像匹配）。
-    OCR 在配置了 ocr_configs 的模板上自动启用，无需手动开关。
-    返回: True（OCR 找到并点击）/ False（OCR 超时未找到）/ None（无 OCR 配置）
-    """
-    settings = config.load_settings()
-    ocr_configs = settings.get("ocr_configs", {})
-    ocr_cfg = ocr_configs.get(var_name, {})
-
-    # 从 ocr_configs 获取文本，没有则回退到 global_ocr_texts
-    text = ocr_cfg.get("text", "")
-    if not text:
-        global_texts = settings.get("global_ocr_texts", {})
-        text = global_texts.get(var_name, "")
-    if not text:
-        return None
-
-    region = None
-    cfg_region = ocr_cfg.get("region")
-    if cfg_region and len(cfg_region) == 4 and cfg_region[2] > 0 and cfg_region[3] > 0:
-        region = tuple(cfg_region)
-    # 无有效区域时尝试全局 OCR 区域
-    if not region:
-        global_region = settings.get("global_ocr_region", [0, 0, 0, 0])
-        if global_region[2] > 0 and global_region[3] > 0:
-            region = tuple(global_region)
-    conf = ocr_cfg.get("confidence") or settings.get("global_ocr_confidence", 0.8)
-
-    return ocr_find_and_click(text, region=region, timeout=timeout, confidence=conf)
-
-
-# config 图片路径 → var_name 映射（用于 OCR 智能调度）
-# 自动从 TEMPLATE_CAPTURE_LIST 生成，无需手动维护
-_IMAGE_TO_VAR = None
-
-def _get_image_to_var():
-    global _IMAGE_TO_VAR
-    if _IMAGE_TO_VAR is None:
-        _IMAGE_TO_VAR = {}
-        for entry in config.TEMPLATE_CAPTURE_LIST:
-            var_name = entry[0]
-            resolved = getattr(config, var_name, None)
-            if resolved:
-                _IMAGE_TO_VAR[resolved] = var_name
-    return _IMAGE_TO_VAR
-
-
 def find_and_click_smart(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0):
     """
-    智能识别点击：优先使用 OCR（如果配置了），否则使用图像匹配。
-    自动根据 img_path 查找对应的 var_name OCR 配置。
-    单 var_name 连续 OCR 失败 3 次后临时禁用（5分钟自动恢复），仅影响该 var_name。
-    可通过全局 OCR 设置中的"OCR 降级"关闭降级，OCR 失败后直接返回 False。
+    图像识别点击（直接使用模板匹配，不再走 OCR 调度）
     """
-    var_map = _get_image_to_var()
-    var_name = var_map.get(img_path)
-
-    if var_name and not _ocr_failed and not _ocr_is_disabled(var_name):
-        ocr_result = ocr_find_by_config(var_name, timeout=timeout)
-        if ocr_result is True:
-            _ocr_record_success(var_name)
-            print(f"✅ OCR 识别成功：{var_name}")
-            return True
-        if ocr_result is False:
-            settings = config.load_settings()
-            downgrade_enabled = settings.get("ocr_downgrade_enabled", True)
-            if not downgrade_enabled:
-                print(f"❌ OCR 未识别到：{var_name}（降级已关闭，不使用图片匹配）")
-                return False
-            _ocr_record_failure(var_name)
-            if _ocr_is_disabled(var_name):
-                print(f"⚠️ {var_name} OCR 连续失败 {_OCR_MAX_FAILURES} 次，已临时禁用（5分钟后自动恢复）")
-            else:
-                print(f"⚠️ OCR 超时，回退到图像匹配：{var_name}")
-
-    if var_name:
-        print(f"🔍 使用图片识别：{var_name}")
-    else:
-        print(f"🔍 使用图片识别：{os.path.basename(img_path)}")
-
+    print(f"🔍 使用图片识别：{os.path.basename(img_path)}")
     return find_and_click(img_path, timeout=timeout, region=region, confidence=confidence,
                           clicks=clicks, x_offset=x_offset, y_offset=y_offset)
 

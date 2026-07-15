@@ -24,7 +24,6 @@ import server_client
 import scheduler
 import asset_db
 import driver_keyboard
-import interception_keyboard
 
 # 三角洲行动窗口标题关键词
 DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]
@@ -427,11 +426,11 @@ def _login_account(app, account_name, i, total, processed_accounts):
         app._last_account_error = msg
         return False
 
-    kb_backend = interception_keyboard.get_backend()
+    kb_backend = driver_keyboard.get_backend()
     print(f"⌨️ 键盘后端: {kb_backend}")
 
     # 检查 Interception 驱动是否可用，不可用时根据设置决定是否重启
-    if not interception_keyboard.is_available():
+    if not driver_keyboard.is_available():
         if app.settings.get("restart_on_interception_fail", False):
             print("❌ Interception 驱动不可用，尝试重新加载驱动服务...")
             import subprocess
@@ -442,7 +441,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 time.sleep(1)
                 result = subprocess.run(["sc", "start", "interception"], capture_output=True, timeout=5, text=True)
                 time.sleep(1)
-                if interception_keyboard.is_available():
+                if driver_keyboard.is_available():
                     print("✅ Interception 驱动服务已重新加载，继续执行")
                     driver_restored = True
                 else:
@@ -529,7 +528,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
         if not _ensure_wegame_focused():
             print(f"⚠️ WeGame 窗口失去焦点，重试 ({attempt+1}/{max_retries})...")
             continue
-        if not interception_keyboard.send_string(login_account, interval=0.02):
+        if not driver_keyboard.send_string(login_account, interval=0.02):
             print(f"⚠️ 账号输入失败，重试 ({attempt+1}/{max_retries})...")
             continue
         time.sleep(0.3)
@@ -554,7 +553,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
         if not _ensure_wegame_focused():
             print(f"⚠️ WeGame 窗口失去焦点，重试 ({attempt+1}/{max_retries})...")
             continue
-        if not interception_keyboard.send_string(login_password, interval=0.02):
+        if not driver_keyboard.send_string(login_password, interval=0.02):
             print(f"⚠️ 密码输入失败，重试 ({attempt+1}/{max_retries})...")
             continue
         time.sleep(0.3)
