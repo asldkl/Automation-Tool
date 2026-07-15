@@ -94,8 +94,6 @@ class SettingsWindow:
 
     def _on_close(self):
         """窗口关闭时清理资源，防止内存泄漏"""
-        # 保存窗口大小和位置
-        utils.save_window_geometry(self.win, "settings_window_geometry")
         # 保存售卖物品元数据（防止未点保存按钮就关闭窗口）
         if hasattr(self, '_sell_items_meta'):
             self._save_sell_items_meta()
@@ -108,6 +106,8 @@ class SettingsWindow:
             except Exception:
                 pass
         self._trace_ids.clear()
+        # 导航返回上一窗口
+        utils.nav_pop(self.win)
         self.win.destroy()
 
     def _setup_styles(self):
@@ -292,7 +292,7 @@ class SettingsWindow:
             res_text += "  ✅ 与模板一致"
         ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(res_frame, text="上传模板图片", style='Accent.TButton',
-                   command=self._open_capture_wizard, width=14).pack(side=tk.RIGHT)
+                   command=self._open_capture_wizard_nav, width=14).pack(side=tk.RIGHT)
 
         # ----- 资产识别设置 -----
         asset_frame = ttk.LabelFrame(parent, text="  资产识别  ", style='SettingsCard.TLabelframe', padding=12)
@@ -315,15 +315,16 @@ class SettingsWindow:
         ttk.Button(asset_btn_frame, text="设置区域", command=self._set_asset_region, width=10).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(asset_btn_frame, text="测试识别", command=self._test_asset_recognition, width=10).pack(side=tk.LEFT)
 
-        # ----- 使用说明 -----
-        guide_frame = ttk.LabelFrame(parent, text="  使用说明  ", style='SettingsCard.TLabelframe', padding=12)
+        # ----- 实用工具 -----
+        guide_frame = ttk.LabelFrame(parent, text="  实用工具  ", style='SettingsCard.TLabelframe', padding=12)
         guide_frame.pack(fill=tk.X, pady=(0, 8))
 
-        import account_manager
+        ttk.Label(guide_frame, text="游戏辅助工具：皮肤抢购（图片识别查找购买按钮 + 余额检测）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
         btn_row = ttk.Frame(guide_frame, style='SettingsInner.TFrame')
         btn_row.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(btn_row, text="查看使用说明", style='Accent.TButton',
-                   command=lambda: account_manager.show_help(self.app), width=14).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="皮肤抢购", style='Accent.TButton',
+                   command=self._open_sniper_window, width=14).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="开发者测试", style='TButton',
                    command=self._open_dev_test_window, width=12).pack(side=tk.LEFT)
 
@@ -563,41 +564,35 @@ class SettingsWindow:
 
     def _open_dev_test_window(self):
         """打开开发者测试独立窗口"""
-        win = tk.Toplevel(self.win)
-        win.title("开发者测试")
-        win.resizable(True, True)
-        win.transient(self.win)
-        win.grab_set()
-        utils.set_window_icon(win)
-
-        # 恢复窗口大小 + 关闭时自动保存
-        utils.bind_window_geometry(win, "dev_test_geometry", "500x600")
-
-        # 滚动容器
-        canvas = tk.Canvas(win, highlightthickness=0, bg='#ffffff')
-        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
-        inner_frame = ttk.Frame(canvas)
-        inner_frame_id = canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        def _on_frame_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        def _on_canvas_configure(event):
-            canvas.itemconfig(inner_frame_id, width=event.width)
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        inner_frame.bind("<Configure>", _on_frame_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-        inner_frame.bind("<MouseWheel>", _on_mousewheel)
-
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # 保存当前状态标签引用
-        self._dev_win = win
-        self._build_dev_test_tab(inner_frame)
+        def _open():
+            win = tk.Toplevel(self.win)
+            win.title("开发者测试")
+            win.resizable(True, True)
+            win.transient(self.win)
+            win.grab_set()
+            utils.set_window_icon(win)
+            utils.bind_window_geometry(win, "dev_test_geometry", "500x600")
+            canvas = tk.Canvas(win, highlightthickness=0, bg='#ffffff')
+            scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+            inner_frame = ttk.Frame(canvas)
+            inner_frame_id = canvas.create_window((0, 0), window=inner_frame, anchor=tk.NW)
+            canvas.configure(yscrollcommand=scrollbar.set)
+            def _on_frame_configure(event):
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            def _on_canvas_configure(event):
+                canvas.itemconfig(inner_frame_id, width=event.width)
+            def _on_mousewheel(event):
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            inner_frame.bind("<Configure>", _on_frame_configure)
+            canvas.bind("<Configure>", _on_canvas_configure)
+            canvas.bind("<MouseWheel>", _on_mousewheel)
+            inner_frame.bind("<MouseWheel>", _on_mousewheel)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self._dev_win = win
+            win.protocol("WM_DELETE_WINDOW", lambda: utils.nav_pop(win))
+            self._build_dev_test_tab(inner_frame)
+        utils.nav_push(self.win, _open)
 
     def _build_dev_test_tab(self, parent):
         """开发者测试内容"""
@@ -675,6 +670,25 @@ class SettingsWindow:
 
         self._dev_win_status = ttk.Label(frame_win, text="", style='SettingsSmall.TLabel')
         self._dev_win_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+
+        # ----- 图像识别测试 -----
+        frame_img = ttk.LabelFrame(parent, text="  图像识别测试  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_img.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_img, text="测试单个模板图片的识别匹配与点击（图片会在屏幕中查找并点击）",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        img_btn_frame = ttk.Frame(frame_img, style='SettingsInner.TFrame')
+        img_btn_frame.pack(fill=tk.X)
+
+        self._dev_img_var = tk.StringVar(value="picture/wegame_login/quick_login.png")
+        ttk.Label(img_btn_frame, text="模板路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(img_btn_frame, textvariable=self._dev_img_var, width=30).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(img_btn_frame, text="识别并点击", style='TButton',
+                   command=self._test_image_click, width=10).pack(side=tk.LEFT)
+
+        self._dev_img_status = ttk.Label(frame_img, text="", style='SettingsSmall.TLabel')
+        self._dev_img_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
         # ----- 文本识别测试 -----
         frame_ocr = ttk.LabelFrame(parent, text="  文本识别测试  ", style='SettingsCard.TLabelframe', padding=12)
@@ -830,6 +844,255 @@ class SettingsWindow:
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
+    def _open_sniper_window(self):
+        """打开皮肤抢购独立窗口"""
+        win = tk.Toplevel(self.win)
+        win.title("皮肤抢购")
+        win.resizable(True, True)
+        win.minsize(480, 350)
+        win.transient(self.win)
+        utils.set_window_icon(win)
+        utils.bind_window_geometry(win, "sniper_geometry", "500x400")
+
+        main = ttk.Frame(win, style='Settings.TFrame', padding=15)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main, text="图片识别查找购买按钮 + 余额检测 + 超时自动停止",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        # 变量区
+        s = self.app.settings
+        def _sv(key, default):
+            return str(s.get(key, default))
+        region_var = tk.StringVar(value=_sv("sniper_search_region", "100,100,200,50"))
+        balance_var = tk.StringVar(value=_sv("sniper_balance_region", ""))
+        balance_threshold_var = tk.StringVar(value=_sv("sniper_balance_threshold", "0"))
+        timeout_var = tk.StringVar(value=_sv("sniper_timeout", "30"))
+
+        def _save_sniper_settings():
+            self.app.settings["sniper_search_region"] = region_var.get().strip()
+            self.app.settings["sniper_balance_region"] = balance_var.get().strip()
+            self.app.settings["sniper_balance_threshold"] = balance_threshold_var.get().strip()
+            self.app.settings["sniper_timeout"] = timeout_var.get().strip()
+            config.save_settings(self.app.settings)
+
+        # 状态标签
+        status_label = ttk.Label(main, text="未启动", style='SettingsSmall.TLabel')
+        status_label.pack(anchor=tk.W, padx=5, pady=(0, 4))
+
+        # 按钮行
+        r1 = ttk.Frame(main, style='SettingsInner.TFrame')
+        r1.pack(fill=tk.X, padx=5, pady=2)
+
+        # 引用容器（方便在闭包中修改）
+        sniper_ref = [None]
+
+        def sniper_start():
+            if sniper_ref[0] is None:
+                from skin_sniper import SkinSniper
+                sniper_ref[0] = SkinSniper()
+            s = sniper_ref[0]
+            try:
+                region = eval(region_var.get().strip())
+                if isinstance(region, (list, tuple)) and len(region) == 4:
+                    s.search_region = tuple(region)
+            except Exception:
+                pass
+            s.set_callbacks(
+                status_cb=lambda st: win.after(0, lambda: status_label.config(text=st)),
+            )
+            s.start()
+            status_label.config(text="启动中...", foreground="#3498db")
+
+        def sniper_stop():
+            if sniper_ref[0]:
+                sniper_ref[0].stop()
+            status_label.config(text="已停止", foreground="#e74c3c")
+
+        def set_region(target):
+            overlay = tk.Toplevel(win)
+            overlay.attributes('-fullscreen', True)
+            overlay.attributes('-alpha', 0.3)
+            overlay.attributes('-topmost', True)
+            overlay.configure(bg='black')
+            overlay.config(cursor="crosshair")
+            cv = tk.Canvas(overlay, highlightthickness=0, bg='black')
+            cv.pack(fill=tk.BOTH, expand=True)
+            hint = tk.Label(overlay, text="请拖动鼠标框选识别区域，按 Esc 取消",
+                            font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
+            hint.place(relx=0.5, rely=0.05, anchor='center')
+            rect_id = [None]; start_x = [0]; start_y = [0]; result = [None]
+
+            def on_press(e):
+                start_x[0], start_y[0] = e.x, e.y
+                if rect_id[0]: cv.delete(rect_id[0])
+                rect_id[0] = cv.create_rectangle(e.x, e.y, e.x, e.y, outline='red', width=2)
+            def on_drag(e):
+                if rect_id[0]:
+                    cv.coords(rect_id[0], start_x[0], start_y[0], e.x, e.y)
+            def on_release(e):
+                x1, y1, x2, y2 = start_x[0], start_y[0], e.x, e.y
+                x, y = min(x1, x2), min(y1, y2)
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                if w > 5 and h > 5:
+                    result[0] = (x, y, w, h)
+                overlay.destroy()
+            def on_key(e):
+                if e.keysym == 'Escape':
+                    overlay.destroy()
+            cv.bind("<ButtonPress-1>", on_press)
+            cv.bind("<B1-Motion>", on_drag)
+            cv.bind("<ButtonRelease-1>", on_release)
+            overlay.bind("<KeyPress-Escape>", on_key)
+            overlay.focus_set()
+            win.wait_window(overlay)
+            if result[0]:
+                val = f"{result[0][0]},{result[0][1]},{result[0][2]},{result[0][3]}"
+                if target == "search":
+                    region_var.set(val)
+                else:
+                    balance_var.set(val)
+
+        def test_search():
+            """测试在搜索区域中查找购买按钮"""
+            region_str = region_var.get().strip()
+            try:
+                region = eval(f"[{region_str}]")
+                if not isinstance(region, (list, tuple)) or len(region) != 4:
+                    status_label.config(text="区域格式错误，应为 x,y,w,h", foreground="#e74c3c")
+                    return
+            except Exception:
+                status_label.config(text="区域格式错误，应为 x,y,w,h", foreground="#e74c3c")
+                return
+            status_label.config(text="正在查找购买按钮...", foreground="#f39c12")
+            import threading
+            def _run():
+                try:
+                    from skin_sniper import SkinSniper
+                    s = SkinSniper()
+                    s.search_region = tuple(region)
+                    # 使用用户设置的 buy_template 路径
+                    buy_path = self.app.settings.get("sniper_buy_template", "")
+                    if buy_path and os.path.exists(buy_path):
+                        s.buy_template = buy_path
+                    for _ in range(20):
+                        pos = s._find_buy_pos()
+                        if pos:
+                            win.after(0, lambda p=pos: status_label.config(
+                                text=f"找到按钮！位置 ({p[0]}, {p[1]})", foreground="#27ae60"))
+                            return
+                        time.sleep(0.3)
+                    win.after(0, lambda: status_label.config(text="未找到购买按钮", foreground="#e74c3c"))
+                except Exception as e:
+                    win.after(0, lambda e=e: status_label.config(text=f"测试异常: {e}", foreground="#e74c3c"))
+            threading.Thread(target=_run, daemon=True).start()
+
+        def test_balance():
+            region_str = balance_var.get().strip()
+            if not region_str:
+                status_label.config(text="请先设置余额区域", foreground="#e74c3c")
+                return
+            try:
+                region = eval(f"[{region_str}]")
+                if not isinstance(region, (list, tuple)) or len(region) != 4:
+                    status_label.config(text="余额区域格式错误", foreground="#e74c3c")
+                    return
+            except Exception:
+                status_label.config(text="余额区域格式错误", foreground="#e74c3c")
+                return
+            status_label.config(text="正在测试余额...", foreground="#f39c12")
+            import threading
+            def _run():
+                try:
+                    from skin_sniper import SkinSniper
+                    s = SkinSniper()
+                    s.balance_region = tuple(region)
+                    val = s._read_balance()
+                    win.after(0, lambda v=val: status_label.config(
+                        text=f"余额: {v}" if v else "未识别到余额", foreground="#27ae60" if v else "#e74c3c"))
+                except Exception as e:
+                    win.after(0, lambda e=e: status_label.config(text=f"测试异常: {e}", foreground="#e74c3c"))
+            threading.Thread(target=_run, daemon=True).start()
+
+        # ---- 按钮 ----
+        ttk.Button(r1, text="启动抢购", command=sniper_start, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(r1, text="停止", command=sniper_stop, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Button(r1, text="测试搜索", command=test_search, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(r1, text="测试余额", command=test_balance, width=10).pack(side=tk.LEFT, padx=2)
+
+        # 搜索区域
+        r2 = ttk.Frame(main, style='SettingsInner.TFrame')
+        r2.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(r2, text="搜索区域:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(r2, textvariable=region_var, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(r2, text="设置", command=lambda: set_region("search"), width=5).pack(side=tk.LEFT, padx=(0, 8))
+
+        # 购买按钮图片路径
+        buy_path_var = tk.StringVar(value=_sv("sniper_buy_template", ""))
+        r2b = ttk.Frame(main, style='SettingsInner.TFrame')
+        r2b.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(r2b, text="购买按钮图:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(r2b, textvariable=buy_path_var, width=20).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(r2b, text="浏览", width=4,
+                   command=lambda: buy_path_var.set(
+                       filedialog.askopenfilename(title="选择购买按钮图片",
+                           filetypes=[("PNG", "*.png"), ("所有图片", "*.png *.jpg *.bmp")])
+                   )).pack(side=tk.LEFT)
+
+        # 刷新按钮图片路径
+        refresh_path_var = tk.StringVar(value=_sv("sniper_refresh_template", ""))
+        r2c = ttk.Frame(main, style='SettingsInner.TFrame')
+        r2c.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(r2c, text="刷新按钮图:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(r2c, textvariable=refresh_path_var, width=20).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(r2c, text="浏览", width=4,
+                   command=lambda: refresh_path_var.set(
+                       filedialog.askopenfilename(title="选择刷新按钮图片",
+                           filetypes=[("PNG", "*.png"), ("所有图片", "*.png *.jpg *.bmp")])
+                   )).pack(side=tk.LEFT)
+
+        # 余额区域
+        r3 = ttk.Frame(main, style='SettingsInner.TFrame')
+        r3.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(r3, text="余额区域:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(r3, textvariable=balance_var, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(r3, text="设置", command=lambda: set_region("balance"), width=5).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(r3, text="变化阈值:", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Entry(r3, textvariable=balance_threshold_var, width=5).pack(side=tk.LEFT)
+
+        # 超时设置
+        r4 = ttk.Frame(main, style='SettingsInner.TFrame')
+        r4.pack(fill=tk.X, padx=5, pady=(2, 5))
+        ttk.Label(r4, text="超时(分钟,0=不限制):", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(r4, textvariable=timeout_var, width=6).pack(side=tk.LEFT)
+
+        # 在启动/停止时同步图片路径
+        _orig_start = sniper_start
+        def _start_with_paths():
+            if sniper_ref[0] is None:
+                from skin_sniper import SkinSniper
+                sniper_ref[0] = SkinSniper()
+            s = sniper_ref[0]
+            # 同步图片路径
+            bp = buy_path_var.get().strip()
+            if bp:
+                s.buy_template = bp
+            rp = refresh_path_var.get().strip()
+            if rp:
+                s.refresh_template = rp
+            # 保存设置
+            self.app.settings["sniper_buy_template"] = bp
+            self.app.settings["sniper_refresh_template"] = rp
+            _orig_start()
+        sniper_start = _start_with_paths
+
+        win.protocol("WM_DELETE_WINDOW", lambda: (
+            _save_sniper_settings(),
+            sniper_stop(),
+            utils.save_window_geometry(win, "sniper_geometry"),
+            win.destroy()
+        ))
+
     def _test_account_login(self):
         """测试账号登录流程（WeGame 直接登录）"""
         game_account = self._dev_login_account_var.get().strip()
@@ -893,7 +1156,7 @@ class SettingsWindow:
         import threading
         def _run_test():
             try:
-                import driver_keyboard
+                import interception_keyboard
                 import pyautogui
                 # 提示用户将焦点放到目标窗口
                 self.win.after(0, lambda: self._dev_kb_status.config(
@@ -980,6 +1243,38 @@ class SettingsWindow:
             except Exception as e:
                 self.win.after(0, lambda: self._dev_proc_status.config(
                     text=f"✗ 清理失败: {e}", foreground="#e74c3c"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _test_image_click(self):
+        """测试图像识别并点击：根据路径识别屏幕上的图片并点击"""
+        img_path = self._dev_img_var.get().strip()
+        if not img_path:
+            self._dev_img_status.config(text="请输入模板图片路径", foreground="#e74c3c")
+            return
+
+        # 转为绝对路径
+        img_abs = config.resource_path(img_path) if not os.path.isabs(img_path) else img_path
+        if not os.path.isfile(img_abs):
+            self._dev_img_status.config(text=f"✗ 图片文件不存在: {img_abs}", foreground="#e74c3c")
+            return
+
+        self._dev_img_status.config(text="正在识别图片并点击...", foreground="#3498db")
+        self.win.update()
+
+        import threading
+        def _run():
+            try:
+                found = utils.find_and_click(img_abs, timeout=10, confidence=0.6)
+                if found:
+                    self.win.after(0, lambda: self._dev_img_status.config(
+                        text="✓ 图片识别成功，已点击！", foreground="#27ae60"))
+                else:
+                    self.win.after(0, lambda: self._dev_img_status.config(
+                        text="✗ 未在屏幕上找到该图片", foreground="#e74c3c"))
+            except Exception as e:
+                self.win.after(0, lambda: self._dev_img_status.config(
+                    text=f"✗ 识别异常: {e}", foreground="#e74c3c"))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -1119,7 +1414,7 @@ class SettingsWindow:
             except Exception as e:
                 tested_count[0] += 1
                 win.after(0, lambda: btn.config(bg='#ff9800', fg='white'))
-                win.after(0, lambda: status_var.set(f"✗ {display_name} 测试异常: {e}"))
+                win.after(0, lambda e=e: status_var.set(f"✗ {display_name} 测试异常: {e}"))
             finally:
                 _test_running[0] = False
                 _test_done_event.set()
@@ -1631,11 +1926,18 @@ class SettingsWindow:
             self.win.deiconify()
             messagebox.showerror("测试失败", f"识别出错：{e}", parent=self.win)
 
+    def _open_capture_wizard_nav(self):
+        """打开模板上传向导（带导航栈）"""
+        def _open():
+            self._open_capture_wizard()
+        utils.nav_push(self.win, _open)
+
     def _open_capture_wizard(self):
         """打开模板截图向导"""
         from template_capture import TemplateCaptureWizard
         current_res = config.get_resolution_key()
-        TemplateCaptureWizard(self.win, current_res, app=self.app)
+        wizard = TemplateCaptureWizard(self.win, current_res, app=self.app)
+        wizard.win.protocol("WM_DELETE_WINDOW", lambda: utils.nav_pop(wizard.win))
 
     def _get_autostart_state(self):
         try:
@@ -1775,4 +2077,4 @@ class SettingsWindow:
 
         messagebox.showinfo("提示", "设置已保存。")
         utils.save_window_geometry(self.win, "settings_window_geometry")
-        self.win.destroy()
+        utils.nav_pop(self.win)

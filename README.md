@@ -17,6 +17,7 @@
 - **OCR 文字识别** — 支持对屏幕指定区域进行文字识别，可作为图像匹配的替代方案，支持 OCR 降级开关、全局文本配置、调试日志
 - **资产识别** — 进入游戏后自动识别并显示账号资产数值
 - **资产监测** — SQLite 持久化资产记录，支持自定义天数统计资产变化，正数绿色负数红色
+- **皮肤抢购** — 图片识别监控购买按钮，找到后自动点击并确认购买，超时自动停止
 - **账号信息管理** — 右键账号可设置游戏账号、密码、备注等信息，密码默认隐藏可切换显示
 - **账号状态颜色** — 冷却中账号蓝色、可运行账号绿色、已暂停账号红色，直观区分账号状态
 - **账号列表分隔线** — 每个账号下方显示分隔线，便于视觉区分
@@ -53,27 +54,30 @@ pyinstaller 三角洲自动工具.spec
 ### 驱动安装状态
 
 Interception 驱动已安装在本机，可在正常模式（测试签名关闭）下工作，不需要开启 Windows 测试模式。
-- 驱动文件：`C:\Windows\System32\drivers\interception.sys`
-- 服务名称：`interception`（内核驱动，手动启动）
+- 驱动文件：`C:\Windows\System32\drivers\keyboard.sys`（伪装为系统键盘驱动）
+- 服务名称：`keyboard`（内核驱动，手动启动）
 - DLL 依赖：`interception.dll`（已包含在项目目录中，打包时自动嵌入）
 
 ### 在新电脑上安装驱动
 
 如需在新电脑部署，有两种方式：
 
-**方式一：使用 install-interception.exe（推荐）**
-在 `Interception_pkg/Interception/command line installer/` 目录中以管理员身份运行：
-```bash
-install-interception.exe /install
-```
-注意：64 位 Windows 上需使用 64 位进程运行，或用 `SysNative` 路径绕过 WOW64 重定向。
+**方式一：使用安装程序（推荐）**
+运行安装程序时勾选「安装 Interception 键盘驱动」即可自动安装。
 
-**方式二：手动安装驱动文件**
-将 `interception.sys` 复制到 `C:\Windows\System32\drivers\`，然后：
+**方式二：手动安装**
+以管理员身份运行安装目录下的 `install_interception.bat`，然后重启电脑。
+
+验证驱动状态：
 ```bash
-sc create interception type= kernel binPath= "C:\Windows\System32\drivers\interception.sys"
-sc start interception
+sc query keyboard
 ```
+输出应显示 `RUNNING`。注意：服务名为 `keyboard`（非 `interception`）。
+
+### 设备号说明
+
+Interception 驱动中设备 1 是只读中转设备，真实键盘设备从 2 开始。
+程序会自动检测可写入的设备号，无需手动配置。
 
 ## 使用说明
 
@@ -106,7 +110,13 @@ sc start interception
 
 ## 配置说明
 
-用户配置：`~/.delta_auto_settings.json`，账号列表：`~/.delta_auto_accounts.json`，自定义模板：`~/.delta_auto_templates/`，冷却数据：`~/.delta_auto_cooldown.json`，资产记录：`~/.delta_auto_assets.db`
+用户数据统一存储在 `%APPDATA%\DeltaAutoTool\` 目录下：
+- `settings.json` — 用户设置
+- `accounts.json` — 账号列表（含备份文件 accounts.json.bak）
+- `templates/` — 用户自定义模板
+- `sell_items/` — 售卖物品图片和元数据
+- `cooldown.json` — 冷却数据
+- `assets.db` — 资产记录 SQLite 数据库
 
 | 配置项 | 说明 |
 |--------|------|

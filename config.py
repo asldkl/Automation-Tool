@@ -10,6 +10,14 @@ import threading
 
 # ==================== 有效期由服务器端统一校验 ====================
 
+# ==================== 统一数据目录 ====================
+# 所有用户数据统一存储在 %APPDATA%/DeltaAutoTool/ 下
+APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "DeltaAutoTool")
+
+def ensure_app_data_dir():
+    """确保数据目录存在"""
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+
 # ==================== 资源路径辅助 ====================
 def resource_path(relative_path):
     if getattr(sys, 'frozen', False):
@@ -24,10 +32,10 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 # ==================== 用户设置文件路径 ====================
-SETTINGS_JSON_PATH = os.path.join(os.path.expanduser("~"), ".delta_auto_settings.json")
+SETTINGS_JSON_PATH = os.path.join(APP_DATA_DIR, "settings.json")
 
 # ==================== 用户自定义模板目录 ====================
-USER_TEMPLATE_DIR = os.path.join(os.path.expanduser("~"), ".delta_auto_templates")
+USER_TEMPLATE_DIR = os.path.join(APP_DATA_DIR, "templates")
 
 def user_template_path(basename):
     """获取用户自定义模板的完整路径"""
@@ -42,7 +50,7 @@ def resolve_template_path(config_path):
     return resource_path(config_path)
 
 # ==================== 售卖物品目录 ====================
-SELL_ITEMS_DIR = os.path.join(os.path.expanduser("~"), ".delta_auto_sell_items")
+SELL_ITEMS_DIR = os.path.join(APP_DATA_DIR, "sell_items")
 
 # ==================== 售卖物品元数据 ====================
 ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
@@ -234,6 +242,7 @@ def save_settings(settings):
     """保存用户设置到 JSON 文件（原子写入，线程安全）"""
     global _settings_cache, _settings_cache_mtime
     with _settings_lock:
+        ensure_app_data_dir()
         tmp_path = SETTINGS_JSON_PATH + ".tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -296,6 +305,7 @@ DELTA_LAUNCH_BTN    = resource_path("picture/wegame_login/delta_launch_btn.png")
 LOGIN_AGAIN         = resource_path("picture/wegame_login/login_again.png")
 
 ACCOUNT_SELECT      = resource_path("picture/wegame_login/account_select.png")
+ENSURE              = resource_path("picture/wegame_login/ensure.png")
 SIGN_IN             = resource_path("picture/wegame_login/Sign-in.png")
 IMAGE_INPUT_FIELD   = resource_path("picture/wegame_login/Input.png")
 
@@ -385,6 +395,8 @@ TEMPLATE_CAPTURE_LIST = [
     ("LOGIN_AGAIN",         "picture/wegame_login/login_again.png",   "重新登录按钮",       "在 WeGame 登录失败后，截取「重新登录」按钮"),
     ("DELTA_GAME_ICON",     "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",    "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
+    ("ENSURE",              "picture/wegame_login/ensure.png",          "游戏确认按钮",       "在游戏启动后，截取可能出现的「确定」按钮"),
+    ("QUICK_LOGIN",         "picture/wegame_login/quick_login.png",     "快速登录按钮",       "在 WeGame 登录界面，截取快速登录按钮"),
     # ===== 游戏导航 =====
     ("Hazard_Operations",   "picture/Navigation/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
     ("Special_Ops",         "picture/Navigation/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),

@@ -17,6 +17,8 @@ _destroy_context = None
 _set_filter = None
 _send = None
 _is_keyboard = None
+_get_hardware_id = None
+_HARDWARE_ID_BUF_SIZE = 1024
 
 # predicate 回调类型：int (*)(InterceptionDevice)
 _INTERCEPTION_PREDICATE = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)
@@ -96,7 +98,7 @@ _CHAR_TO_SCANCODE = {
 def _load_dll():
     """加载 interception.dll"""
     global _dll, _dll_loaded, _create_context, _destroy_context
-    global _set_filter, _send, _is_keyboard
+    global _set_filter, _send, _is_keyboard, _get_hardware_id
 
     if _dll_loaded:
         return _dll is not None
@@ -108,12 +110,17 @@ def _load_dll():
     meipass = getattr(sys, '_MEIPASS', None)
 
     search_paths = [
+        os.path.join(os.path.dirname(sys.executable), "interception.dll"),
         os.path.join(script_dir, "interception.dll"),
         os.path.join(script_dir, "Interception-master", "library", "interception.dll"),
         os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "interception.dll"),
+        # LCA 安装目录（若已安装 LCA 则直接复用其 DLL）
+        r"C:\Program Files\LCA\Interception\library\x64\interception.dll",
+        r"C:\Program Files (x86)\LCA\Interception\library\x64\interception.dll",
     ]
     if meipass:
         search_paths.insert(0, os.path.join(meipass, "interception.dll"))
+    search_paths = [p for p in search_paths if p is not None]
 
     for dll_path in search_paths:
         if os.path.exists(dll_path):
@@ -140,7 +147,7 @@ def _load_dll():
 
 def _setup_functions():
     """配置 DLL 函数签名"""
-    global _create_context, _destroy_context, _set_filter, _send, _is_keyboard
+    global _create_context, _destroy_context, _set_filter, _send, _is_keyboard, _get_hardware_id
 
     _create_context = _dll.interception_create_context
     _create_context.restype = ctypes.c_void_p
@@ -162,20 +169,43 @@ def _setup_functions():
     _is_keyboard.restype = ctypes.c_int
     _is_keyboard.argtypes = [ctypes.c_int]
 
+    _get_hardware_id = _dll.interception_get_hardware_id
+    _get_hardware_id.restype = ctypes.c_uint
+    _get_hardware_id.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+
+
+def _device_has_hardware_id(ctx, device):
+    """检测设备是否有真实硬件 ID（跳过中转设备 device 1）"""
+    try:
+        buf = ctypes.create_string_buffer(_HARDWARE_ID_BUF_SIZE)
+        length = _get_hardware_id(ctx, device, buf, _HARDWARE_ID_BUF_SIZE)
+        return length > 0 and len(buf.raw[:length].rstrip(b'\x00')) > 0
+    except Exception:
+        return False
+
+
+def _find_keyboard_device(ctx):
+    """扫描设备 2-10，找到第一个有硬件 ID 的键盘设备"""
+    for dev in range(2, 11):
+        if _is_keyboard(dev) and _device_has_hardware_id(ctx, dev):
+            return dev
+    # 兜底：任何可写的键盘设备
+    for dev in range(2, 11):
+        if _is_keyboard(dev):
+            return dev
+    return 2
+
 
 def _check_driver():
-    """验证 Interception 驱动是否真正可用"""
+    """验证 Interception 驱动是否真正可用（只检查 DLL 加载和 context 创建，不发送测试按键）"""
     if not _load_dll():
         return False
     try:
         ctx = _create_context()
-        if not ctx:
-            return False
-        # 发送左 Shift 释放事件作为测试（无害操作，不会产生实际按键效果）
-        stroke = InterceptionKeyStroke(0x2A, KEY_UP, 0)
-        result = _send(ctx, 1, stroke, 1)
-        _destroy_context(ctx)
-        return result > 0
+        if ctx:
+            _destroy_context(ctx)
+            return True
+        return False
     except Exception:
         return False
 
@@ -211,16 +241,15 @@ def send_string(text, interval=0.02):
 
     ctx = None
     try:
-        # FILTER_KEY_ALL = 0xFFFF
         ctx = _create_context()
         if not ctx:
             print("[ERROR] interception_create_context 失败")
             return False
 
-        _set_filter(ctx, _predicate_callback, 0xFFFF)
+        # 不拦截任何事件（filter=0），只用来发送
+        _set_filter(ctx, _predicate_callback, 0)
 
-        # 第一个设备是键盘 1
-        keyboard_device = 1  # INTERCEPTION_KEYBOARD(0)
+        keyboard_device = _find_keyboard_device(ctx)
 
         for ch in text:
             if ch not in _CHAR_TO_SCANCODE:
@@ -280,8 +309,8 @@ def send_key(char, interval=0.02):
         if not ctx:
             return False
 
-        _set_filter(ctx, _predicate_callback, 0xFFFF)
-        keyboard_device = 1
+        _set_filter(ctx, _predicate_callback, 0)
+        keyboard_device = _find_keyboard_device(ctx)
 
         if char in _CHAR_TO_SCANCODE:
             scan_code, need_shift = _CHAR_TO_SCANCODE[char]

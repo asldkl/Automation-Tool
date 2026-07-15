@@ -1,6 +1,6 @@
 ; 三角洲行动自动化工具 安装脚本
 ; Inno Setup 6 编译
-; 更新日期: 2026-06-24
+; 更新日期: 2026-07-15
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -31,9 +31,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "dist\三角洲自动工具.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "interception.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "interception.sys"; DestDir: "{app}"; Flags: ignoreversion
 Source: "install_interception.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "Interception安装使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "使用说明书.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "Interception安装使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标:"
@@ -64,10 +66,18 @@ var
   ResultCode: Integer;
 begin
   Result := False;
-  if Exec('sc.exe', 'query interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  if Exec('sc.exe', 'query keyboard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     if ResultCode = 0 then
       Result := True;
+  end;
+  if not Result then
+  begin
+    if Exec('sc.exe', 'query interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      if ResultCode = 0 then
+        Result := True;
+    end;
   end;
 end;
 
@@ -79,18 +89,14 @@ begin
   begin
     if IsTaskSelected('install_driver') and (not IsInterceptionInstalled) then
     begin
-      FileCopy(ExpandConstant('{app}\interception.sys'),
-               ExpandConstant('{sys}\drivers\interception.sys'), False);
-      Exec('sc.exe', 'create interception type= kernel binPath= "' +
-           ExpandConstant('{sys}\drivers\interception.sys') + '"',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      if MsgBox('Interception driver installed. Reboot required.' + #13#10 +
-                'Reboot now?' + #13#10 + #13#10 +
-                '(Without reboot, driver will not be available)',
-                mbConfirmation, MB_YESNO) = IDYES then
+      if Exec(ExpandConstant('{app}\install_interception.bat'), '',
+              '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
       begin
-        Exec('shutdown.exe', '/r /t 5 /c "Reboot to load Interception driver"',
-             '', SW_HIDE, ewNoWait, ResultCode);
+        if MsgBox('Interception driver installed.' + #13#10 +
+                  'Reboot now to ensure the driver is loaded?', mbConfirmation, MB_YESNO) = IDYES then
+        begin
+          Exec('shutdown.exe', '/r /t 5', '', SW_HIDE, ewNoWait, ResultCode);
+        end;
       end;
     end;
   end;
