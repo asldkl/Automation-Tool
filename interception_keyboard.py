@@ -17,7 +17,8 @@ _destroy_context = None
 _set_filter = None
 _send = None
 _is_keyboard = None
-_get_hardware_id = None
+_get_hardware_id, _dll_path = None
+_dll_path = None
 _HARDWARE_ID_BUF_SIZE = 1024
 
 # predicate 回调类型：int (*)(InterceptionDevice)
@@ -98,7 +99,7 @@ _CHAR_TO_SCANCODE = {
 def _load_dll():
     """加载 interception.dll"""
     global _dll, _dll_loaded, _create_context, _destroy_context
-    global _set_filter, _send, _is_keyboard, _get_hardware_id
+    global _set_filter, _send, _is_keyboard, _get_hardware_id, _dll_path
 
     if _dll_loaded:
         return _dll is not None
@@ -127,6 +128,7 @@ def _load_dll():
             try:
                 _dll = ctypes.CDLL(dll_path)
                 _setup_functions()
+                _dll_path = dll_path
                 print(f"[OK] Interception DLL 已加载: {dll_path}")
                 return True
             except Exception as e:
@@ -147,7 +149,7 @@ def _load_dll():
 
 def _setup_functions():
     """配置 DLL 函数签名"""
-    global _create_context, _destroy_context, _set_filter, _send, _is_keyboard, _get_hardware_id
+    global _create_context, _destroy_context, _set_filter, _send, _is_keyboard, _get_hardware_id, _dll_path
 
     _create_context = _dll.interception_create_context
     _create_context.restype = ctypes.c_void_p
@@ -169,16 +171,16 @@ def _setup_functions():
     _is_keyboard.restype = ctypes.c_int
     _is_keyboard.argtypes = [ctypes.c_int]
 
-    _get_hardware_id = _dll.interception_get_hardware_id
-    _get_hardware_id.restype = ctypes.c_uint
-    _get_hardware_id.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+    _get_hardware_id, _dll_path = _dll.interception_get_hardware_id, _dll_path
+    _get_hardware_id, _dll_path.restype = ctypes.c_uint
+    _get_hardware_id, _dll_path.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
 
 
 def _device_has_hardware_id(ctx, device):
     """检测设备是否有真实硬件 ID（跳过中转设备 device 1）"""
     try:
         buf = ctypes.create_string_buffer(_HARDWARE_ID_BUF_SIZE)
-        length = _get_hardware_id(ctx, device, buf, _HARDWARE_ID_BUF_SIZE)
+        length = _get_hardware_id, _dll_path(ctx, device, buf, _HARDWARE_ID_BUF_SIZE)
         return length > 0 and len(buf.raw[:length].rstrip(b'\x00')) > 0
     except Exception:
         return False
@@ -222,7 +224,7 @@ def get_backend():
     return "不可用"
 
 
-def send_string(text, interval=0.02):
+def _send_chars(chars, interval=0.02):
     """逐字符发送按键（扫描码方式）
 
     Args:

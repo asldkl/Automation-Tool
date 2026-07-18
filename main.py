@@ -49,6 +49,8 @@ if __name__ == "__main__":
 
     try:
         # 初始化数据目录
+        import pyautogui
+        pyautogui.FAILSAFE = False
         import config
         config.ensure_app_data_dir()
 
