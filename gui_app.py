@@ -845,7 +845,7 @@ class App:
         self.account_tree.heading("name", text="QQ账号")
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("next_run", text="下次运行时间")
-        self.account_tree.heading("note", text="备注/名称")
+        self.account_tree.heading("note", text="名称/备注")
         self.account_tree.column("name", width=100, minwidth=60, anchor=tk.W)
         self.account_tree.column("asset", width=60, minwidth=40, anchor=tk.CENTER)
         self.account_tree.column("next_run", width=100, minwidth=70, anchor=tk.CENTER)

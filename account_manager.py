@@ -156,7 +156,7 @@ def _open_account_info_window(app, account_key=None):
 
     row_user = ttk.Frame(input_frame)
     row_user.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_user, text="QQ账号：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
+    ttk.Label(row_user, text="账号：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
     user_var = tk.StringVar(value=saved_user)
     ttk.Entry(row_user, textvariable=user_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -200,6 +200,17 @@ def _open_account_info_window(app, account_key=None):
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
     text_widget.insert("1.0", saved_note)
 
+    info_frame = ttk.Frame(win)
+    info_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
+
+    ttk.Label(info_frame, text="等级：", width=6, anchor='e').pack(side=tk.LEFT)
+    level_var = tk.StringVar(value=existing.get("level", "") if not is_new and account_key else "")
+    ttk.Entry(info_frame, textvariable=level_var, width=10).pack(side=tk.LEFT, padx=(0, 15))
+
+    ttk.Label(info_frame, text="体力：", width=6, anchor='e').pack(side=tk.LEFT)
+    stamina_var = tk.StringVar(value=existing.get("stamina", "") if not is_new and account_key else "")
+    ttk.Entry(info_frame, textvariable=stamina_var, width=10).pack(side=tk.LEFT)
+
     def _save():
         game_text = game_var.get().strip()
         user_text = user_var.get().strip()
@@ -209,7 +220,7 @@ def _open_account_info_window(app, account_key=None):
 
         # 游戏账号和密码为必填
         if not user_text:
-            messagebox.showwarning("提示", "QQ账号为必填项目！", parent=win)
+            messagebox.showwarning("提示", "账号为必填项目！", parent=win)
             return
         if not pass_text:
             messagebox.showwarning("提示", "密码为必填项目！", parent=win)
@@ -217,7 +228,7 @@ def _open_account_info_window(app, account_key=None):
 
         nonlocal account_key
         if is_new:
-            # 新建账号：使用QQ账号作为标识
+            # 新建账号：使用账号名作为标识
             account_key = user_text
             # 检查是否已存在
             if account_key in app._account_notes:
@@ -262,6 +273,8 @@ def _open_account_info_window(app, account_key=None):
             "password": pass_text,
             "name": name_text,
             "note": note_text,
+            "level": level_var.get().strip(),
+            "stamina": stamina_var.get().strip(),
         }
 
         # 新建账号立即在内存中标记暂停（确保 UI 刷新时显示正确颜色）
@@ -413,7 +426,7 @@ def refresh_account_tree(app):
             name_val = note_data.get("name", "")
             game_val = note_data.get("game_name", "")
             if name_val and game_val:
-                note_text = f"{game_val} / {name_val}"
+                note_text = f"{name_val} / {game_val}"
             elif name_val:
                 note_text = name_val
             else:
