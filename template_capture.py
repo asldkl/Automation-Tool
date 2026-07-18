@@ -94,7 +94,7 @@ class TemplateCaptureWizard:
     def _on_close(self):
         """窗口关闭时保存大小和位置"""
         utils.save_window_geometry(self.win, "template_capture_geometry")
-        self.win.destroy()
+        utils.nav_pop(self.win)
 
     def _build_header(self):
         """立即构建：标题、进度条、底部按钮（窗口打开时立即显示）"""
@@ -178,8 +178,7 @@ class TemplateCaptureWizard:
         section_headers = {
             "ACCOUNT_SELECT": "wegame登录和游戏启动",
             "Hazard_Operations": "游戏内导航",
-            "Tech_Center": "设施操作",
-            "Produce_TechCenter": "产出项设置",
+            "Tech_Center": "设施操作及产出项",
             "MAKE": "制造操作",
             "EMAIL_MAIL": "邮箱货币",
             "Warehouse": "一键出售",
@@ -477,7 +476,7 @@ class TemplateCaptureWizard:
 
         # 不可文字识别的模板不显示 OCR 按钮
         ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.RIGHT)
 
         # 居中
         win.update_idletasks()
@@ -770,7 +769,7 @@ class TemplateCaptureWizard:
         self._save_status()
         # 更新分辨率记录（即使跳过也记录当前分辨率，避免重复提示）
         config.save_template_resolution(self.resolution_key)
-        self.win.destroy()
+        utils.nav_pop(self.win)
 
     def _finish(self):
         """完成模板上传"""
@@ -787,7 +786,7 @@ class TemplateCaptureWizard:
         # 保存新分辨率并清除模板缓存
         config.save_template_resolution(self.resolution_key)
         utils_clear_cache()
-        self.win.destroy()
+        utils.nav_pop(self.win)
         messagebox.showinfo("完成", f"模板上传完成！共上传 {done}/{total} 个模板。")
 
 

@@ -122,16 +122,19 @@ def _open_account_info_window(app, account_key=None):
             saved_game = existing.get("game_name", "")
             saved_user = existing.get("account", "")
             saved_pass = existing.get("password", "")
+            saved_name = existing.get("name", "")
             saved_note = existing.get("note", "")
         else:
             saved_game = ""
             saved_user = ""
             saved_pass = ""
+            saved_name = ""
             saved_note = existing if isinstance(existing, str) else ""
     else:
         saved_game = ""
         saved_user = ""
         saved_pass = ""
+        saved_name = ""
         from datetime import datetime
         saved_note = f"添加时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
@@ -145,15 +148,21 @@ def _open_account_info_window(app, account_key=None):
     game_var = tk.StringVar(value=saved_game)
     ttk.Entry(row_game, textvariable=game_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    row_name = ttk.Frame(input_frame)
+    row_name.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row_name, text="名称：", width=10, anchor='e').pack(side=tk.LEFT)
+    name_var = tk.StringVar(value=saved_name)
+    ttk.Entry(row_name, textvariable=name_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
     row_user = ttk.Frame(input_frame)
     row_user.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_user, text="游戏账号：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
+    ttk.Label(row_user, text="QQ账号：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
     user_var = tk.StringVar(value=saved_user)
     ttk.Entry(row_user, textvariable=user_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     row_pass = ttk.Frame(input_frame)
     row_pass.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row_pass, text="游戏密码：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
+    ttk.Label(row_pass, text="密码：*", width=10, anchor='e', foreground='#e74c3c').pack(side=tk.LEFT)
     pass_var = tk.StringVar(value=saved_pass)
     pass_entry = ttk.Entry(row_pass, textvariable=pass_var, width=30, show="*")
     pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -196,18 +205,19 @@ def _open_account_info_window(app, account_key=None):
         user_text = user_var.get().strip()
         pass_text = pass_var.get().strip()
         note_text = text_widget.get("1.0", tk.END).strip()
+        name_text = name_var.get().strip()
 
         # 游戏账号和密码为必填
         if not user_text:
-            messagebox.showwarning("提示", "游戏账号为必填项目！", parent=win)
+            messagebox.showwarning("提示", "QQ账号为必填项目！", parent=win)
             return
         if not pass_text:
-            messagebox.showwarning("提示", "游戏密码为必填项目！", parent=win)
+            messagebox.showwarning("提示", "密码为必填项目！", parent=win)
             return
 
         nonlocal account_key
         if is_new:
-            # 新建账号：使用游戏账号作为标识
+            # 新建账号：使用QQ账号作为标识
             account_key = user_text
             # 检查是否已存在
             if account_key in app._account_notes:
@@ -250,6 +260,7 @@ def _open_account_info_window(app, account_key=None):
             "game_name": game_text,
             "account": user_text,
             "password": pass_text,
+            "name": name_text,
             "note": note_text,
         }
 
@@ -399,7 +410,14 @@ def refresh_account_tree(app):
         # 备注信息（取单行备注字段）
         note_text = ""
         if isinstance(note_data, dict):
-            note_text = note_data.get("game_name", "")
+            name_val = note_data.get("name", "")
+            game_val = note_data.get("game_name", "")
+            if name_val and game_val:
+                note_text = f"{game_val} / {name_val}"
+            elif name_val:
+                note_text = name_val
+            else:
+                note_text = game_val
         # 计算下次运行时间（合并冷却剩余和下次运行）
         next_run_str = ""
         tag = "runnable"  # 默认可运行

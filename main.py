@@ -49,6 +49,8 @@ if __name__ == "__main__":
 
     try:
         # 初始化数据目录
+        import pyautogui
+        pyautogui.FAILSAFE = False  # 防止鼠标移到角落时触发安全保护中断自动化
         import config
         config.ensure_app_data_dir()
 

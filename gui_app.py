@@ -845,11 +845,11 @@ class App:
         self.account_tree.heading("name", text="QQ账号")
         self.account_tree.heading("asset", text="现有资产")
         self.account_tree.heading("next_run", text="下次运行时间")
-        self.account_tree.heading("note", text="备注")
-        self.account_tree.column("name", width=120, minwidth=80, anchor=tk.W)
+        self.account_tree.heading("note", text="备注/名称")
+        self.account_tree.column("name", width=100, minwidth=60, anchor=tk.W)
         self.account_tree.column("asset", width=60, minwidth=40, anchor=tk.CENTER)
         self.account_tree.column("next_run", width=100, minwidth=70, anchor=tk.CENTER)
-        self.account_tree.column("note", width=80, minwidth=50, anchor=tk.CENTER)
+        self.account_tree.column("note", width=120, minwidth=80, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.account_tree.yview)
         self.account_tree.configure(yscrollcommand=scrollbar.set)
         self.account_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -947,6 +947,7 @@ class App:
         win.configure(bg='#1e272e')
         win.resizable(True, True)
         win.minsize(300, 200)
+        win.transient(self.root)
         self._log_win = win
 
         # 图标
@@ -989,6 +990,14 @@ class App:
         sys.stderr = RedirectText(log_area, self.root, self._log_file_path)
 
         # 主窗口移动时，日志窗口跟随
+        def _sync_win_state():
+            if self._log_win and self._log_win.winfo_exists():
+                if self.root.state() == 'iconic':
+                    self._log_win.withdraw()
+                else:
+                    self._log_win.deiconify()
+                    self._log_win.lift()
+
         def _follow_main(event=None):
             try:
                 if self._log_win and self._log_win.winfo_exists():
@@ -1004,6 +1013,7 @@ class App:
                 pass
 
         self.root.bind("<Configure>", _follow_main)
+        self.root.bind("<FocusIn>", lambda e: _sync_win_state())
         win._follow_binding = _follow_main
 
         # 关闭时清理

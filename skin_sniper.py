@@ -46,6 +46,14 @@ class SkinSniper:
         self._log_callback = log_cb
 
     def _log(self, msg):
+        if not hasattr(self, '_last_log_msg'):
+            self._last_log_msg = ""
+            self._last_log_time = 0
+        now = time.time()
+        if msg == self._last_log_msg and now - self._last_log_time < 5:
+            return
+        self._last_log_msg = msg
+        self._last_log_time = now
         print(f"[皮肤抢购] {msg}")
         if self._log_callback:
             self._log_callback(msg)

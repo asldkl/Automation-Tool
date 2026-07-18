@@ -384,7 +384,6 @@ TEMPLATE_CAPTURE_LIST = [
     ("DELTA_GAME_ICON",     "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",    "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
     ("ENSURE",              "picture/wegame_login/ensure.png",          "游戏确认按钮",       "在游戏启动后，截取可能出现的「确定」按钮"),
-    ("QUICK_LOGIN",         "picture/wegame_login/quick_login.png",     "快速登录按钮",       "在 WeGame 登录界面，截取快速登录按钮"),
     # ===== 游戏导航 =====
     ("Hazard_Operations",   "picture/Navigation/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
     ("Special_Ops",         "picture/Navigation/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),
