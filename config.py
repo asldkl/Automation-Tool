@@ -173,9 +173,13 @@ DEFAULT_SETTINGS = {
     "asset_history_geometry": "",            # 资产记录窗口大小和位置
     "asset_monitor_geometry": "",            # 资产监测窗口大小和位置
     "dev_test_geometry": "",                 # 开发者测试窗口大小和位置
+    "ocr_test_geometry": "",                 # 文本识别测试窗口大小和位置
     "log_window_geometry": "",               # 日志窗口大小和位置
+    "global_ocr_geometry": "",               # 全局OCR设置窗口大小和位置
     "account_info_geometry": "",             # 账号信息设置窗口大小和位置
+    "ocr_template_setting_geometry": "",     # 模板OCR设置窗口大小和位置
     "confidence_test_geometry": "",          # 置信度测试窗口大小和位置
+    "global_text_config_geometry": "",       # 全局文本配置窗口大小和位置
     "custom_cooldown_geometry": "",          # 自定义冷却时间窗口大小和位置
     "cooldown_window_geometry": "",          # 账号冷却状态窗口大小和位置
     "cooldown_email_enabled": False,  # 冷却结束后发送邮件提醒
@@ -188,6 +192,14 @@ DEFAULT_SETTINGS = {
     # 服务器配置（可通过 ~/.delta_auto_settings.json 覆盖）
     "server_url": "http://112.74.106.69:8000",  # 服务器地址（建议生产环境使用 HTTPS）
     "client_key": "Client_Normal_Key_2026",      # 客户端认证令牌（非加密密钥，仅用于请求校验）
+    # OCR 识别配置
+    "ocr_configs": {},                           # var_name -> {"region": [x,y,w,h], "text": "制造", "confidence": 0.8}
+    "global_ocr_enabled": False,                 # 是否启用全局 OCR（模板无需单独配置区域）
+    "global_ocr_region": [0, 0, 0, 0],           # 全局 OCR 识别区域 [x, y, w, h]
+    "global_ocr_confidence": 0.55,               # 全局 OCR 默认置信度
+    "global_ocr_texts": {},                      # 全局 OCR 文本配置 var_name -> "text"
+    "global_text_enabled": False,                # 是否启用全局文本配置
+    "ocr_downgrade_enabled": True,               # OCR 超时是否降级到图片匹配
     # 资产识别
     "enable_asset_recognition": False,           # 是否启用资产识别
     "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]
@@ -384,6 +396,7 @@ TEMPLATE_CAPTURE_LIST = [
     ("DELTA_GAME_ICON",     "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",    "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
     ("ENSURE",              "picture/wegame_login/ensure.png",          "游戏确认按钮",       "在游戏启动后，截取可能出现的「确定」按钮"),
+    ("QUICK_LOGIN",         "picture/wegame_login/quick_login.png",     "快速登录按钮",       "在 WeGame 登录界面，截取快速登录按钮"),
     # ===== 游戏导航 =====
     ("Hazard_Operations",   "picture/Navigation/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
     ("Special_Ops",         "picture/Navigation/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),

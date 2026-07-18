@@ -670,6 +670,9 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
+    # 第一次资产识别（按 Tab 进入大厅后，game_operations 中会按 Tab 进入特勤处）
+    _recognize_and_store_asset(app, stage="第一次")
+
     ops_result = game_operations_wrapper(app)
     if ops_result == "game_failed":
         msg = "游戏内操作失败（识别问题）"
@@ -684,8 +687,8 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
-    # 资产识别（游戏内操作完成后，识别资产数值）
-    _recognize_and_store_asset(app, stage="识别")
+    # 第二次资产识别（游戏内操作完成后，资产数值已更新）
+    _recognize_and_store_asset(app, stage="第二次")
     return True
 
 
@@ -705,9 +708,8 @@ def _recognize_and_store_asset(app, stage=""):
     print(f"🔍 正在识别资产区域{label}：{asset_region}")
     time.sleep(4)
     asset_value = _recognize_asset(app, asset_region)
-    account_name = app._current_account_name or "?"
     if asset_value:
-        print(f"💰 [{account_name}][{stage}]资产：{asset_value}")
+        print(f"💰 {stage}识别到资产：{asset_value}")
         if app._current_account_name:
             app._account_assets[app._current_account_name] = asset_value
             print(f"💰 资产存储到：{app._current_account_name}，当前所有资产：{app._account_assets}")
@@ -722,7 +724,7 @@ def _recognize_and_store_asset(app, stage=""):
             account_manager.save_accounts(app)
             app.root.after(0, app._refresh_account_tree)
     else:
-        print(f"ℹ️ [{account_name}]{stage}未识别到资产数值")
+        print(f"ℹ️ {stage}未识别到资产数值" if stage else "ℹ️ 未识别到资产数值")
 
 
 def _close_game(app):

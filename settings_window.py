@@ -893,7 +893,7 @@ class SettingsWindow:
                 sniper_ref[0] = SkinSniper()
             s = sniper_ref[0]
             try:
-                region = [int(x.strip()) for x in region_var.get().strip().split(",")]
+                region = eval(region_var.get().strip())
                 if isinstance(region, (list, tuple)) and len(region) == 4:
                     s.search_region = tuple(region)
             except Exception:
