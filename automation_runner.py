@@ -670,9 +670,6 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
-    # 第一次资产识别（按 Tab 进入大厅后，game_operations 中会按 Tab 进入特勤处）
-    _recognize_and_store_asset(app, stage="第一次")
-
     ops_result = game_operations_wrapper(app)
     if ops_result == "game_failed":
         msg = "游戏内操作失败（识别问题）"
@@ -687,8 +684,8 @@ def _launch_game(app):
         app._last_account_error = msg
         return False
 
-    # 第二次资产识别（游戏内操作完成后，资产数值已更新）
-    _recognize_and_store_asset(app, stage="第二次")
+    # 资产识别（游戏内操作完成后，识别资产数值）
+    _recognize_and_store_asset(app, stage="识别")
     return True
 
 

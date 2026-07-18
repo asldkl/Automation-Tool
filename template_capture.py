@@ -361,6 +361,13 @@ class TemplateCaptureWizard:
             os.makedirs(config.USER_TEMPLATE_DIR, exist_ok=True)
             save_path = config.user_template_path(os.path.basename(rel_path))
             screenshot.save(save_path)
+            # 保存备份副本
+            bak_path = save_path + ".bak"
+            try:
+                import shutil
+                shutil.copy2(save_path, bak_path)
+            except Exception:
+                pass
             screenshot.close()
 
             # 更新状态
