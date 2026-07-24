@@ -67,6 +67,22 @@ class RedirectText:
             except Exception:
                 pass
 
+    def set_log_path(self, log_path):
+        """切换日志文件（关闭旧文件，打开新文件）"""
+        if self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
+        self.log_path = log_path
+        if log_path:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            try:
+                self._log_file = open(log_path, 'a', encoding='utf-8')
+            except Exception:
+                pass
+
     def close(self):
         """关闭日志文件"""
         if self._log_file:
@@ -192,11 +208,13 @@ class App:
         # 运行统计
         self.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": None}
 
-        # 日志文件路径
+        # 日志文件路径（初始 startup.log，每次运行时自动切换）
         log_dir = self.settings.get("log_save_path", "")
         if log_dir:
-            today = datetime.datetime.now().strftime("%Y%m%d")
-            self._log_file_path = os.path.join(log_dir, f"delta_auto_{today}.log")
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+            date_dir = os.path.join(log_dir, today)
+            os.makedirs(date_dir, exist_ok=True)
+            self._log_file_path = os.path.join(date_dir, "startup.log")
         else:
             self._log_file_path = None
 
@@ -1045,6 +1063,32 @@ class App:
     def _redirect_output(self):
         sys.stdout = RedirectText(self.log_area, self.root, self._log_file_path)
         sys.stderr = RedirectText(self.log_area, self.root, self._log_file_path)
+
+    def _set_run_log_file(self, run_start_time=None):
+        """切换日志到以运行时间命名的文件，按日期分文件夹存放
+
+        每次运行开始时调用：
+        - 日志保存路径 / YYYY-MM-DD / HH-MM-SS.log
+        """
+        if run_start_time is None:
+            run_start_time = datetime.datetime.now()
+        log_dir = self.settings.get("log_save_path", "")
+        if not log_dir:
+            self._log_file_path = None
+            return
+        # 创建日期文件夹：YYYY-MM-DD
+        date_str = run_start_time.strftime("%Y-%m-%d")
+        time_str = run_start_time.strftime("%H-%M-%S")
+        date_dir = os.path.join(log_dir, date_str)
+        os.makedirs(date_dir, exist_ok=True)
+        new_log_path = os.path.join(date_dir, f"{time_str}.log")
+        self._log_file_path = new_log_path
+        # 更新两个 RedirectText 实例的日志文件
+        if hasattr(sys.stdout, 'set_log_path'):
+            sys.stdout.set_log_path(new_log_path)
+        if hasattr(sys.stderr, 'set_log_path'):
+            sys.stderr.set_log_path(new_log_path)
+        print(f"📝 日志文件: {new_log_path}")
 
 
 def main():

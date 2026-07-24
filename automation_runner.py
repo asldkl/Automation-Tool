@@ -142,6 +142,8 @@ def start_run(app):
     app._user_stopped_cooldown = False  # 新运行开始，清除停止标志
     # 不重置 _ignore_cooldown_this_run，由调用方（冷却监听/信号触发）设置
     app._is_boot_startup = False  # 手动启动时重置开机标志
+    # 取消待执行的关机计划（防止冷却触发新运行时意外关机）
+    utils.cancel_shutdown()
     app.current_step = 0
     app.progress['value'] = 0
     app.stats_label.config(text="")
@@ -154,6 +156,8 @@ def start_run(app):
     app.log_area.configure(state='normal')
     app.log_area.delete('1.0', tk.END)
     app.log_area.configure(state='disabled')
+    # 创建新的日志文件（按日期文件夹+运行时间命名）
+    app._set_run_log_file()
     # 阻止系统睡眠，确保脚本执行不中断
     utils.prevent_sleep()
     # 启动心跳同步
@@ -202,6 +206,8 @@ def start_single_account_run(app, img_path):
     app.log_area.configure(state='normal')
     app.log_area.delete('1.0', tk.END)
     app.log_area.configure(state='disabled')
+    # 创建新的日志文件（按日期文件夹+运行时间命名）
+    app._set_run_log_file()
     utils.prevent_sleep()
     server_client.start_heartbeat(app)
     app.work_thread = threading.Thread(target=_run_single_account_main, args=(app, img_path), daemon=True)
@@ -788,9 +794,8 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         # 连续失败计数
         app._consecutive_failures[account_name] = app._consecutive_failures.get(account_name, 0) + 1
         if app._consecutive_failures[account_name] >= 2:
-            cooldown_manager.set_account_paused(account_name, True)
-            print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，已自动暂停")
-            processed_accounts[-1] = f"{account_name} (失败-自动暂停)"
+            print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，跳过本轮")
+            processed_accounts[-1] = f"{account_name} (失败-跳过本轮)"
     else:
         if app.settings.get("enable_cooldown", False):
             cd_hours = app.settings.get("cooldown_hours", 8)
@@ -960,7 +965,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
             server_client.update_account_status(app, file_name, "failed")
             _close_game(app)
             _cleanup_account_processes(app)
-            return
+            return  # 单账号模式直接返回
         elif launch_result is False:
             if app._stop_event.is_set():
                 account_interrupted = True
@@ -1091,7 +1096,7 @@ def run_script_main(app):
                     server_client.update_account_status(app, file_name, "failed")
                     _close_game(app)
                     _cleanup_account_processes(app)
-                    break  # 跳过后续账号，进入等待冷却阶段
+                    continue  # 继续下一个账号
                 elif launch_result is False or launch_result == "interrupted":
                     if app._stop_event.is_set() or launch_result == "interrupted":
                         account_interrupted = True
@@ -1226,7 +1231,7 @@ def on_finish(app):
             delay_seconds = shutdown_delay * 60
             utils.schedule_shutdown(delay_seconds)
             print(f"🔌 所有账号运行完毕，系统将在 {shutdown_delay} 分钟后关机")
-            print(f"   如需取消关机，请在命令行执行: shutdown /a")
+            print(f"   支持 shutdown /a 命令取消关机，或开始新任务自动取消")
     elif getattr(app, '_single_account_mode', False):
         print("ℹ️ 单账号模式，跳过延时关机")
 

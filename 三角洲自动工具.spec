@@ -6,7 +6,7 @@ _rapidocr_datas, _rapidocr_binaries, _rapidocr_hiddenimports = collect_all('rapi
 _onnxrt_datas, _onnxrt_binaries, _onnxrt_hiddenimports = collect_all('onnxruntime')
 a = Analysis(
     ['main.py'],
-    pathex=[r'C:\Users\李\Desktop\程序\Automation-Tool-main\Automation-Tool-main'],
+    pathex=[r'C:\Users\李\Desktop\亿烬归墟\程序\Automation-Tool-main\Automation-Tool-main'],
     binaries=_rapidocr_binaries + _onnxrt_binaries + [('interception.dll', '.')],
     datas=[('picture', 'picture'), ('picture\\produce', 'picture\\produce'),
            ('picture\\One_Click_Sell', 'picture\\One_Click_Sell'),

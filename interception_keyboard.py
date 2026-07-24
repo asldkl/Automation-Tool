@@ -17,7 +17,7 @@ _destroy_context = None
 _set_filter = None
 _send = None
 _is_keyboard = None
-_get_hardware_id, _dll_path = None
+_get_hardware_id = None
 _dll_path = None
 _HARDWARE_ID_BUF_SIZE = 1024
 
@@ -171,16 +171,16 @@ def _setup_functions():
     _is_keyboard.restype = ctypes.c_int
     _is_keyboard.argtypes = [ctypes.c_int]
 
-    _get_hardware_id, _dll_path = _dll.interception_get_hardware_id, _dll_path
-    _get_hardware_id, _dll_path.restype = ctypes.c_uint
-    _get_hardware_id, _dll_path.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+    _get_hardware_id = _dll.interception_get_hardware_id
+    _get_hardware_id.restype = ctypes.c_uint
+    _get_hardware_id.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
 
 
 def _device_has_hardware_id(ctx, device):
     """检测设备是否有真实硬件 ID（跳过中转设备 device 1）"""
     try:
         buf = ctypes.create_string_buffer(_HARDWARE_ID_BUF_SIZE)
-        length = _get_hardware_id, _dll_path(ctx, device, buf, _HARDWARE_ID_BUF_SIZE)
+        length = _get_hardware_id(ctx, device, buf, _HARDWARE_ID_BUF_SIZE)
         return length > 0 and len(buf.raw[:length].rstrip(b'\x00')) > 0
     except Exception:
         return False
@@ -234,7 +234,7 @@ def _send_chars(chars, interval=0.02):
     Returns:
         True=成功，False=失败
     """
-    if not text:
+    if not chars:
         return True
 
     if not _load_dll():
@@ -253,7 +253,7 @@ def _send_chars(chars, interval=0.02):
 
         keyboard_device = _find_keyboard_device(ctx)
 
-        for ch in text:
+        for ch in chars:
             if ch not in _CHAR_TO_SCANCODE:
                 continue
 
@@ -288,59 +288,11 @@ def _send_chars(chars, interval=0.02):
             _destroy_context(ctx)
 
 
+def send_string(text, interval=0.02):
+    """逐字符发送按键"""
+    return _send_chars(text, interval)
+
+
 def send_key(char, interval=0.02):
-    """发送单个按键事件
-
-    Args:
-        char: 单个字符
-        interval: 按键后等待秒数
-
-    Returns:
-        True=成功，False=失败
-    """
-    if not char:
-        return True
-
-    if not _load_dll():
-        print("[ERROR] Interception 不可用，无法输入")
-        return False
-
-    ctx = None
-    try:
-        ctx = _create_context()
-        if not ctx:
-            return False
-
-        _set_filter(ctx, _predicate_callback, 0)
-        keyboard_device = _find_keyboard_device(ctx)
-
-        if char in _CHAR_TO_SCANCODE:
-            scan_code, need_shift = _CHAR_TO_SCANCODE[char]
-
-            if need_shift:
-                shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
-                if _send(ctx, keyboard_device, shift_down, 1) <= 0:
-                    return False
-
-            key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
-            if _send(ctx, keyboard_device, key_down, 1) <= 0:
-                return False
-
-            key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
-            if _send(ctx, keyboard_device, key_up, 1) <= 0:
-                return False
-
-            if need_shift:
-                shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
-                if _send(ctx, keyboard_device, shift_up, 1) <= 0:
-                    return False
-
-            time.sleep(interval)
-
-        return True
-    except Exception as e:
-        print(f"[ERROR] Interception send_key 失败: {e}")
-        return False
-    finally:
-        if ctx:
-            _destroy_context(ctx)
+    """发送单个按键事件"""
+    return _send_chars(char, interval)
