@@ -772,6 +772,29 @@ def _cleanup_account_processes(app):
     time.sleep(2)
 
 
+def _ocr_capture_screen_text():
+    """OCR 识别当前屏幕文字并返回格式化文本（账号出错时调用，用于错误诊断）"""
+    try:
+        import utils as _u
+        import re
+        results = _u.ocr_recognize(region=None)
+        if not results:
+            return ""
+        # 合并、去重、过滤低置信度
+        seen = set()
+        lines = []
+        for text, conf, *_ in results:
+            if conf is not None and conf < 0.6:
+                continue
+            text = text.strip()
+            if text and text not in seen and len(text) > 1:
+                seen.add(text)
+                lines.append(text)
+        return " | ".join(lines) if lines else ""
+    except Exception as e:
+        return f"[OCR 识别失败: {e}]"
+
+
 def _process_account_result(app, account_name, account_failed, account_interrupted,
                             processed_accounts):
     """处理单个账号的执行结果：记录状态、冷却、邮件通知"""
@@ -788,6 +811,13 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         app.run_stats["fail"] += 1
         processed_accounts.append(f"{account_name} (失败)")
         server_client.update_account_status(app, account_name, "failed")
+        # OCR 识别屏幕文本，输出到日志用于后续错误关键词分析
+        try:
+            screen_text = _ocr_capture_screen_text()
+            if screen_text:
+                print(f"📋 屏幕文字: {screen_text}")
+        except Exception:
+            pass
         if not app._user_stopped_cooldown:
             error_msg = getattr(app, '_last_account_error', '未知错误')
             email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts, error_msg)

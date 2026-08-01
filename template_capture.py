@@ -481,8 +481,13 @@ class TemplateCaptureWizard:
             self._restore_template(var_name, rel_path)
             self._setup_ocr(var_name, name)
 
+        def do_test():
+            """测试当前模板的识别置信度"""
+            self._test_template_confidence(win, rel_path, name)
+
         # 不可文字识别的模板不显示 OCR 按钮
         ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="测试", command=do_test, width=8).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.RIGHT)
 
         # 居中
@@ -492,6 +497,59 @@ class TemplateCaptureWizard:
         px = (win.winfo_screenwidth() - pw) // 2
         py = (win.winfo_screenheight() - ph) // 2
         win.geometry(f"+{px}+{py}")
+
+    def _test_template_confidence(self, parent_win, rel_path, name):
+        """测试单个模板的识别置信度，弹窗显示结果（截图前先隐藏窗口避免干扰）"""
+        import cv2
+        try:
+            # 截图前隐藏窗口，避免模板设置窗口本身遮挡游戏画面
+            parent_win.withdraw()
+            parent_win.update_idletasks()
+            time.sleep(0.3)
+
+            screen = utils._screenshot_gray()
+            if screen is None:
+                messagebox.showerror("测试失败", "截图失败", parent=parent_win)
+                return
+
+            template = utils._imread_unicode(config.resolve_template_path(rel_path))
+            if template is None:
+                messagebox.showerror("测试失败", f"模板加载失败: {rel_path}", parent=parent_win)
+                return
+            if len(template.shape) == 3:
+                template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+            confidence = float(config.load_settings().get("confidence", 0.7))
+            result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+            if max_val >= confidence:
+                messagebox.showinfo(
+                    "测试结果",
+                    f"✅ {name}\n\n"
+                    f"置信度: {max_val:.4f}\n"
+                    f"阈值: {confidence:.2f}\n"
+                    f"坐标: ({max_loc[0]}, {max_loc[1]})\n\n"
+                    f"识别成功！",
+                    parent=parent_win)
+            else:
+                messagebox.showwarning(
+                    "测试结果",
+                    f"❌ {name}\n\n"
+                    f"置信度: {max_val:.4f}\n"
+                    f"阈值: {confidence:.2f}\n"
+                    f"坐标: ({max_loc[0]}, {max_loc[1]})\n\n"
+                    f"未达到阈值，识别可能失败。\n"
+                    f"可在设置中降低置信度或重新截取模板。",
+                    parent=parent_win)
+        except Exception as e:
+            messagebox.showerror("测试失败", f"识别异常: {e}", parent=parent_win)
+        finally:
+            try:
+                parent_win.deiconify()
+                parent_win.lift()
+            except Exception:
+                pass
 
     def _image_match_upload(self):
         self._show_match_results()
