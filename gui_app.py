@@ -142,10 +142,7 @@ class App:
         # 服务器验证（异步，不阻塞 UI 线程）
         self._server_validated = False
         self._server_expiry = None
-        try:
-            self._machine_id = machine_fingerprint.get_machine_id()
-        except Exception:
-            self._machine_id = "获取失败"
+        self._machine_id = ""  # 由后台验证线程填充（WMI 查询不阻塞 UI）
 
         # 显示加载提示，后台执行验证
         self._loading_label = ttk.Label(self.root, text="正在验证许可证...",
@@ -159,6 +156,11 @@ class App:
     def _async_validate(self):
         """后台线程执行服务器验证"""
         try:
+            # 后台线程获取机器指纹（WMI 查询慢时不阻塞 UI，且已有缓存不重复耗时）
+            try:
+                self._machine_id = machine_fingerprint.get_machine_id()
+            except Exception:
+                self._machine_id = "获取失败"
             self._validate_result = server_client.validate_with_server(self)
         except Exception as e:
             self._validate_result = (None, None, f"服务器验证异常: {e}")
@@ -691,13 +693,6 @@ class App:
 
     def _show_asset_history(self):
         account_manager.show_asset_history(self)
-
-    def _show_machine_fingerprint(self):
-        import machine_fingerprint
-        info = machine_fingerprint.get_machine_info()
-        msg = f"机器指纹: {info['machine_id']}\n\n硬盘序列号: {info['disk_serial']}\n主板序列号: {info['board_serial']}\n来源: {info['source']}"
-        from tkinter import messagebox
-        messagebox.showinfo("机器指纹", msg)
 
     def _show_cooldown_window(self):
         account_manager.show_cooldown_window(self)

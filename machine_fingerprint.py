@@ -44,19 +44,34 @@ def _get_wmi_value_powershell(class_name, property_name):
     return None
 
 
+# 序列号缓存：一次 WMI 查询全程序复用，避免重复卡顿
+_disk_serial_cache = None
+_board_serial_cache = None
+
+
 def _get_disk_serial():
-    """获取硬盘序列号"""
+    """获取硬盘序列号（成功结果缓存）"""
+    global _disk_serial_cache
+    if _disk_serial_cache:
+        return _disk_serial_cache
     serial = _get_wmic_value(["wmic", "diskdrive", "get", "serialnumber"])
     if not serial:
         serial = _get_wmi_value_powershell("Win32_DiskDrive", "SerialNumber")
+    if serial:
+        _disk_serial_cache = serial
     return serial
 
 
 def _get_baseboard_serial():
-    """获取主板序列号"""
+    """获取主板序列号（成功结果缓存）"""
+    global _board_serial_cache
+    if _board_serial_cache:
+        return _board_serial_cache
     serial = _get_wmic_value(["wmic", "baseboard", "get", "serialnumber"])
     if not serial:
         serial = _get_wmi_value_powershell("Win32_BaseBoard", "SerialNumber")
+    if serial:
+        _board_serial_cache = serial
     return serial
 
 
