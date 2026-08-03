@@ -621,6 +621,82 @@ class SettingsWindow:
         self._dev_kb_status = ttk.Label(frame_kb, text="", style='SettingsSmall.TLabel')
         self._dev_kb_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
+        # ----- 账号数据导入导出 -----
+        frame_acct = ttk.LabelFrame(parent, text="  账号数据导入导出  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_acct.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_acct, text="导入/导出账号列表、密码备注、资产及历史记录",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        acct_btn_frame = ttk.Frame(frame_acct, style='SettingsInner.TFrame')
+        acct_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(acct_btn_frame, text="导出账号数据", style='TButton',
+                   command=self._export_accounts, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(acct_btn_frame, text="导入账号数据", style='TButton',
+                   command=self._import_accounts, width=14).pack(side=tk.LEFT)
+
+    def _export_accounts(self):
+        """导出账号数据到用户选择的文件"""
+        import shutil
+        import account_manager
+        src = account_manager.ACCOUNTS_JSON_PATH
+        if not os.path.exists(src):
+            messagebox.showwarning("提示", "当前没有账号数据文件", parent=self.win)
+            return
+        dest = filedialog.asksaveasfilename(
+            parent=self.win, title="导出账号数据",
+            defaultextension=".json",
+            initialfile=f"accounts_{time.strftime('%Y%m%d_%H%M%S')}.json",
+            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")])
+        if not dest:
+            return
+        try:
+            shutil.copy2(src, dest)
+            messagebox.showinfo("导出成功", f"账号数据已导出到：\n{dest}", parent=self.win)
+        except Exception as e:
+            messagebox.showerror("导出失败", f"导出异常：{e}", parent=self.win)
+
+    def _import_accounts(self):
+        """从用户选择的文件导入账号数据（覆盖当前数据）"""
+        import json
+        import account_manager
+        src = filedialog.askopenfilename(
+            parent=self.win, title="导入账号数据",
+            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")])
+        if not src:
+            return
+        if not messagebox.askyesno(
+                "确认导入",
+                "导入将覆盖当前所有账号数据，是否继续？",
+                parent=self.win):
+            return
+        try:
+            with open(src, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 校验格式
+            if not isinstance(data, dict) or "qq" not in data:
+                messagebox.showerror("导入失败", "文件格式不正确，不是有效的账号数据文件", parent=self.win)
+                return
+            # 先备份当前数据
+            if os.path.exists(account_manager.ACCOUNTS_JSON_PATH):
+                import shutil
+                try:
+                    shutil.copy2(account_manager.ACCOUNTS_JSON_PATH,
+                                 account_manager.ACCOUNTS_JSON_PATH + ".pre_import.bak")
+                except Exception:
+                    pass
+            # 写入新数据
+            with open(account_manager.ACCOUNTS_JSON_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            # 重新加载到界面
+            account_manager.load_accounts(self.app)
+            messagebox.showinfo("导入成功",
+                                f"已导入 {len(data.get('qq', []))} 个账号",
+                                parent=self.win)
+        except Exception as e:
+            messagebox.showerror("导入失败", f"导入异常：{e}", parent=self.win)
+
     def _open_sniper_window(self):
         """打开皮肤抢购独立窗口"""
         win = tk.Toplevel(self.win)
