@@ -83,11 +83,12 @@ def _load_data():
 
 
 def _save_data(data):
-    """保存冷却数据（原子写入 + 备份保护，防止崩溃导致数据损坏/丢失）"""
+    """保存冷却数据（原子写入 + 备份保护，防止崩溃导致数据损坏/丢失）
+    写盘成功后把最新数据同步到 .bak，保证备份始终是最新状态（含暂停账号和冷却）"""
     global _cache, _cache_mtime
     tmp_path = COOLDOWN_JSON_PATH + ".tmp"
     try:
-        # 保存前先备份旧文件（崩溃/蓝屏后可恢复）
+        # 保存前先备份旧文件（兜底，防止写入中途崩溃丢数据）
         if os.path.exists(COOLDOWN_JSON_PATH):
             try:
                 import shutil
@@ -97,6 +98,12 @@ def _save_data(data):
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, COOLDOWN_JSON_PATH)
+        # 写盘成功后，把最新数据同步到备份（.bak 始终 = 最新状态）
+        try:
+            import shutil
+            shutil.copy2(COOLDOWN_JSON_PATH, COOLDOWN_JSON_BACKUP)
+        except Exception:
+            pass
         _cache = data
         _cache_mtime = os.path.getmtime(COOLDOWN_JSON_PATH)
     except Exception as e:
