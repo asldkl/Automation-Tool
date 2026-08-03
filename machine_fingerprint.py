@@ -13,7 +13,7 @@ def _get_wmic_value(cmd):
     """执行 WMIC 命令并提取返回值（兼容无 wmic 的系统）"""
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10,
+            cmd, capture_output=True, text=True, timeout=3,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
         )
         lines = result.stdout.strip().split('\n')
@@ -33,7 +33,7 @@ def _get_wmi_value_powershell(class_name, property_name):
         ps_cmd = f"Get-WmiObject {class_name} | Select-Object -ExpandProperty {property_name}"
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=3,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
         )
         value = result.stdout.strip()
@@ -68,12 +68,20 @@ def _get_fallback_id():
     return raw
 
 
+_machine_id_cache = None
+
+
 def get_machine_id():
     """
     获取机器指纹（唯一标识一台电脑）
     组合硬盘序列号 + 主板序列号，计算 SHA256 哈希
     返回 32 位十六进制字符串
+    结果缓存：程序内多次调用只计算一次（WMI 查询较慢，避免重复耗时）
     """
+    global _machine_id_cache
+    if _machine_id_cache:
+        return _machine_id_cache
+
     disk_serial = _get_disk_serial()
     board_serial = _get_baseboard_serial()
 
@@ -85,6 +93,7 @@ def get_machine_id():
         raw = _get_fallback_id()
 
     fingerprint = hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
+    _machine_id_cache = fingerprint
     return fingerprint
 
 
