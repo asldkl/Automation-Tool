@@ -650,8 +650,14 @@ class App:
     def delete_account(self):
         account_manager.delete_account(self)
 
-    def clear_accounts(self):
-        account_manager.clear_accounts(self)
+    def extend_all_cooldowns(self):
+        """全体延时：给所有冷却中的账号添加 1 小时冷却（不影响暂停账号）"""
+        extended = cooldown_manager.extend_all_cooldowns(hours=1)
+        if extended:
+            print(f"⏳ 已为 {len(extended)} 个冷却中的账号延长 1 小时冷却：{', '.join(extended)}")
+        else:
+            print("ℹ️ 当前没有正在冷却中的账号，无需延长")
+        account_manager.refresh_account_tree(self)
 
     def update_account_count(self):
         account_manager.update_account_count(self)
@@ -849,7 +855,7 @@ class App:
         btn_frame.pack(fill=tk.X, pady=(0, 6))
         self.add_btn = ttk.Button(btn_frame, text="＋ 添加账号", style='Accent.TButton', command=self.add_account, width=14)
         self.add_btn.pack(side=tk.LEFT, padx=(0, 6))
-        self.clear_btn = ttk.Button(btn_frame, text="× 清空列表", style='TButton', command=self.clear_accounts, width=10)
+        self.clear_btn = ttk.Button(btn_frame, text="全体延时", style='TButton', command=self.extend_all_cooldowns, width=10)
         self.clear_btn.pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="冷却重置", style='TButton',
                    command=self._reset_all_cooldowns, width=10).pack(side=tk.LEFT, padx=4)

@@ -694,6 +694,15 @@ v1.3.5 (2026-08-01)
   - 新增 _test_template_confidence()：截图前隐藏窗口避免遮挡，匹配后弹窗显示结果
 - 运行优化：
   - start_run() 启动时自动取消待执行关机计划（冷却触发新任务时不再误关机）
+- 输入保护：
+  - Interception 输入账号密码前自动检测并关闭 Caps Lock（_is_capslock_on + _send_toggle_key）
+  - 防止大写锁定导致账号密码输入错误
+- 冷却数据备份：
+  - cooldown.json 保存前自动备份为 .bak（COOLDOWN_JSON_BACKUP）
+  - 主文件不存在/损坏/为空时自动从备份恢复（_restore_from_backup）
+- 全体延时：
+  - 主界面「清空列表」按钮改为「全体延时」（extend_all_cooldowns）
+  - 一键为所有冷却中账号延长 1 小时冷却，不影响暂停账号
 - 文档修正：
   - 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作
 

@@ -335,16 +335,6 @@ def delete_account(app):
         save_accounts(app)
 
 
-def clear_accounts(app):
-    app.qq_account_images.clear()
-    app._account_assets.clear()
-    app._asset_history.clear()
-    app._account_notes.clear()
-    refresh_account_tree(app)
-    update_account_count(app)
-    save_accounts(app)
-
-
 def update_account_count(app):
     app.total_steps = len(app.qq_account_images) * 4
     app.progress['maximum'] = max(1, app.total_steps)

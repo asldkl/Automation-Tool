@@ -224,6 +224,30 @@ def get_backend():
     return "不可用"
 
 
+# Caps Lock 键扫描码（0x3A）和 VK_CAPITAL
+_VK_CAPITAL = 0x14
+_CAPSLOCK_SCANCODE = 0x3A
+
+
+def _is_capslock_on():
+    """检测 Caps Lock 是否开启（GetKeyState 返回值低位为 1 表示开启）"""
+    try:
+        return ctypes.windll.user32.GetKeyState(_VK_CAPITAL) & 0x0001 == 1
+    except Exception:
+        return False
+
+
+def _send_toggle_key(ctx, keyboard_device, scan_code):
+    """发送一个切换键（按下+抬起）"""
+    key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
+    if _send(ctx, keyboard_device, key_down, 1) <= 0:
+        return False
+    key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
+    if _send(ctx, keyboard_device, key_up, 1) <= 0:
+        return False
+    return True
+
+
 def _send_chars(chars, interval=0.02):
     """逐字符发送按键（扫描码方式）
 
@@ -252,6 +276,13 @@ def _send_chars(chars, interval=0.02):
         _set_filter(ctx, _predicate_callback, 0)
 
         keyboard_device = _find_keyboard_device(ctx)
+
+        # 强制关闭 Caps Lock，避免账号密码输入被大写锁定干扰
+        if _is_capslock_on():
+            if _send_toggle_key(ctx, keyboard_device, _CAPSLOCK_SCANCODE):
+                print("🔒 检测到 Caps Lock 开启，已自动关闭")
+            else:
+                print("⚠️ 自动关闭 Caps Lock 失败，密码输入可能受影响")
 
         for ch in chars:
             if ch not in _CHAR_TO_SCANCODE:

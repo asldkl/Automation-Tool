@@ -10,7 +10,7 @@
 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作。
 
 【版本历史】
-v1.3.5 (2026-08-01)：日志按日期文件夹分文件、账号失败 OCR 屏幕诊断、开发者测试精简、模板设置集成置信度测试
+v1.3.5 (2026-08-01)：日志按日期文件夹分文件、账号失败 OCR 屏幕诊断、开发者测试精简、模板设置集成置信度测试、Caps Lock 输入保护、冷却数据备份、全体延时按钮
 v1.3.4 (2026-07-15)：皮肤抢购 OCR→图片匹配、Interception 驱动设备自动检测、数据目录迁移到 %APPDATA%、删除旧数据迁移代码
 v1.3.2 (2026-06-27)：代码审查全面修复（原子写入、线程安全、冷却数据迁移等）
 v1.3.1 (2026-06-27)：模块化重构、删除 PyDirectInput、右键运行单账号、冷却定时任务兜底
@@ -40,7 +40,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - _continue_init()：验证通过后继续初始化（v1.1.4 拆分）
 │   - running 属性：threading.Event 包装（v1.1.4，线程安全布尔标志）
 │   - _build_ui()：构建主界面（Treeview 账号列表、日志区域、控制按钮）
-│     - 按钮栏：添加账号、清空列表、冷却重置、资产监测
+│     - 按钮栏：添加账号、全体延时（冷却中账号+1小时）、冷却重置、资产监测
 │     - Treeview 四列：账号名称（左对齐+序号）、现有资产、下次运行时间、备注
 │     - Treeview 颜色标签：cooling（蓝色）、runnable（绿色）、paused（红色）
 │   - _setup_styles() / _setup_tray()：样式与托盘
@@ -236,8 +236,10 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - set_account_paused() / is_account_paused()：账号暂停/恢复
 │   - mark_game_failed()：游戏失败标记（v1.3.1 新增）
 │   - get_all_cooldowns()：获取所有账号冷却信息
+│   - extend_all_cooldowns()：全体延时，给所有冷却中账号延长指定小时（不影响暂停账号，v1.3.5）
+│   - _restore_from_backup()：主文件不存在/损坏/为空时从 .bak 恢复（v1.3.5）
 │   - 线程安全：threading.Lock 包裹所有公共函数，is_cooling_down/get_all_cooldowns 全部操作移入锁内
-│   - 原子写入（.tmp + os.replace）
+│   - 原子写入（.tmp + os.replace）+ 保存前备份 .bak（v1.3.5）
 │
 ├── template_capture.py         # 模板上传向导（约 986 行）
 │   - TemplateCaptureWizard 类：可调整大小的模态对话框（550x700，minsize 300x400）
@@ -297,7 +299,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 
 ├── ~/.delta_auto_settings.json     # 用户设置（含 ocr_configs、global_ocr_* 配置，敏感字段加密）
 ├── ~/.delta_auto_accounts.json     # QQ 账号列表（含 assets、asset_history、notes，密码加密）
-├── ~/.delta_auto_cooldown.json     # 冷却数据
+├── ~/.delta_auto_cooldown.json     # 冷却数据（含 .bak 备份，损坏自动恢复 v1.3.5）
 ├── ~/.delta_auto_assets.db         # 资产记录 SQLite 数据库（v1.1.1 新增）
 ├── ~/.delta_auto_templates/        # 用户自定义模板 + OCR 模板图片
 ├── ~/.delta_auto_sell_items/       # 售卖物品图片 + items_meta.json

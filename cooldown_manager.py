@@ -10,6 +10,7 @@ import config
 import utils
 
 COOLDOWN_JSON_PATH = os.path.join(config.APP_DATA_DIR, "cooldown.json")
+COOLDOWN_JSON_BACKUP = COOLDOWN_JSON_PATH + ".bak"
 
 
 def normalize_key(img_path):
@@ -31,13 +32,36 @@ _cache_mtime = 0.0
 _lock = threading.Lock()
 
 
+def _restore_from_backup():
+    """从备份文件恢复冷却数据，成功返回数据，失败返回空 dict"""
+    import shutil
+    if not os.path.exists(COOLDOWN_JSON_BACKUP):
+        return {}
+    try:
+        with open(COOLDOWN_JSON_BACKUP, "r", encoding="utf-8") as f:
+            backup_data = json.load(f)
+        if backup_data:
+            # 恢复主文件
+            try:
+                shutil.copy2(COOLDOWN_JSON_BACKUP, COOLDOWN_JSON_PATH)
+            except Exception:
+                pass
+            print("🔄 冷却数据已从备份恢复")
+            return backup_data
+    except Exception:
+        pass
+    return {}
+
+
 def _load_data():
-    """加载冷却数据（带内存缓存，仅在文件修改时间变化时重新读取）"""
+    """加载冷却数据（带内存缓存，仅在文件修改时间变化时重新读取）
+    主文件不存在、损坏或为空时自动从备份恢复"""
     global _cache, _cache_mtime
     try:
         mtime = os.path.getmtime(COOLDOWN_JSON_PATH)
     except OSError:
-        _cache = {}
+        # 主文件不存在，尝试从备份恢复
+        _cache = _restore_from_backup()
         _cache_mtime = 0.0
         return _cache
     if _cache is not None and mtime == _cache_mtime:
@@ -45,18 +69,31 @@ def _load_data():
     try:
         with open(COOLDOWN_JSON_PATH, "r", encoding="utf-8") as f:
             _cache = json.load(f)
+        # 主文件为空（如崩溃后变成 {}）但备份有数据 → 从备份恢复
+        if not _cache and os.path.exists(COOLDOWN_JSON_BACKUP):
+            backup_data = _restore_from_backup()
+            if backup_data:
+                _cache = backup_data
         _cache_mtime = mtime
     except Exception:
-        _cache = {}
+        # 读取失败（文件损坏），尝试从备份恢复
+        _cache = _restore_from_backup()
         _cache_mtime = 0.0
     return _cache
 
 
 def _save_data(data):
-    """保存冷却数据（原子写入，防止崩溃导致数据损坏）"""
+    """保存冷却数据（原子写入 + 备份保护，防止崩溃导致数据损坏/丢失）"""
     global _cache, _cache_mtime
     tmp_path = COOLDOWN_JSON_PATH + ".tmp"
     try:
+        # 保存前先备份旧文件（崩溃/蓝屏后可恢复）
+        if os.path.exists(COOLDOWN_JSON_PATH):
+            try:
+                import shutil
+                shutil.copy2(COOLDOWN_JSON_PATH, COOLDOWN_JSON_BACKUP)
+            except Exception:
+                pass
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, COOLDOWN_JSON_PATH)
@@ -267,6 +304,34 @@ def is_account_paused(account_name):
         if account_name not in data:
             return False
         return bool(data[account_name].get("account_paused"))
+
+
+def extend_all_cooldowns(hours=1):
+    """给所有冷却中的账号延长冷却时间，不影响暂停账号
+    只延长 next_run_time 还在未来（冷却中）的账号
+    返回被延长的账号名称列表
+    """
+    with _lock:
+        data = _load_data()
+        now = datetime.datetime.now()
+        extended = []
+        for name, entry in data.items():
+            # 跳过暂停账号
+            if entry.get("account_paused"):
+                continue
+            next_run_str = entry.get("next_run_time", "")
+            if not next_run_str:
+                continue
+            try:
+                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                if next_run > now:  # 仅冷却中的账号
+                    entry["next_run_time"] = (next_run + datetime.timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+                    extended.append(name)
+            except Exception:
+                continue
+        if extended:
+            _save_data(data)
+        return extended
 
 
 def mark_game_failed(account_name):
