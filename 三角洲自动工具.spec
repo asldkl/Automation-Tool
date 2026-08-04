@@ -24,6 +24,8 @@ a = Analysis(
         'pystray', 'PIL', 'PIL.Image',
         'cv2', 'numpy', 'pyautogui',
         'smtplib', 'email', 'email.mime', 'email.mime.text', 'email.mime.multipart',
+        # 日志遮罩（PyQt6）
+        'PyQt6', 'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'PyQt6.sip', 'screen_log_overlay',
     ] + _rapidocr_hiddenimports + _onnxrt_hiddenimports,
     hookspath=[],
     hooksconfig={},

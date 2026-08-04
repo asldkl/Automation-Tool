@@ -39,6 +39,90 @@ except ImportError:
 ACCOUNTS_JSON_PATH = os.path.join(config.APP_DATA_DIR, "accounts.json")
 
 
+# ==================== PyQt6 遮罩日志组件（可选叠加层） ====================
+# 默认关闭、延迟加载：仅在开启时初始化 PyQt6，关闭时销毁释放内存
+_qt_overlay = None           # ScreenLogOverlay 实例
+_qt_app = None               # QApplication 实例（防止被 GC）
+_qt_events_running = False   # processEvents 循环是否在运行
+
+
+def _classify_log_level(message):
+    """根据日志内容推断级别：3=ERROR, 2=WARN, 1=INFO（供遮罩日志着色）"""
+    if any(k in message for k in ("❌", "失败", "Error", "error", "异常", "跳过", "无法", "错误")):
+        return 3  # ERROR（红）
+    if any(k in message for k in ("⚠️", "警告", "WARN", "未找到", "未能", "可能")):
+        return 2  # WARN（黄）
+    return 1  # INFO（浅蓝）
+
+
+def _process_qt_events(root):
+    """定期处理 Qt 事件（root.after 循环，遮罩存在时运行）"""
+    global _qt_events_running
+    if _qt_overlay is None:
+        _qt_events_running = False
+        return
+    try:
+        _qt_app.processEvents()
+    except Exception:
+        pass
+    try:
+        root.after(50, lambda: _process_qt_events(root))
+    except Exception:
+        pass
+
+
+def _start_qt_events(root):
+    """启动 processEvents 循环（确保只启动一次）"""
+    global _qt_events_running
+    if _qt_events_running:
+        return
+    _qt_events_running = True
+    root.after(50, lambda: _process_qt_events(root))
+
+
+def enable_log_overlay(root):
+    """开启日志遮罩（延迟加载 PyQt6；失败不影响主程序）"""
+    global _qt_overlay, _qt_app
+    if _qt_overlay is not None:
+        return
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from screen_log_overlay import ScreenLogOverlay
+
+        _qt_app = QApplication.instance()
+        if _qt_app is None:
+            _qt_app = QApplication([])
+        _qt_overlay = ScreenLogOverlay(max_lines=500, translucent_bg=False)
+        _qt_overlay.show()
+        _start_qt_events(root)
+        print("📊 日志遮罩已开启（左下角透明日志层）")
+    except Exception as e:
+        _qt_overlay = None
+        print(f"⚠️ 日志遮罩开启失败（不影响主程序）：{e}")
+
+
+def disable_log_overlay():
+    """关闭日志遮罩（销毁组件释放 PyQt6 内存）"""
+    global _qt_overlay
+    if _qt_overlay is not None:
+        try:
+            _qt_overlay.close()
+            _qt_overlay.deleteLater()
+        except Exception:
+            pass
+        _qt_overlay = None
+    print("📊 日志遮罩已关闭")
+
+
+def toggle_log_overlay(root):
+    """切换日志遮罩开/关，返回开启状态"""
+    if _qt_overlay is not None:
+        disable_log_overlay()
+    else:
+        enable_log_overlay(root)
+    return _qt_overlay is not None
+
+
 class RedirectText:
     """将标准输出重定向到 Tkinter 文本框，可选同时写入日志文件（线程安全，缓冲写入）"""
     def __init__(self, text_widget, root, log_path=None):
@@ -60,6 +144,12 @@ class RedirectText:
             self.root.after(0, self._insert_text, message)
         except Exception:
             pass
+        # 转发到 PyQt6 遮罩日志（线程安全：内部走 Qt 信号槽）
+        if _qt_overlay is not None and message.strip():
+            try:
+                _qt_overlay.add_log(_classify_log_level(message), message.strip())
+            except Exception:
+                pass
         if self._log_file and message.strip():
             try:
                 self._log_file.write(message)
@@ -439,6 +529,10 @@ class App:
                 image = image.resize((64, 64), Image.LANCZOS)
             menu = pystray.Menu(
                 pystray.MenuItem("显示窗口", lambda: self.root.after(0, self._show_window), default=True),
+                # 日志遮罩开关：文本随当前状态动态切换（text callable 需接收 item 参数）
+                pystray.MenuItem(
+                    lambda item: "关闭日志遮罩" if _qt_overlay is not None else "开启日志遮罩",
+                    lambda: self.root.after(0, self._toggle_log_overlay)),
                 pystray.MenuItem("设置", self._on_tray_settings),
                 pystray.MenuItem("退出", self._quit_all),
             )
@@ -454,6 +548,18 @@ class App:
             self._show_window()
             self.open_settings()
         self.root.after(0, _show_then_settings)
+
+    def _toggle_log_overlay(self):
+        """切换日志遮罩开/关，并保存状态到设置"""
+        enabled = toggle_log_overlay(self.root)
+        self.settings["enable_log_overlay"] = enabled
+        config.save_settings(self.settings)
+        # 刷新托盘菜单文本
+        if self.tray_icon:
+            try:
+                self.tray_icon.update_menu()
+            except Exception:
+                pass
 
     def _hide_to_tray(self):
         """隐藏主窗口到系统托盘（运行自动化时防止遮挡游戏画面）"""
@@ -1116,6 +1222,10 @@ def main():
     root.title("三角洲行动自动化工具")
     root.resizable(True, True)
     root.minsize(500, 600)
+
+    # 日志遮罩：默认关闭，仅当设置开启时才延迟加载（PyQt6 可选，失败不影响主程序）
+    if config.APP_SETTINGS.get("enable_log_overlay", False):
+        enable_log_overlay(root)
 
     # 显示加载界面
     loading_frame = ttk.Frame(root, padding=40)

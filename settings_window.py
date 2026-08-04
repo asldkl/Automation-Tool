@@ -31,7 +31,6 @@ class SettingsWindow:
 
         # 全局设置变量
         self.wegame_var = tk.StringVar(value=app.settings.get("wegame_path", ""))
-        self.delta_var = tk.StringVar(value=app.settings.get("delta_path", ""))
         self.confidence_var = tk.DoubleVar(value=float(app.settings.get("confidence", 0.7)))
         self.log_var = tk.StringVar(value=app.settings.get("log_save_path", ""))
         self.autostart_var = tk.BooleanVar(value=self._get_autostart_state())
@@ -235,16 +234,6 @@ class SettingsWindow:
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ----- 三角洲路径 -----
-        frame2 = ttk.LabelFrame(parent, text="  三角洲路径（可选）  ", style='SettingsCard.TLabelframe', padding=8)
-        frame2.pack(fill=tk.X, pady=(0, 8))
-
-        f2 = ttk.Frame(frame2, style='SettingsInner.TFrame')
-        f2.pack(fill=tk.X)
-        ttk.Label(f2, text="启动程序：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        delta_entry = ttk.Entry(f2, textvariable=self.delta_var, width=45)
-        delta_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
         # ----- 日志保存目录 -----
         frame4 = ttk.LabelFrame(parent, text="  日志保存目录  ", style='SettingsCard.TLabelframe', padding=8)
         frame4.pack(fill=tk.X, pady=(0, 8))
@@ -325,7 +314,7 @@ class SettingsWindow:
         btn_row.pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(btn_row, text="皮肤抢购", style='Accent.TButton',
                    command=self._open_sniper_window, width=14).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="开发者测试", style='TButton',
+        ttk.Button(btn_row, text="实验功能", style='TButton',
                    command=self._open_dev_test_window, width=12).pack(side=tk.LEFT)
 
     def _build_auto_tab(self, parent):
@@ -563,10 +552,10 @@ class SettingsWindow:
                   justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
 
     def _open_dev_test_window(self):
-        """打开开发者测试独立窗口"""
+        """打开实验功能独立窗口"""
         def _open():
             win = tk.Toplevel(self.win)
-            win.title("开发者测试")
+            win.title("实验功能")
             win.resizable(True, True)
             win.transient(self.win)
             win.grab_set()
@@ -600,7 +589,7 @@ class SettingsWindow:
         utils.nav_push(self.win, _open)
 
     def _build_dev_test_tab(self, parent):
-        """开发者测试内容"""
+        """实验功能内容"""
         # ----- 驱动键盘测试 -----
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
@@ -656,6 +645,27 @@ class SettingsWindow:
         ttk.Entry(jitter_row, textvariable=self._jitter_max_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(jitter_row, text="保存", style='TButton',
                    command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
+
+        # ----- 日志遮罩开关 -----
+        frame_overlay = ttk.LabelFrame(parent, text="  日志遮罩  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_overlay.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_overlay, text="PyQt6 透明日志叠加层（屏幕左下角，鼠标穿透不影响游戏）",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        self._overlay_var = tk.BooleanVar(value=self.app.settings.get("enable_log_overlay", False))
+        ttk.Checkbutton(frame_overlay, text="启用日志遮罩（默认关闭，开启时延迟加载）",
+                        variable=self._overlay_var,
+                        command=self._toggle_overlay).pack(anchor=tk.W, padx=5)
+
+    def _toggle_overlay(self):
+        """切换日志遮罩开关（委托给 App，状态持久化）"""
+        try:
+            self.app._toggle_log_overlay()
+        except Exception as e:
+            messagebox.showerror("日志遮罩", f"切换失败：{e}", parent=self.win)
+        # 同步复选框状态（若 PyQt6 不可用会失败，恢复原状态）
+        self._overlay_var.set(self.app.settings.get("enable_log_overlay", False))
 
     def _save_jitter_settings(self):
         """保存点击随机偏移设置到 settings.json"""
@@ -1572,7 +1582,6 @@ class SettingsWindow:
 
         # 全局设置
         fresh["wegame_path"] = self.wegame_var.get()
-        fresh["delta_path"] = self.delta_var.get()
         fresh["confidence"] = round(self.confidence_var.get(), 2)
         fresh["log_save_path"] = self.log_var.get()
         self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())

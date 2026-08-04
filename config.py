@@ -137,7 +137,6 @@ def save_sell_items_meta(data):
 # ==================== 默认设置 ====================
 DEFAULT_SETTINGS = {
     "wegame_path": "",                # 若空则自动从注册表获取
-    "delta_path": "",                 # 三角洲启动程序路径（备用）
     "confidence": 0.7,                # 全局图像匹配置信度
     "log_save_path": "",              # 日志保存目录，若为空则仅显示在界面
     "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
@@ -172,7 +171,7 @@ DEFAULT_SETTINGS = {
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
     "asset_history_geometry": "",            # 资产记录窗口大小和位置
     "asset_monitor_geometry": "",            # 资产监测窗口大小和位置
-    "dev_test_geometry": "",                 # 开发者测试窗口大小和位置
+    "dev_test_geometry": "",                 # 实验功能窗口大小和位置
     "ocr_test_geometry": "",                 # 文本识别测试窗口大小和位置
     "log_window_geometry": "",               # 日志窗口大小和位置
     "global_ocr_geometry": "",               # 全局OCR设置窗口大小和位置
@@ -208,6 +207,8 @@ DEFAULT_SETTINGS = {
     # 游戏内点击随机偏移（拟人抖动）
     "enable_click_jitter": False,                # 是否启用游戏内点击随机偏移
     "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
+    # 日志遮罩（PyQt6 透明叠加层）
+    "enable_log_overlay": False,                 # 是否启用日志遮罩（默认关闭，开启时延迟加载 PyQt6）
 }
 
 _settings_cache = None
@@ -355,7 +356,6 @@ QQ_PROCESS = "QQ.exe"
 
 # ==================== 全局变量（在 main 中设置） ====================
 WEGAME_PATH = ""
-DELTA_PATH = ""
 CONFIDENCE = 0.7
 WAIT_TIME = 0.5
 
