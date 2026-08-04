@@ -205,6 +205,9 @@ DEFAULT_SETTINGS = {
     "asset_region": [0, 0, 0, 0],               # 资产识别屏幕区域 [x, y, w, h]
     "asset_conversion_ratios": {},              # 每个账号的资产转换比例 {account_name: ratio}
     "asset_ocr_confidence": 0.7,                 # 资产识别置信度
+    # 游戏内点击随机偏移（拟人抖动）
+    "enable_click_jitter": False,                # 是否启用游戏内点击随机偏移
+    "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
 }
 
 _settings_cache = None

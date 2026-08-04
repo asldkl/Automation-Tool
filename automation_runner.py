@@ -144,6 +144,8 @@ def start_run(app):
     app._is_boot_startup = False  # 手动启动时重置开机标志
     # 取消待执行的关机计划（防止冷却触发新运行时意外关机）
     utils.cancel_shutdown()
+    # 运行自动化时隐藏主窗口到托盘，防止遮挡游戏画面
+    app._hide_to_tray()
     app.current_step = 0
     app.progress['value'] = 0
     app.stats_label.config(text="")
@@ -201,6 +203,8 @@ def start_single_account_run(app, img_path):
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
     app._last_account_error = ""
     app._consecutive_failures = {}
+    # 运行自动化时隐藏主窗口到托盘，防止遮挡游戏画面
+    app._hide_to_tray()
     app.start_btn.config(state='disabled')
     app.stop_btn.config(state='normal')
     app.log_area.configure(state='normal')
@@ -228,16 +232,6 @@ def _run_single_account_main(app, img_path):
             return
 
         _cleanup_processes(app)
-
-        # 关闭前台窗口，防止影响自动化
-        try:
-            import win32gui
-            hwnd = win32gui.GetForegroundWindow()
-            if hwnd:
-                win32gui.PostMessage(hwnd, 0x0010, 0, 0)
-                time.sleep(0.5)
-        except Exception:
-            pass
 
         account_failed = False
         account_interrupted = False
@@ -1035,16 +1029,6 @@ def run_script_main(app):
         print(f"🟢 run_script_main() 已启动，ignore_cooldown={app._ignore_cooldown_this_run}")
         total = len(app.qq_account_images)
 
-        # 关闭前台窗口，防止影响自动化流程
-        try:
-            import win32gui
-            hwnd = win32gui.GetForegroundWindow()
-            if hwnd:
-                win32gui.PostMessage(hwnd, 0x0010, 0, 0)  # WM_CLOSE
-                time.sleep(0.5)
-        except Exception:
-            pass
-
         if not _validate_daily(app):
             return
 
@@ -1166,10 +1150,16 @@ def run_script_main(app):
 
 
 def game_operations_wrapper(app):
-    """执行游戏内操作，返回 True=成功，False=失败"""
-    result = automation.game_operations(
-        app.settings, app._stop_event, lambda text: set_operation(app, text),
-        update_ui_callback=lambda: app.root.after(0, app.update_ui, True))
+    """执行游戏内操作，返回 True=成功，False=失败（游戏内点击启用拟人随机偏移）"""
+    # 根据设置启用点击随机偏移，结束后恢复
+    utils.set_click_jitter(app.settings.get("enable_click_jitter", False),
+                           app.settings.get("click_jitter_max", 5))
+    try:
+        result = automation.game_operations(
+            app.settings, app._stop_event, lambda text: set_operation(app, text),
+            update_ui_callback=lambda: app.root.after(0, app.update_ui, True))
+    finally:
+        utils.set_click_jitter(False)
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)
     if isinstance(result, tuple):
         success, extra = result
@@ -1188,8 +1178,13 @@ def game_operations_wrapper(app):
 
 
 def sell_operations_wrapper(app):
-    """一键出售流程：打开仓库，遍历售卖物品执行出售"""
-    return automation.sell_operations(app.settings, app._stop_event, lambda text: set_operation(app, text))
+    """一键出售流程：打开仓库，遍历售卖物品执行出售（游戏内点击启用拟人随机偏移）"""
+    utils.set_click_jitter(app.settings.get("enable_click_jitter", False),
+                           app.settings.get("click_jitter_max", 5))
+    try:
+        return automation.sell_operations(app.settings, app._stop_event, lambda text: set_operation(app, text))
+    finally:
+        utils.set_click_jitter(False)
 
 
 def on_finish(app):
@@ -1267,6 +1262,12 @@ def on_finish(app):
 
     # 刷新账号列表（更新冷却状态和颜色）
     account_manager.refresh_account_tree(app)
+
+    # 运行完成，恢复主窗口（从托盘回到前台）
+    try:
+        app._show_window()
+    except Exception:
+        pass
 
 
 def get_account_next_run(app, account_name):

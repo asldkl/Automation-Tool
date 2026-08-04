@@ -455,6 +455,17 @@ class App:
             self.open_settings()
         self.root.after(0, _show_then_settings)
 
+    def _hide_to_tray(self):
+        """隐藏主窗口到系统托盘（运行自动化时防止遮挡游戏画面）"""
+        try:
+            # 仅当托盘可用时隐藏，否则窗口消失后无法恢复
+            if TRAY_AVAILABLE and self.tray_icon:
+                self.root.withdraw()
+                if self._log_win and self._log_win.winfo_exists():
+                    self._log_win.withdraw()
+        except Exception:
+            pass
+
     def _show_window(self):
         try:
             try:

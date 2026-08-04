@@ -712,6 +712,19 @@ v1.3.5 (2026-08-01)
   - 硬盘/主板序列号成功结果缓存（_disk_serial_cache / _board_serial_cache），一次查询全程序复用
   - wmic/PowerShell 查询超时从 10s 降到 3s
   - 删除死代码 _show_machine_fingerprint（机器指纹显示在设置中已异步加载）
+- 点击拟人抖动：
+  - 游戏内操作（设施/邮箱/出售）点击位置随机偏移（圆内随机 ≤5px），拟人化减少机械化痕迹
+  - 新增 set_click_jitter() + _find_and_click_core 内嵌偏移逻辑
+  - 开发者测试窗口新增「点击随机偏移」开关（可调 0-20px）
+  - 登录/启动阶段不加偏移，仅游戏内操作（game_operations_wrapper / sell_operations_wrapper）
+- 修复桌面图标消失：
+  - 删除两处「关闭前台窗口」危险代码（GetForegroundWindow + WM_CLOSE）
+  - 原逻辑会误关桌面 Explorer（焦点在桌面时导致图标消失、右键失效）
+  - 进程清理由 _cleanup_processes 负责，不再需要关闭前台窗口
+- 自动缩到托盘：
+  - 运行自动化时主窗口+日志窗口自动隐藏到系统托盘（_hide_to_tray），防止遮挡游戏
+  - 运行完成自动恢复前台（on_finish 调 _show_window）
+  - 仅托盘可用时隐藏，避免窗口无法恢复
 - 文档修正：
   - 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作
 

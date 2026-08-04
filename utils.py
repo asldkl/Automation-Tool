@@ -4,6 +4,8 @@
 """
 import time
 import threading
+import random
+import math
 import cv2
 import numpy as np
 import pyautogui
@@ -190,6 +192,18 @@ def _screenshot_gray(region=None):
     return cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
 
 
+# 点击随机偏移（拟人抖动）开关
+_click_jitter_enabled = False
+_click_jitter_max = 5
+
+
+def set_click_jitter(enabled, max_px=5):
+    """启用/关闭点击随机偏移（拟人抖动），仅游戏内操作使用"""
+    global _click_jitter_enabled, _click_jitter_max
+    _click_jitter_enabled = bool(enabled)
+    _click_jitter_max = max(0, int(max_px))
+
+
 def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0,
                          multiscale=False, return_pos=False):
@@ -235,6 +249,15 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
 
             if multiscale and max_val >= threshold:
                 print(f"🔍 复合匹配成功：置信度 {max_val:.3f}")
+            # 拟人抖动：启用时对点击坐标加圆内随机偏移（≤max_px）
+            if _click_jitter_enabled and _click_jitter_max > 0:
+                angle = random.uniform(0, 2 * math.pi)
+                dist = random.uniform(0, _click_jitter_max)
+                x += int(dist * math.cos(angle))
+                y += int(dist * math.sin(angle))
+                # 限制在屏幕范围内，避免偏移到边缘外
+                x = max(margin, min(x, screen_w - margin))
+                y = max(margin, min(y, screen_h - margin))
             try:
                 smooth_move_to(x, y, duration=0.2)
                 pyautogui.click(clicks=clicks)

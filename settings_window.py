@@ -636,6 +636,40 @@ class SettingsWindow:
         ttk.Button(acct_btn_frame, text="导入账号数据", style='TButton',
                    command=self._import_accounts, width=14).pack(side=tk.LEFT)
 
+        # ----- 点击随机偏移 -----
+        frame_jitter = ttk.LabelFrame(parent, text="  点击随机偏移  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_jitter.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_jitter, text="游戏内操作点击位置随机偏移（拟人抖动），减少机械化痕迹",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        jitter_row = ttk.Frame(frame_jitter, style='SettingsInner.TFrame')
+        jitter_row.pack(fill=tk.X)
+
+        self._jitter_enabled_var = tk.BooleanVar(value=self.app.settings.get("enable_click_jitter", False))
+        ttk.Checkbutton(jitter_row, text="启用随机偏移",
+                        variable=self._jitter_enabled_var,
+                        command=self._save_jitter_settings).pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(jitter_row, text="最大偏移(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._jitter_max_var = tk.StringVar(value=str(self.app.settings.get("click_jitter_max", 5)))
+        ttk.Entry(jitter_row, textvariable=self._jitter_max_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(jitter_row, text="保存", style='TButton',
+                   command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
+
+    def _save_jitter_settings(self):
+        """保存点击随机偏移设置到 settings.json"""
+        try:
+            max_px = max(0, min(int(self._jitter_max_var.get()), 20))
+        except ValueError:
+            max_px = 5
+        self.app.settings["enable_click_jitter"] = self._jitter_enabled_var.get()
+        self.app.settings["click_jitter_max"] = max_px
+        config.save_settings(self.app.settings)
+        messagebox.showinfo("已保存",
+                            f"点击随机偏移：{'开启' if self._jitter_enabled_var.get() else '关闭'}，最大偏移 {max_px}px",
+                            parent=self.win)
+
     def _export_accounts(self):
         """导出账号数据到用户选择的文件"""
         import shutil
