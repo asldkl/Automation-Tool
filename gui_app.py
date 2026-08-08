@@ -165,6 +165,7 @@ def disable_log_overlay():
     global _qt_overlay
     if _qt_overlay is not None:
         try:
+            _qt_overlay._allow_close = True  # 程序主动关闭，放行 closeEvent
             _qt_overlay.close()
             _qt_overlay.deleteLater()
         except Exception:

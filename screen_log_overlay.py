@@ -97,6 +97,8 @@ class ScreenLogOverlay(QWidget):
         self._transparent_input = True     # 当前是否鼠标穿透
         self._dragging = False             # 是否正在拖动窗口
         self._drag_offset = QPoint()       # 拖动时鼠标与窗口左上角偏移
+        self._allow_close = False          # 是否允许关闭（仅程序主动关闭时 True）
+                                           # 防止运行中游戏关闭后 alt+F4 误关遮罩
 
         # ---------- 窗口属性：无边框 + 置顶 + 不占任务栏 ----------
         self.setWindowFlags(
@@ -269,6 +271,15 @@ class ScreenLogOverlay(QWidget):
         """双击遮罩：切换鼠标穿透 / 可拖动交互模式（交互模式按住左键可拖动）"""
         self.toggle_input_transparent()
         super().mouseDoubleClickEvent(event)
+
+    def closeEvent(self, event) -> None:
+        """免疫系统关闭事件（alt+F4 / WM_CLOSE）
+        运行中游戏关闭后，置顶的遮罩可能成为前台窗口被下一次 alt+F4 误关；
+        遮罩是常驻工具窗口，仅允许程序主动关闭（disable_log_overlay 置 _allow_close=True）"""
+        if self._allow_close:
+            event.accept()
+        else:
+            event.ignore()
 
 
 # ==================================================
