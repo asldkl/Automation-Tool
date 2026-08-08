@@ -18,6 +18,13 @@ import config
 import utils
 import custom_ops
 
+# 步骤类型：key → 中文名
+STEP_TYPES = {
+    "image": "找图点击",
+    "coordinate": "坐标点击",
+    "ocr": "OCR点击",
+}
+
 
 class CustomOpsWindow:
     def __init__(self, parent, app):
@@ -48,6 +55,10 @@ class CustomOpsWindow:
                    command=self._capture_from_screen, width=12).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(toolbar, text="选择图片", style='TButton',
                    command=self._add_step_from_file, width=9).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(toolbar, text="＋ 坐标点击", style='TButton',
+                   command=self._add_coordinate_step, width=11).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(toolbar, text="＋ OCR点击", style='TButton',
+                   command=self._add_ocr_step, width=10).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(toolbar, text="上移", style='TButton',
                    command=self._move_up, width=5).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(toolbar, text="下移", style='TButton',
@@ -70,30 +81,31 @@ class CustomOpsWindow:
         # ----- 步骤列表 -----
         list_frame = ttk.Frame(self.win, padding=(8, 2))
         list_frame.pack(fill=tk.BOTH, expand=True)
-        cols = ("seq", "name", "confidence", "timeout", "pause")
+        cols = ("seq", "type", "name", "param", "pause")
         self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=8)
         self.tree.heading("seq", text="序号")
+        self.tree.heading("type", text="类型")
         self.tree.heading("name", text="名称")
-        self.tree.heading("confidence", text="置信度")
-        self.tree.heading("timeout", text="超时(s)")
+        self.tree.heading("param", text="参数")
         self.tree.heading("pause", text="停顿(s)")
-        self.tree.column("seq", width=50, anchor=tk.CENTER)
-        self.tree.column("name", width=180)
-        self.tree.column("confidence", width=70, anchor=tk.CENTER)
-        self.tree.column("timeout", width=70, anchor=tk.CENTER)
-        self.tree.column("pause", width=70, anchor=tk.CENTER)
+        self.tree.column("seq", width=46, anchor=tk.CENTER)
+        self.tree.column("type", width=72, anchor=tk.CENTER)
+        self.tree.column("name", width=150)
+        self.tree.column("param", width=190)
+        self.tree.column("pause", width=64, anchor=tk.CENTER)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.bind("<Double-1>", lambda e: self._edit_selected())
         self.tree.bind("<Delete>", lambda e: self._delete_step())
+        self.tree.bind("<Button-3>", self._show_context_menu)
 
         # ----- 说明 -----
-        tip = ("说明：每个步骤 = 找到图片 → 单击 → 停顿。\n"
+        tip = ("说明：支持三种步骤——找图点击（匹配图片）/ 坐标点击（固定位置）/ OCR点击（识别文字）。\n"
                "主流程每个账号运行完、游戏回到主界面后，会依次执行这些步骤；"
-               "某一步找不到图片则中止该账号的自定义操作，跳到下一个账号。\n"
-               "双击步骤可修改名称/置信度/超时/停顿，右键或双击列可编辑。")
+               "某一步找不到目标则中止该账号的自定义操作，跳到下一个账号。\n"
+               "双击或右键可修改步骤属性（含类型）。")
         ttk.Label(self.win, text=tip, style='SettingsSmall.TLabel', justify=tk.LEFT,
                   padding=(10, 4)).pack(anchor=tk.W, fill=tk.X)
 
@@ -119,12 +131,25 @@ class CustomOpsWindow:
             return idx
         return None
 
+    def _step_param(self, op):
+        """生成步骤参数摘要（用于列表显示）"""
+        t = op.get("type", "image")
+        if t == "coordinate":
+            return f"({op.get('x', 0)}, {op.get('y', 0)})"
+        if t == "ocr":
+            return f"「{op.get('text', '')}」  conf={op.get('confidence', 0.6)}"
+        return f"conf={op.get('confidence', 0.7)}  超时={op.get('timeout', 5)}s"
+
     def _refresh_list(self):
         self.tree.delete(*self.tree.get_children())
         for i, op in enumerate(self.ops):
+            t = op.get("type", "image")
             self.tree.insert("", tk.END, iid=str(i), values=(
-                i + 1, op.get("name", f"步骤{i+1}"),
-                op.get("confidence", 0.7), op.get("timeout", 5), op.get("pause_after", 0.5)))
+                i + 1,
+                STEP_TYPES.get(t, t),
+                op.get("name", f"步骤{i+1}"),
+                self._step_param(op),
+                op.get("pause_after", 0.5)))
 
     def _move_up(self):
         idx = self._selected_index()
@@ -162,6 +187,65 @@ class CustomOpsWindow:
         self.ops.pop(idx)
         self._save_ops_now()
         self._refresh_list()
+
+    def _show_context_menu(self, event):
+        """右键菜单：修改属性 / 排序 / 删除 / 切换类型"""
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return
+        self.tree.selection_set(row)
+        idx = int(row)
+        op = self.ops[idx]
+        t = op.get("type", "image")
+        menu = tk.Menu(self.win, tearoff=0)
+        menu.add_command(label="✏️ 修改属性", command=self._edit_selected)
+        menu.add_separator()
+        menu.add_command(label="上移", command=self._move_up)
+        menu.add_command(label="下移", command=self._move_down)
+        menu.add_separator()
+        menu.add_command(label="删除步骤", command=self._delete_step)
+        menu.add_separator()
+        menu.add_command(label="✅ 设为找图点击", command=lambda: self._set_step_type("image"),
+                         state='normal' if t != "image" else 'disabled')
+        menu.add_command(label="✅ 设为坐标点击", command=lambda: self._set_step_type("coordinate"),
+                         state='normal' if t != "coordinate" else 'disabled')
+        menu.add_command(label="✅ 设为OCR点击", command=lambda: self._set_step_type("ocr"),
+                         state='normal' if t != "ocr" else 'disabled')
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _set_step_type(self, new_type):
+        """把选中步骤改为指定类型，并打开编辑窗口"""
+        idx = self._selected_index()
+        if idx is None:
+            return
+        op = self.ops[idx]
+        t = op.get("type", "image")
+        if t == new_type:
+            self._edit_selected()
+            return
+        op["type"] = new_type
+        if new_type == "coordinate":
+            op.setdefault("x", 0)
+            op.setdefault("y", 0)
+        elif new_type == "ocr":
+            op.setdefault("text", "")
+            op.setdefault("confidence", 0.6)
+            op.setdefault("timeout", 5)
+        else:  # image
+            if not op.get("image"):
+                messagebox.showinfo("提示",
+                                    "找图点击需要图片，请先用「＋ 屏幕框选」或「选择图片」添加步骤",
+                                    parent=self.win)
+                return
+            op.setdefault("confidence", 0.7)
+            op.setdefault("timeout", 5)
+        self._save_ops_now()
+        self._refresh_list()
+        self.tree.selection_set(str(idx))
+        self._edit_selected()
 
     def _save_ops_now(self):
         if custom_ops.save_ops(self.ops):
@@ -248,7 +332,9 @@ class CustomOpsWindow:
         filename = custom_ops.next_image_name()
         if not custom_ops.save_captured_image(img, filename):
             return
-        self._append_step(filename)
+        self._append_step({"type": "image", "image": filename,
+                           "confidence": float(self.app.settings.get("custom_ops_confidence", 0.7)),
+                           "timeout": float(self.app.settings.get("custom_ops_timeout", 5))})
 
     def _add_step_from_file(self):
         path = filedialog.askopenfilename(
@@ -262,22 +348,29 @@ class CustomOpsWindow:
         except Exception as e:
             messagebox.showerror("导入失败", f"复制图片失败：{e}", parent=self.win)
             return
-        self._append_step(filename)
+        self._append_step({"type": "image", "image": filename,
+                           "confidence": float(self.app.settings.get("custom_ops_confidence", 0.7)),
+                           "timeout": float(self.app.settings.get("custom_ops_timeout", 5))})
 
-    def _append_step(self, filename):
-        step = {
-            "name": f"步骤{len(self.ops) + 1}",
-            "image": filename,
-            "confidence": float(self.app.settings.get("custom_ops_confidence", 0.7)),
-            "timeout": float(self.app.settings.get("custom_ops_timeout", 5)),
-            "pause_after": float(self.app.settings.get("custom_ops_pause", 0.5)),
-        }
+    def _append_step(self, step):
+        """追加一个步骤（支持不同 type），并立即打开编辑窗口"""
+        step.setdefault("name", f"步骤{len(self.ops) + 1}")
+        step.setdefault("pause_after", float(self.app.settings.get("custom_ops_pause", 0.5)))
         self.ops.append(step)
         self._save_ops_now()
         self._refresh_list()
         self.tree.selection_set(str(len(self.ops) - 1))
-        # 立即编辑让用户命名
         self._edit_selected()
+
+    def _add_coordinate_step(self):
+        """添加坐标点击步骤"""
+        self._append_step({"type": "coordinate", "x": 0, "y": 0})
+
+    def _add_ocr_step(self):
+        """添加 OCR 文字识别点击步骤"""
+        self._append_step({"type": "ocr", "text": "",
+                           "confidence": 0.6,
+                           "timeout": float(self.app.settings.get("custom_ops_timeout", 5))})
 
     # ==================== 编辑步骤 ====================
     def _edit_selected(self):
@@ -295,43 +388,102 @@ class CustomOpsWindow:
         form = ttk.Frame(dlg, padding=12)
         form.pack(fill=tk.BOTH, expand=True)
 
-        def row(label, key, width=12):
+        # 类型切换
+        type_var = tk.StringVar(value=op.get("type", "image"))
+        tr = ttk.Frame(form)
+        tr.pack(fill=tk.X, pady=3)
+        ttk.Label(tr, text="类型", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+        type_combo = ttk.Combobox(tr, textvariable=type_var,
+                                  values=[k for k in STEP_TYPES], state='readonly', width=12)
+        type_combo.pack(side=tk.LEFT)
+
+        name_var = tk.StringVar(value=op.get("name", f"步骤{idx + 1}"))
+        pause_var = tk.StringVar(value=str(op.get("pause_after", 0.5)))
+
+        # 各类型字段变量
+        conf_var = tk.StringVar(value=str(op.get("confidence", 0.7)))
+        timeout_var = tk.StringVar(value=str(op.get("timeout", 5)))
+        x_var = tk.StringVar(value=str(op.get("x", 0)))
+        y_var = tk.StringVar(value=str(op.get("y", 0)))
+        text_var = tk.StringVar(value=op.get("text", ""))
+
+        def _row(lbl, var, width=16):
             r = ttk.Frame(form)
             r.pack(fill=tk.X, pady=3)
-            ttk.Label(r, text=label, style='Settings.TLabel', width=10).pack(side=tk.LEFT)
-            var = tk.StringVar(value=str(op.get(key, "")))
-            ent = ttk.Entry(r, textvariable=var, width=width)
-            ent.pack(side=tk.LEFT)
-            return var
+            ttk.Label(r, text=lbl, style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+            ttk.Entry(r, textvariable=var, width=width).pack(side=tk.LEFT)
+            return r
 
-        name_var = row("名称", "name", 20)
-        conf_var = row("置信度", "confidence")
-        timeout_var = row("超时(秒)", "timeout")
-        pause_var = row("停顿(秒)", "pause_after")
+        _row("名称", name_var, 20)
 
-        # 图片预览
-        img_path = custom_ops.image_path(op.get("image", ""))
-        if os.path.exists(img_path):
-            try:
-                from PIL import Image, ImageTk
-                img = Image.open(img_path)
-                img.thumbnail((200, 120))
-                photo = ImageTk.PhotoImage(img)
-                ttk.Label(form, text="图片预览：", style='Settings.TLabel').pack(anchor=tk.W, pady=(6, 0))
-                lbl = ttk.Label(form, image=photo)
-                lbl.image = photo
-                lbl.pack(pady=4)
-            except Exception:
-                pass
+        # 动态字段区（随类型切换）
+        fields = ttk.Frame(form)
+        fields.pack(fill=tk.X)
+
+        def _rebuild_fields():
+            for w in fields.winfo_children():
+                w.destroy()
+            t = type_var.get()
+            if t == "coordinate":
+                fx = ttk.Frame(fields); fx.pack(fill=tk.X, pady=3)
+                ttk.Label(fx, text="X", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                ttk.Entry(fx, textvariable=x_var, width=8).pack(side=tk.LEFT)
+                ttk.Button(fx, text="屏幕取点", style='TButton',
+                           command=lambda: self._pick_point(x_var, y_var, dlg)).pack(side=tk.LEFT, padx=(10, 0))
+                fy = ttk.Frame(fields); fy.pack(fill=tk.X, pady=3)
+                ttk.Label(fy, text="Y", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                ttk.Entry(fy, textvariable=y_var, width=8).pack(side=tk.LEFT)
+            elif t == "ocr":
+                _row_in = ttk.Frame(fields)
+                _row_in.pack(fill=tk.X, pady=3)
+                ttk.Label(_row_in, text="文字", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                ttk.Entry(_row_in, textvariable=text_var, width=20).pack(side=tk.LEFT)
+                cr = ttk.Frame(fields); cr.pack(fill=tk.X, pady=3)
+                ttk.Label(cr, text="置信度", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                ttk.Entry(cr, textvariable=conf_var, width=6).pack(side=tk.LEFT)
+                ttk.Label(cr, text="超时(秒)", width=8).pack(side=tk.LEFT, padx=(8, 0))
+                ttk.Entry(cr, textvariable=timeout_var, width=6).pack(side=tk.LEFT)
+            else:  # image
+                cr = ttk.Frame(fields); cr.pack(fill=tk.X, pady=3)
+                ttk.Label(cr, text="置信度", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                ttk.Entry(cr, textvariable=conf_var, width=6).pack(side=tk.LEFT)
+                ttk.Label(cr, text="超时(秒)", width=8).pack(side=tk.LEFT, padx=(8, 0))
+                ttk.Entry(cr, textvariable=timeout_var, width=6).pack(side=tk.LEFT)
+                img_path = custom_ops.image_path(op.get("image", ""))
+                if os.path.exists(img_path):
+                    try:
+                        from PIL import Image, ImageTk
+                        im = Image.open(img_path)
+                        im.thumbnail((200, 120))
+                        photo = ImageTk.PhotoImage(im)
+                        lbl = ttk.Label(fields, image=photo)
+                        lbl.image = photo
+                        lbl.pack(pady=4)
+                    except Exception:
+                        pass
+
+        type_combo.bind("<<ComboboxSelected>>", lambda e: _rebuild_fields())
+        _rebuild_fields()
+
+        _row("停顿(秒)", pause_var, 8)
 
         def on_save():
             try:
+                op["type"] = type_var.get()
                 op["name"] = name_var.get().strip() or f"步骤{idx + 1}"
-                op["confidence"] = max(0.1, min(float(conf_var.get()), 0.99))
-                op["timeout"] = max(1, float(timeout_var.get()))
                 op["pause_after"] = max(0, float(pause_var.get()))
+                if op["type"] == "coordinate":
+                    op["x"] = int(float(x_var.get()))
+                    op["y"] = int(float(y_var.get()))
+                elif op["type"] == "ocr":
+                    op["text"] = text_var.get().strip()
+                    op["confidence"] = max(0.1, min(float(conf_var.get()), 0.99))
+                    op["timeout"] = max(1, float(timeout_var.get()))
+                else:
+                    op["confidence"] = max(0.1, min(float(conf_var.get()), 0.99))
+                    op["timeout"] = max(1, float(timeout_var.get()))
             except ValueError:
-                messagebox.showwarning("输入无效", "置信度/超时/停顿必须为数字", parent=dlg)
+                messagebox.showwarning("输入无效", "数字字段格式不正确", parent=dlg)
                 return
             self._save_ops_now()
             self._refresh_list()
@@ -344,8 +496,46 @@ class CustomOpsWindow:
         ttk.Button(btns, text="取消", style='TButton',
                    command=dlg.destroy, width=8).pack(side=tk.LEFT)
 
-        dlg.update_idletasks()
-        dlg.geometry("")  # 自适应
+    def _pick_point(self, x_var, y_var, dlg):
+        """屏幕取点：隐藏窗口 → 点击屏幕一点 → 记录坐标到 x_var/y_var"""
+        self.win.withdraw()
+        try:
+            if dlg and dlg.winfo_exists():
+                dlg.withdraw()
+        except Exception:
+            pass
+        self.win.after(300, lambda: self._show_point_overlay(x_var, y_var, dlg))
+
+    def _show_point_overlay(self, x_var, y_var, dlg):
+        overlay = tk.Toplevel(self.win)
+        overlay.attributes('-fullscreen', True)
+        overlay.attributes('-alpha', 0.3)
+        overlay.attributes('-topmost', True)
+        overlay.configure(bg='black')
+        overlay.config(cursor='crosshair')
+        hint = tk.Label(overlay, text="点击游戏里要点击的位置（任意位置点一下，Esc 取消）",
+                        font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
+        hint.place(relx=0.5, rely=0.05, anchor='center')
+
+        def on_click(e):
+            x_var.set(str(e.x_root))
+            y_var.set(str(e.y_root))
+            overlay.destroy()
+
+        def on_esc(_):
+            overlay.destroy()
+
+        overlay.bind('<Button-1>', on_click)
+        overlay.bind('<Escape>', on_esc)
+        self.win.wait_window(overlay)
+        self.win.deiconify()
+        self.win.grab_set()
+        try:
+            if dlg and dlg.winfo_exists():
+                dlg.deiconify()
+                dlg.grab_set()
+        except Exception:
+            pass
 
     # ==================== 测试运行 ====================
     def _run_test(self):

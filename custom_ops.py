@@ -87,6 +87,17 @@ def next_image_name():
     return f"step_{n}.png"
 
 
+def _apply_jitter(x, y, max_px):
+    """坐标点击的拟人抖动：圆内随机偏移 ≤max_px"""
+    import math
+    import random
+    if max_px <= 0:
+        return x, y
+    angle = random.uniform(0, 2 * math.pi)
+    dist = random.uniform(0, max_px)
+    return int(x + dist * math.cos(angle)), int(y + dist * math.sin(angle))
+
+
 def run_custom_ops(app, account_name, stop_event=None):
     """执行自定义操作序列（主流程完成后、关闭游戏前调用）
     逐步骤：找图→单击→停顿；某步找不到图则中止当前账号的自定义操作
@@ -111,22 +122,52 @@ def run_custom_ops(app, account_name, stop_event=None):
             if stop_event.is_set():
                 print("⏹ 自定义操作被用户停止")
                 return False
-            img = image_path(op.get("image", ""))
             name = op.get("name", f"步骤{idx}")
-            confidence = float(op.get("confidence", 0.7))
-            timeout = float(op.get("timeout", 5))
             pause = float(op.get("pause_after", 0.5))
+            op_type = op.get("type", "image")
 
-            if not os.path.exists(img):
-                print(f"  [{idx}/{len(ops)}] ⚠️ 步骤「{name}」图片不存在，中止该账号自定义操作")
-                return False
-
-            print(f"  [{idx}/{len(ops)}] 查找「{name}」...")
-            found = utils.find_and_click(img, timeout=timeout, confidence=confidence)
-            if not found:
-                print(f"    ❌ 未找到「{name}」，中止该账号自定义操作，跳到下一个账号")
-                return False
-            print(f"    ✅ 已点击「{name}」")
+            if op_type == "coordinate":
+                # 坐标点击
+                x = int(op.get("x", 0))
+                y = int(op.get("y", 0))
+                if jitter_enabled:
+                    x, y = _apply_jitter(x, y, jitter_max)
+                print(f"  [{idx}/{len(ops)}] 坐标点击 ({x}, {y})...")
+                utils.smooth_move_to(x, y)
+                time.sleep(0.05)
+                import pyautogui
+                pyautogui.click()
+                print(f"    ✅ 已点击坐标 ({x}, {y})")
+            elif op_type == "ocr":
+                # OCR 文字识别点击
+                text = op.get("text", "")
+                if not text:
+                    print(f"  [{idx}/{len(ops)}] ⚠️ 步骤「{name}」未配置要识别的文字，中止该账号自定义操作")
+                    return False
+                ocr_conf = float(op.get("confidence", 0.6))
+                ocr_timeout = float(op.get("timeout", 5))
+                region = op.get("region") or None
+                print(f"  [{idx}/{len(ops)}] OCR查找「{text}」...")
+                found = utils.ocr_find_and_click(text, region=region,
+                                                 timeout=ocr_timeout, confidence=ocr_conf)
+                if not found:
+                    print(f"    ❌ 未找到文字「{text}」，中止该账号自定义操作，跳到下一个账号")
+                    return False
+                print(f"    ✅ 已点击「{text}」")
+            else:
+                # 找图点击（默认）
+                img = image_path(op.get("image", ""))
+                confidence = float(op.get("confidence", 0.7))
+                timeout = float(op.get("timeout", 5))
+                if not os.path.exists(img):
+                    print(f"  [{idx}/{len(ops)}] ⚠️ 步骤「{name}」图片不存在，中止该账号自定义操作")
+                    return False
+                print(f"  [{idx}/{len(ops)}] 查找「{name}」...")
+                found = utils.find_and_click(img, timeout=timeout, confidence=confidence)
+                if not found:
+                    print(f"    ❌ 未找到「{name}」，中止该账号自定义操作，跳到下一个账号")
+                    return False
+                print(f"    ✅ 已点击「{name}」")
             if pause > 0:
                 time.sleep(pause)
     finally:

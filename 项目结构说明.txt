@@ -159,15 +159,19 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - 数据存储：%APPDATA%\DeltaAutoTool\custom_ops\（ops.json + images/）
 │   - load_ops() / save_ops()：步骤列表持久化（原子写入）
 │   - next_image_name() / save_captured_image()：截图保存
-│   - run_custom_ops()：主流程完成后自动执行「找图→单击」步骤序列
-│     - 逐步骤 utils.find_and_click（带置信度/超时/点击后停顿）
-│     - 某步找不到图 → 中止该账号剩余自定义操作，跳到下一个账号
-│     - 受 app._stop_event 控制，可随时停止
+│   - _apply_jitter()：坐标点击的拟人抖动（圆内随机偏移）
+│   - run_custom_ops()：主流程完成后自动执行步骤序列，按 op.type 分发：
+│     - image 找图：utils.find_and_click（置信度/超时）
+│     - coordinate 坐标：smooth_move_to + pyautogui.click（可抖动）
+│     - ocr 文字：utils.ocr_find_and_click（text/置信度/超时）
+│     - 某步找不到目标 → 中止该账号剩余自定义操作，跳到下一个账号；受 stop_event 控制
 │   - run_custom_ops_for_test()：窗口内「运行测试」按钮的试运行
 │   - 点击是否受随机偏移影响由 custom_ops_jitter 控制（复用 click_jitter_max）
 │
 ├── custom_ops_window.py        # 自定义操作配置向导（v1.3.6 新增）
 │   - CustomOpsWindow 类：从「设置 → 自动任务」页「配置自定义操作」按钮打开
+│   - 支持三种步骤：找图（屏幕框选/导入图片）、坐标（x/y + 屏幕取点）、OCR（识别文字）
+│   - 右键菜单：修改属性 / 切换类型 / 上移下移 / 删除；编辑对话框按类型动态显示字段
 │   - 顶部工具栏：＋屏幕框选 / 选择图片 / 上移 / 下移 / 删除 / 运行测试 / 停止 / 保存
 │   - Treeview 步骤列表（序号/名称/置信度/超时/停顿），双击编辑（含图片预览）
 │   - 屏幕框选：全屏遮罩拖拽截图（复用资产区域框选模式），保存到 images/
