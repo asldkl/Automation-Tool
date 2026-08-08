@@ -31,7 +31,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # 排除训练依赖（torch/ultralytics/matplotlib 等），程序运行时只用 onnxruntime，不需要 torch
+    excludes=['torch', 'torchvision', 'torchaudio', 'ultralytics', 'matplotlib',
+              'pandas', 'scipy', 'seaborn'],
     noarchive=False,
     optimize=0,
 )
