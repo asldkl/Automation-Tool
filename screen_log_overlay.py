@@ -130,6 +130,7 @@ class ScreenLogOverlay(QWidget):
                 padding: 4px;
                 font-family: Consolas;                 /* 等宽字体 */
                 font-size: 12px;
+                font-weight: bold;                     /* 加粗 */
             }}
         """)
 

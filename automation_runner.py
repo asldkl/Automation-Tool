@@ -1263,6 +1263,12 @@ def on_finish(app):
     # 刷新账号列表（更新冷却状态和颜色）
     account_manager.refresh_account_tree(app)
 
+    # 崩溃保险：任务结束时强制把冷却数据写盘并同步备份，防止异常退出丢数据
+    try:
+        cooldown_manager.flush()
+    except Exception as e:
+        print(f"⚠️ 冷却数据兜底保存失败: {e}")
+
     # 运行完成，恢复主窗口（从托盘回到前台）
     try:
         app._show_window()

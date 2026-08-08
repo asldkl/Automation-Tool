@@ -40,10 +40,10 @@ ACCOUNTS_JSON_PATH = os.path.join(config.APP_DATA_DIR, "accounts.json")
 
 
 # ==================== PyQt6 遮罩日志组件（可选叠加层） ====================
-# 默认关闭、延迟加载：仅在开启时初始化 PyQt6，关闭时销毁释放内存
+# 默认开启、延迟加载：仅在开启时初始化 PyQt6，关闭时销毁释放内存
 _qt_overlay = None           # ScreenLogOverlay 实例
 _qt_app = None               # QApplication 实例（防止被 GC）
-_qt_events_running = False   # processEvents 循环是否在运行
+_qt_pump_scheduled = False   # Qt 事件泵送是否已排队（合并重复请求）
 
 
 def _classify_log_level(message):
@@ -55,29 +55,36 @@ def _classify_log_level(message):
     return 1  # INFO（浅蓝）
 
 
-def _process_qt_events(root):
-    """定期处理 Qt 事件（root.after 循环，遮罩存在时运行）"""
-    global _qt_events_running
-    if _qt_overlay is None:
-        _qt_events_running = False
+def _schedule_qt_pump(root):
+    """排队一次 Qt 事件泵送（合并重复请求）
+    仅在日志到达或遮罩开启时触发，空闲时不泵送，
+    避免遮罩 UpdateLayeredWindow 重绘干扰 Tk 窗口拖拽导致回弹"""
+    global _qt_pump_scheduled
+    if _qt_pump_scheduled:
+        return
+    _qt_pump_scheduled = True
+    try:
+        root.after(20, lambda: _pump_qt_once(root))
+    except Exception:
+        _qt_pump_scheduled = False
+
+
+def _pump_qt_once(root):
+    """泵送一次 Qt 事件：交付队列中的日志并重绘遮罩（非连续）"""
+    global _qt_pump_scheduled
+    _qt_pump_scheduled = False
+    if _qt_overlay is None or _qt_app is None:
         return
     try:
         _qt_app.processEvents()
     except Exception:
         pass
+    # 交互模式（可拖动遮罩）需要连续泵送处理鼠标事件；穿透模式（默认）空闲即停
     try:
-        root.after(50, lambda: _process_qt_events(root))
+        if not _qt_overlay._transparent_input:
+            _schedule_qt_pump(root)
     except Exception:
         pass
-
-
-def _start_qt_events(root):
-    """启动 processEvents 循环（确保只启动一次）"""
-    global _qt_events_running
-    if _qt_events_running:
-        return
-    _qt_events_running = True
-    root.after(50, lambda: _process_qt_events(root))
 
 
 def enable_log_overlay(root):
@@ -94,8 +101,10 @@ def enable_log_overlay(root):
             _qt_app = QApplication([])
         _qt_overlay = ScreenLogOverlay(max_lines=500, translucent_bg=False)
         _qt_overlay.show()
-        _start_qt_events(root)
-        print("📊 日志遮罩已开启（左下角透明日志层）")
+        # 开启提示：告知如何关闭（遮罩鼠标穿透，需通过托盘菜单或实验功能窗口关闭）
+        _qt_overlay.info("💡 日志遮罩：关闭请在 托盘菜单「日志遮罩」或「实验功能」窗口操作")
+        _schedule_qt_pump(root)
+        print("📊 日志遮罩已开启（左下角透明日志层；关闭：托盘菜单「日志遮罩」或「实验功能」窗口）")
     except Exception as e:
         _qt_overlay = None
         print(f"⚠️ 日志遮罩开启失败（不影响主程序）：{e}")
@@ -148,6 +157,8 @@ class RedirectText:
         if _qt_overlay is not None and message.strip():
             try:
                 _qt_overlay.add_log(_classify_log_level(message), message.strip())
+                # 事件驱动泵送：有日志才处理 Qt 事件，空闲不泵送（避免干扰 Tk 拖拽）
+                _schedule_qt_pump(self.root)
             except Exception:
                 pass
         if self._log_file and message.strip():
@@ -679,14 +690,19 @@ class App:
                 self.root.deiconify()
                 self.root.update_idletasks()
             geo = self.root.geometry()
-            # 过滤掉退化的 1x1 尺寸
+            # 只记住窗口大小（位置始终屏幕居中），过滤掉退化的 1x1 尺寸
             if geo and "x" in geo:
-                parts = geo.split("x")
-                w = int(parts[0])
-                if w > 100:
-                    settings = config.load_settings()
-                    settings["window_geometry"] = geo
-                    config.save_settings(settings)
+                try:
+                    w_part = geo.split("x", 1)[0]
+                    h_part = geo.split("x", 1)[1].split("+")[0].split("-")[0]
+                    w = int(w_part)
+                    h = int(h_part)
+                    if w > 100 and h > 50:
+                        settings = config.load_settings()
+                        settings["window_geometry"] = f"{w}x{h}"
+                        config.save_settings(settings)
+                except Exception:
+                    pass
         except Exception:
             pass
         self._close_log_window()
@@ -770,12 +786,27 @@ class App:
         account_manager.delete_account(self)
 
     def extend_all_cooldowns(self):
-        """全体延时：给所有冷却中的账号添加 1 小时冷却（不影响暂停账号）"""
-        extended = cooldown_manager.extend_all_cooldowns(hours=1)
+        """全体延时+：给所有冷却中的账号延长 30 分钟冷却（不影响暂停账号）"""
+        extended = cooldown_manager.extend_all_cooldowns(hours=0.5)
         if extended:
-            print(f"⏳ 已为 {len(extended)} 个冷却中的账号延长 1 小时冷却：{', '.join(extended)}")
+            print(f"⏳ 已为 {len(extended)} 个冷却中的账号延长 30 分钟冷却：{', '.join(extended)}")
         else:
             print("ℹ️ 当前没有正在冷却中的账号，无需延长")
+        account_manager.refresh_account_tree(self)
+
+    def _reduce_all_cooldowns(self):
+        """冷却缩减-：给所有冷却中的账号缩减 30 分钟冷却（不影响暂停账号）
+        缩减后到期的账号直接变为可运行"""
+        reduced, removed = cooldown_manager.reduce_all_cooldowns(minutes=30)
+        parts = []
+        if reduced:
+            parts.append(f"缩减 {len(reduced)} 个账号：{', '.join(reduced)}")
+        if removed:
+            parts.append(f"到期 {len(removed)} 个账号：{', '.join(removed)}")
+        if parts:
+            print("⏳ " + "；".join(parts))
+        else:
+            print("ℹ️ 当前没有正在冷却中的账号，无需缩减")
         account_manager.refresh_account_tree(self)
 
     def update_account_count(self):
@@ -801,9 +832,6 @@ class App:
 
     def _custom_cooldown_time(self):
         account_manager.custom_cooldown_time(self)
-
-    def _reset_all_cooldowns(self):
-        account_manager.reset_all_cooldowns(self)
 
     def _start_periodic_tree_refresh(self):
         account_manager.start_periodic_tree_refresh(self)
@@ -953,7 +981,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.3.4  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v1.3.6  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -967,10 +995,10 @@ class App:
         btn_frame.pack(fill=tk.X, pady=(0, 6))
         self.add_btn = ttk.Button(btn_frame, text="＋ 添加账号", style='Accent.TButton', command=self.add_account, width=14)
         self.add_btn.pack(side=tk.LEFT, padx=(0, 6))
-        self.clear_btn = ttk.Button(btn_frame, text="全体延时", style='TButton', command=self.extend_all_cooldowns, width=10)
+        self.clear_btn = ttk.Button(btn_frame, text="全体延时+", style='TButton', command=self.extend_all_cooldowns, width=10)
         self.clear_btn.pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="冷却重置", style='TButton',
-                   command=self._reset_all_cooldowns, width=10).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="冷却缩减-", style='TButton',
+                   command=self._reduce_all_cooldowns, width=10).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="资产监测", style='Accent.TButton',
                    command=self._show_asset_monitor, width=10).pack(side=tk.LEFT, padx=4)
 
@@ -1248,17 +1276,19 @@ def main():
     def _init_app():
         progress.stop()
         loading_frame.destroy()
-        # 恢复上次窗口大小和位置
+        # 恢复上次窗口大小（位置始终屏幕居中）
         saved_geo = config.APP_SETTINGS.get("window_geometry", "")
+        saved_w, saved_h = 550, 800
         if saved_geo and "x" in saved_geo:
             try:
-                root.geometry(saved_geo)
+                w_part = saved_geo.split("x", 1)[0]
+                h_part = saved_geo.split("x", 1)[1].split("+")[0].split("-")[0]
+                saved_w = int(w_part)
+                saved_h = int(h_part)
             except Exception:
-                root.geometry("550x800")
-                _center_window(root, 550, 800)
-        else:
-            root.geometry("550x800")
-            _center_window(root, 550, 800)
+                saved_w, saved_h = 550, 800
+        root.geometry(f"{saved_w}x{saved_h}")
+        _center_window(root, saved_w, saved_h)
         _check_resolution_on_startup(root)
         App(root)
         root.after(50, lambda: (root.lift(), root.focus_force()))

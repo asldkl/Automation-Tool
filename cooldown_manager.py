@@ -313,7 +313,7 @@ def is_account_paused(account_name):
         return bool(data[account_name].get("account_paused"))
 
 
-def extend_all_cooldowns(hours=1):
+def extend_all_cooldowns(hours=0.5):
     """给所有冷却中的账号延长冷却时间，不影响暂停账号
     只延长 next_run_time 还在未来（冷却中）的账号
     返回被延长的账号名称列表
@@ -339,6 +339,51 @@ def extend_all_cooldowns(hours=1):
         if extended:
             _save_data(data)
         return extended
+
+
+def reduce_all_cooldowns(minutes=30):
+    """给所有冷却中的账号缩减冷却时间，不影响暂停账号
+    只缩减 next_run_time 还在未来（冷却中）的账号
+    缩减后剩余时间 ≤0 的账号视为冷却结束，直接移除该账号的冷却记录
+    返回 (reduced_names, removed_names)
+    """
+    with _lock:
+        data = _load_data()
+        now = datetime.datetime.now()
+        delta = datetime.timedelta(minutes=minutes)
+        reduced = []
+        removed = []
+        for name, entry in list(data.items()):
+            # 跳过暂停账号
+            if entry.get("account_paused"):
+                continue
+            next_run_str = entry.get("next_run_time", "")
+            if not next_run_str:
+                continue
+            try:
+                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                if next_run > now:  # 仅冷却中的账号
+                    new_run = next_run - delta
+                    if new_run <= now:
+                        # 缩减后视为冷却结束，移除该账号冷却记录
+                        del data[name]
+                        removed.append(name)
+                    else:
+                        entry["next_run_time"] = new_run.strftime("%Y-%m-%d %H:%M:%S")
+                        reduced.append(name)
+            except Exception:
+                continue
+        if reduced or removed:
+            _save_data(data)
+        return reduced, removed
+
+
+def flush():
+    """强制将内存中的冷却数据立即写入磁盘并同步备份（崩溃保险）
+    在任务结束时调用，确保异常退出前冷却状态已持久化"""
+    with _lock:
+        data = _load_data()
+        _save_data(data)
 
 
 def mark_game_failed(account_name):

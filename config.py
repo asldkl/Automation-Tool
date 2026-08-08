@@ -166,7 +166,7 @@ DEFAULT_SETTINGS = {
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
-    "window_geometry": "",                   # 主窗口大小和位置（自动保存/恢复）
+    "window_geometry": "",                   # 主窗口大小（自动保存，位置始终屏幕居中）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
     "asset_history_geometry": "",            # 资产记录窗口大小和位置
@@ -208,7 +208,7 @@ DEFAULT_SETTINGS = {
     "enable_click_jitter": False,                # 是否启用游戏内点击随机偏移
     "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
     # 日志遮罩（PyQt6 透明叠加层）
-    "enable_log_overlay": False,                 # 是否启用日志遮罩（默认关闭，开启时延迟加载 PyQt6）
+    "enable_log_overlay": True,                  # 是否启用日志遮罩（默认开启，开启时延迟加载 PyQt6）
 }
 
 _settings_cache = None
