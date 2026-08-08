@@ -32,8 +32,9 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # 排除训练依赖（torch/ultralytics/matplotlib 等），程序运行时只用 onnxruntime，不需要 torch
+    # sympy/mpmath 是 matplotlib/ultralytics 带进来的，被 onnxruntime.transformers 连带收集，也用不到
     excludes=['torch', 'torchvision', 'torchaudio', 'ultralytics', 'matplotlib',
-              'pandas', 'scipy', 'seaborn'],
+              'pandas', 'scipy', 'seaborn', 'sympy', 'mpmath', 'networkx'],
     noarchive=False,
     optimize=0,
 )
