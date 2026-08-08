@@ -24,6 +24,7 @@ import server_client
 import scheduler
 import asset_db
 import driver_keyboard
+import custom_ops
 
 # 三角洲行动窗口标题关键词
 DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]
@@ -997,6 +998,16 @@ def _run_single_account(app, img_path, total, processed_accounts):
                 account_failed = True
         # else: _launch_game 内部已调用 _recognize_and_store_asset、game_operations_wrapper（含一键出售）
 
+    # 自定义操作（主流程完成、游戏在主界面，关闭游戏前执行）
+    if (not account_failed and not account_interrupted
+            and not app._stop_event.is_set()
+            and app.settings.get("enable_custom_ops", False)):
+        try:
+            custom_ops.run_custom_ops(app, file_name)
+        except Exception as e:
+            print(f"⚠️ 自定义操作执行异常：{e}")
+            traceback.print_exc()
+
     if not account_interrupted:
         _close_game(app)
         _cleanup_account_processes(app)
@@ -1116,6 +1127,16 @@ def run_script_main(app):
                         account_interrupted = True
                     else:
                         account_failed = True
+
+            # 步骤2.5：自定义操作（主流程完成、游戏在主界面，关闭游戏前执行）
+            if (not account_failed and not account_interrupted
+                    and not app._stop_event.is_set()
+                    and app.settings.get("enable_custom_ops", False)):
+                try:
+                    custom_ops.run_custom_ops(app, file_name)
+                except Exception as e:
+                    print(f"⚠️ 自定义操作执行异常：{e}")
+                    traceback.print_exc()
 
             # 步骤3：清理进程
             if not account_interrupted:

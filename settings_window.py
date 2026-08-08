@@ -304,6 +304,27 @@ class SettingsWindow:
         ttk.Button(asset_btn_frame, text="设置区域", command=self._set_asset_region, width=10).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(asset_btn_frame, text="测试识别", command=self._test_asset_recognition, width=10).pack(side=tk.LEFT)
 
+        # ----- 点击随机偏移（游戏内操作拟人抖动） -----
+        frame_jitter = ttk.LabelFrame(parent, text="  点击随机偏移  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_jitter.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_jitter, text="游戏内操作点击位置随机偏移（拟人抖动），减少机械化痕迹",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        jitter_row = ttk.Frame(frame_jitter, style='SettingsInner.TFrame')
+        jitter_row.pack(fill=tk.X)
+
+        self._jitter_enabled_var = tk.BooleanVar(value=self.app.settings.get("enable_click_jitter", False))
+        ttk.Checkbutton(jitter_row, text="启用随机偏移",
+                        variable=self._jitter_enabled_var,
+                        command=self._save_jitter_settings).pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(jitter_row, text="最大偏移(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._jitter_max_var = tk.StringVar(value=str(self.app.settings.get("click_jitter_max", 5)))
+        ttk.Entry(jitter_row, textvariable=self._jitter_max_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(jitter_row, text="保存", style='TButton',
+                   command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
+
         # ----- 实用工具 -----
         guide_frame = ttk.LabelFrame(parent, text="  实用工具  ", style='SettingsCard.TLabelframe', padding=12)
         guide_frame.pack(fill=tk.X, pady=(0, 8))
@@ -382,6 +403,17 @@ class SettingsWindow:
         ttk.Checkbutton(ops_inner, text="工作台", variable=self.op_bench).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Checkbutton(ops_inner, text="防具台", variable=self.op_armor).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Checkbutton(ops_inner, text="制药台", variable=self.op_pharmacy).pack(side=tk.LEFT)
+
+        # ----- 自定义操作 -----
+        frame_custom = ttk.LabelFrame(parent, text="  自定义操作  ", style='SettingsCard.TLabelframe', padding=10)
+        frame_custom.pack(fill=tk.X, pady=(8, 0))
+
+        ttk.Label(frame_custom,
+                  text="主流程完成后（游戏回到主界面）自动执行「找图→单击」步骤序列，可自行批量操作",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        ttk.Button(frame_custom, text="配置自定义操作", style='Accent.TButton',
+                   command=self._open_custom_ops_window, width=16).pack(anchor=tk.W, padx=5)
 
 
     def _build_email_tab(self, parent):
@@ -539,14 +571,28 @@ class SettingsWindow:
         ttk.Spinbox(f4, from_=0, to=120, increment=5,
                     textvariable=self.game_launch_wait_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
 
+        # ----- 账号数据导入导出 -----
+        frame_acct = ttk.LabelFrame(parent, text="  账号数据导入导出  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_acct.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_acct, text="导入/导出账号列表、密码备注、资产及历史记录",
+                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        acct_btn_frame = ttk.Frame(frame_acct, style='SettingsInner.TFrame')
+        acct_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(acct_btn_frame, text="导出账号数据", style='TButton',
+                   command=self._export_accounts, width=14).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(acct_btn_frame, text="导入账号数据", style='TButton',
+                   command=self._import_accounts, width=14).pack(side=tk.LEFT)
+
         # ----- 设置说明 -----
         tips_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
         tips_frame.pack(fill=tk.X, pady=(0, 0))
         tips_lines = (
-            "• 账号间隔时间：0-5分钟，相邻账号执行间隔，0=连续执行\n"
-            "• 鼠标下移距离：30-300像素，账号超过3个被遮挡时使用\n"
-            "• 滚动幅度：50-150，值越大滚动越多，默认100\n"
-            "• 额外等待时间：0-120秒，机器配置较低时可增加等待，默认0"
+            "• 账号间隔时间：0-5分钟，相邻账号执行间隔，0=连续执行（在「自动任务」页设置）\n"
+            "• 额外等待时间：0-120秒，机器配置较低时可增加游戏启动等待，默认0\n"
+            "• 账号数据导入导出：导出为 JSON 备份；导入会覆盖当前账号数据（导入前自动备份）"
         )
         ttk.Label(tips_frame, text=tips_lines, style='SettingsSmall.TLabel',
                   justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
@@ -610,42 +656,6 @@ class SettingsWindow:
         self._dev_kb_status = ttk.Label(frame_kb, text="", style='SettingsSmall.TLabel')
         self._dev_kb_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
-        # ----- 账号数据导入导出 -----
-        frame_acct = ttk.LabelFrame(parent, text="  账号数据导入导出  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_acct.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(frame_acct, text="导入/导出账号列表、密码备注、资产及历史记录",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
-
-        acct_btn_frame = ttk.Frame(frame_acct, style='SettingsInner.TFrame')
-        acct_btn_frame.pack(fill=tk.X)
-
-        ttk.Button(acct_btn_frame, text="导出账号数据", style='TButton',
-                   command=self._export_accounts, width=14).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(acct_btn_frame, text="导入账号数据", style='TButton',
-                   command=self._import_accounts, width=14).pack(side=tk.LEFT)
-
-        # ----- 点击随机偏移 -----
-        frame_jitter = ttk.LabelFrame(parent, text="  点击随机偏移  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_jitter.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(frame_jitter, text="游戏内操作点击位置随机偏移（拟人抖动），减少机械化痕迹",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
-
-        jitter_row = ttk.Frame(frame_jitter, style='SettingsInner.TFrame')
-        jitter_row.pack(fill=tk.X)
-
-        self._jitter_enabled_var = tk.BooleanVar(value=self.app.settings.get("enable_click_jitter", False))
-        ttk.Checkbutton(jitter_row, text="启用随机偏移",
-                        variable=self._jitter_enabled_var,
-                        command=self._save_jitter_settings).pack(side=tk.LEFT, padx=(0, 10))
-
-        ttk.Label(jitter_row, text="最大偏移(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self._jitter_max_var = tk.StringVar(value=str(self.app.settings.get("click_jitter_max", 5)))
-        ttk.Entry(jitter_row, textvariable=self._jitter_max_var, width=5).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(jitter_row, text="保存", style='TButton',
-                   command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
-
         # ----- 日志遮罩开关 -----
         frame_overlay = ttk.LabelFrame(parent, text="  日志遮罩  ", style='SettingsCard.TLabelframe', padding=12)
         frame_overlay.pack(fill=tk.X, pady=(0, 8))
@@ -654,9 +664,23 @@ class SettingsWindow:
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         self._overlay_var = tk.BooleanVar(value=self.app.settings.get("enable_log_overlay", False))
-        ttk.Checkbutton(frame_overlay, text="启用日志遮罩（默认关闭，开启时延迟加载）",
+        ttk.Checkbutton(frame_overlay, text="启用日志遮罩（默认开启）",
                         variable=self._overlay_var,
                         command=self._toggle_overlay).pack(anchor=tk.W, padx=5)
+
+    def _open_custom_ops_window(self):
+        """打开自定义操作配置窗口（隐藏设置窗口，返回时恢复）"""
+        def _open():
+            try:
+                from custom_ops_window import CustomOpsWindow
+                CustomOpsWindow(self.win, self.app)
+            except Exception as e:
+                try:
+                    self.win.deiconify()
+                except Exception:
+                    pass
+                messagebox.showerror("自定义操作", f"打开窗口失败：{e}", parent=self.win)
+        utils.nav_push(self.win, _open)
 
     def _toggle_overlay(self):
         """切换日志遮罩开关（委托给 App，状态持久化）"""

@@ -10,7 +10,7 @@
 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作。
 
 【版本历史】
-v1.3.6 (2026-08-08)：全体延时改为+30分钟、新增冷却缩减-（-30分钟，到期即移除）、冷却结束兜底写盘（崩溃保险）、日志遮罩默认开启+字体加粗+关闭提示、主窗口改为记住大小且位置居中、修复日志遮罩干扰Tk拖拽（Qt事件改事件驱动泵送）
+v1.3.6 (2026-08-08)：全体延时改为+30分钟、新增冷却缩减-（-30分钟，到期即移除）、冷却结束兜底写盘（崩溃保险）、日志遮罩默认开启+字体加粗+关闭提示、主窗口改为记住大小且位置居中、修复日志遮罩干扰Tk拖拽（Qt事件改事件驱动泵送）、新增自定义操作（找图→单击序列，主流程后自动执行，点击可选拟人抖动）、邮件通知加最先/最后运行时间、设置窗口整理（自定义操作移入自动任务页、点击随机偏移移入全局设置页、账号导入导出移入其他设置页）
 v1.3.5 (2026-08-01)：日志按日期文件夹分文件、账号失败 OCR 屏幕诊断、开发者测试精简、模板设置集成置信度测试、Caps Lock 输入保护、冷却数据备份、全体延时按钮、账号数据导入导出、机器指纹后台加载优化、点击拟人抖动、自动缩到托盘、修复桌面图标消失、日志遮罩(PyQt6)、删除三角洲路径、开发者测试改名实验功能
 v1.3.4 (2026-07-15)：皮肤抢购 OCR→图片匹配、Interception 驱动设备自动检测、数据目录迁移到 %APPDATA%、删除旧数据迁移代码
 v1.3.2 (2026-06-27)：代码审查全面修复（原子写入、线程安全、冷却数据迁移等）
@@ -154,6 +154,24 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - DLL 搜索路径：MEIPASS、exe 同级、项目目录、System32、LCA 安装目录
 │   - 驱动伪装为 keyboard.sys，服务名 keyboard
 
+├── custom_ops.py               # 自定义操作模块（v1.3.6 新增）
+│   - 数据存储：%APPDATA%\DeltaAutoTool\custom_ops\（ops.json + images/）
+│   - load_ops() / save_ops()：步骤列表持久化（原子写入）
+│   - next_image_name() / save_captured_image()：截图保存
+│   - run_custom_ops()：主流程完成后自动执行「找图→单击」步骤序列
+│     - 逐步骤 utils.find_and_click（带置信度/超时/点击后停顿）
+│     - 某步找不到图 → 中止该账号剩余自定义操作，跳到下一个账号
+│     - 受 app._stop_event 控制，可随时停止
+│   - run_custom_ops_for_test()：窗口内「运行测试」按钮的试运行
+│   - 点击是否受随机偏移影响由 custom_ops_jitter 控制（复用 click_jitter_max）
+│
+├── custom_ops_window.py        # 自定义操作配置向导（v1.3.6 新增）
+│   - CustomOpsWindow 类：从「设置 → 自动任务」页「配置自定义操作」按钮打开
+│   - 顶部工具栏：＋屏幕框选 / 选择图片 / 上移 / 下移 / 删除 / 运行测试 / 停止 / 保存
+│   - Treeview 步骤列表（序号/名称/置信度/超时/停顿），双击编辑（含图片预览）
+│   - 屏幕框选：全屏遮罩拖拽截图（复用资产区域框选模式），保存到 images/
+│   - 「主流程完成后自动执行」开关写入 settings.enable_custom_ops
+
 ├── automation.py               # 自动化流程模块（从 gui_app.py 拆分）
 │   - game_operations()：游戏内操作（导航→邮箱货币→设施处理→一键出售）
 │   - handle_facility()：单个设施操作（制造→收取→领取→产出→购买材料）
@@ -231,7 +249,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 │     - Tab 3: 自动任务（冷却执行、操作选择）
 │     - Tab 4: 邮件通知（启用、邮箱配置、冷却提醒、测试发送）
 │     - Tab 5: 其他设置（开机自启、自动关机、运行完成后关机）
-│   - 实验功能窗口：驱动键盘测试 + 账号数据导入导出 + 点击随机偏移 + 日志遮罩开关（v1.3.5）
+│   - 实验功能窗口：驱动键盘测试 + 日志遮罩开关（v1.3.5；自定义操作/点击随机偏移/账号导入导出已移入各设置页，v1.3.6）
 │   - 资产识别：区域框选（全屏 overlay）、测试识别（直接 RapidOCR，无 BGR 转换）
 │   - 使用说明：全局设置底部「查看使用说明」按钮（从主界面迁移）
 │   - 测试邮件发送：异步线程（v1.1.4），不阻塞 UI
@@ -333,18 +351,20 @@ v1.0.0 (2026-05-25)：初始发布版本
 gui_app.py (入口层)
   ├── automation_runner.py  ← start_run / stop_run / on_finish
   │     ├── automation.py   ← game_operations / sell_operations
-  │     └── asset_db.py     ← record_asset（资产识别后写入 SQLite）
+  │     ├── asset_db.py     ← record_asset（资产识别后写入 SQLite）
+  │     └── custom_ops.py   ← 主流程完成后自动执行「找图→单击」序列（v1.3.6）
   ├── scheduler.py          ← set_next_wake_timer / apply_auto_settings
   │     └── cooldown_watcher.py
   ├── account_manager.py    ← 账号 CRUD / 冷却管理 UI / 资产监测 / 备注
   │     └── asset_db.py     ← query_total_change（资产统计查询）
-  ├── email_notifier.py     ← 邮件发送
+  ├── email_notifier.py     ← 邮件发送（运行报告含最先/最后运行时间）
   ├── server_client.py      ← 验证 / 心跳
   ├── cooldown_watcher.py   ← 冷却到期监听
   ├── utils.py              ← 图像识别 / OCR / 进程管理 / 电源管理 / 平滑鼠标移动
   │     └── relative_mouse_move.py ← 贝塞尔曲线 / Smoothstep 鼠标移动算法
   ├── config.py             ← 配置读写
   ├── settings_window.py    ← 设置对话框（含使用说明）
+  │     └── custom_ops_window.py ← 设置「自动任务」页「配置自定义操作」向导（v1.3.6）
   ├── template_capture.py   ← 模板上传向导
   ├── cooldown_manager.py   ← 冷却数据持久化
   └── machine_fingerprint.py ← 机器指纹

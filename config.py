@@ -209,6 +209,12 @@ DEFAULT_SETTINGS = {
     "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
     # 日志遮罩（PyQt6 透明叠加层）
     "enable_log_overlay": True,                  # 是否启用日志遮罩（默认开启，开启时延迟加载 PyQt6）
+    # 自定义操作（主流程完成后自动执行：逐步骤找图→单击）
+    "enable_custom_ops": False,                  # 是否在主流程完成后自动执行自定义操作
+    "custom_ops_confidence": 0.7,                # 自定义操作默认找图置信度
+    "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）
+    "custom_ops_pause": 0.5,                     # 自定义操作默认点击后停顿（秒）
+    "custom_ops_jitter": False,                  # 自定义操作点击是否受随机偏移影响（复用 click_jitter_max）
 }
 
 _settings_cache = None
