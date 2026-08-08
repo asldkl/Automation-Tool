@@ -87,6 +87,55 @@ def _pump_qt_once(root):
         pass
 
 
+# ==================== 遮罩可见性看门狗 ====================
+_qt_watchdog_running = False
+
+
+def _start_qt_watchdog(root):
+    """启动遮罩可见性看门狗（每 1 秒检查一次）
+    解决：游戏独占全屏时 Windows 会隐藏遮罩窗口，事件驱动泵送在无日志时不处理
+    重新显示消息，导致遮罩在账号切换时看起来"被关闭"。看门狗检测到遮罩不可见时重新 show。
+    仅在遮罩不可见时动作，拖拽时遮罩可见 → 不干扰，不影响拖拽修复。
+    """
+    global _qt_watchdog_running
+    if _qt_watchdog_running:
+        return
+    _qt_watchdog_running = True
+    root.after(1000, lambda: _qt_watchdog_tick(root))
+
+
+def _qt_watchdog_tick(root):
+    global _qt_watchdog_running, _qt_overlay
+    try:
+        if _qt_overlay is not None:
+            try:
+                visible = _qt_overlay.isVisible()
+            except RuntimeError:
+                # 遮罩被意外销毁（如 Qt 窗口被外部关闭）→ 重新创建
+                print("🔄 日志遮罩被销毁，正在重新创建...")
+                _qt_overlay = None
+                enable_log_overlay(root)
+                root.after(1000, lambda: _qt_watchdog_tick(root))
+                return
+            if not visible:
+                # 遮罩被 Windows 隐藏（如游戏独占全屏）→ 重新显示
+                try:
+                    _qt_overlay.show()
+                    print("📊 日志遮罩重新显示（被全屏游戏隐藏后恢复）")
+                except Exception:
+                    pass
+                try:
+                    _qt_app.processEvents()
+                except Exception:
+                    pass
+        root.after(1000, lambda: _qt_watchdog_tick(root))
+    except Exception:
+        try:
+            root.after(1000, lambda: _qt_watchdog_tick(root))
+        except Exception:
+            _qt_watchdog_running = False
+
+
 def enable_log_overlay(root):
     """开启日志遮罩（延迟加载 PyQt6；失败不影响主程序）"""
     global _qt_overlay, _qt_app
@@ -104,6 +153,7 @@ def enable_log_overlay(root):
         # 开启提示：告知如何关闭（遮罩鼠标穿透，需通过托盘菜单或实验功能窗口关闭）
         _qt_overlay.info("💡 日志遮罩：关闭请在 托盘菜单「日志遮罩」或「实验功能」窗口操作")
         _schedule_qt_pump(root)
+        _start_qt_watchdog(root)
         print("📊 日志遮罩已开启（左下角透明日志层；关闭：托盘菜单「日志遮罩」或「实验功能」窗口）")
     except Exception as e:
         _qt_overlay = None
