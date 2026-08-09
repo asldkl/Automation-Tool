@@ -700,11 +700,18 @@ v1.3.6 (2026-08-08)
   - 主窗口关闭后只记忆窗口大小，位置始终屏幕居中（不再恢复上次位置）
 - 自定义操作：
   - 新增 custom_ops.py / custom_ops_window.py 模块：用户配置自定义操作步骤序列
-  - 支持三种步骤类型（op.type）：
+  - 支持九种步骤类型（op.type）：
     - image 找图点击（默认）：匹配图片后点击（图片存 custom_ops/images/）
     - coordinate 坐标点击：固定坐标点击（x/y，支持「屏幕取点」），抖动时圆内随机偏移
     - ocr OCR点击：识别指定文字后点击（utils.ocr_find_and_click）
-  - 入口在「设置 → 自动任务」页最下方「配置自定义操作」
+    - keyboard 键盘输入：按键/组合键（pyautogui）或文本（driver_keyboard.send_string）
+    - multi_image 多图点击：按顺序试多张图，点第一张找到的
+    - drag 鼠标拖拽：起点→终点（smooth_move_to + mouseDown/Up）
+    - scroll 鼠标滚轮：pyautogui.scroll（正上负下）
+    - condition 条件跳转：找图/OCR 探测（_probe_image/_probe_ocr），满足则跳到指定步骤
+    - jump 无条件跳转：配合 condition 实现循环/重试
+  - 运行时：while 循环 + 可变索引支持跳转；死循环保护（10000 次上限）
+  - 入口在「设置 → 自动任务」页最下方「配置自定义操作」；工具栏「＋ 更多」菜单添加新类型
   - 窗口布局：左下角运行测试/停止，右下角保存步骤；右键/双击步骤可修改属性、切换类型、排序、删除
   - 「点击受随机偏移影响」全局开关（custom_ops_jitter，复用 click_jitter_max），坐标步骤也应用
   - 每个账号主流程完成、游戏回到主界面后自动按顺序执行；某步找不到目标则中止该账号剩余操作，跳到下一个账号
