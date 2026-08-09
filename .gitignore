@@ -42,3 +42,6 @@ Interception-master/
 # User data (runtime generated)
 ~/.delta_auto_*
 LCA-main
+
+# YOLO 训练工作区（本地上使用，不纳入项目仓库）
+yolo_train/
