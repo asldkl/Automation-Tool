@@ -27,6 +27,7 @@ STEP_TYPES = {
     "multi_image": "多图点击",
     "drag": "鼠标拖拽",
     "scroll": "鼠标滚轮",
+    "screenshot": "截图保存",
     "condition": "条件跳转",
     "jump": "跳转",
 }
@@ -72,6 +73,7 @@ class CustomOpsWindow:
         add_menu.add_command(label="多图点击", command=self._add_multi_image_step)
         add_menu.add_command(label="鼠标拖拽", command=self._add_drag_step)
         add_menu.add_command(label="鼠标滚轮", command=self._add_scroll_step)
+        add_menu.add_command(label="截图保存", command=self._add_screenshot_step)
         add_menu.add_separator()
         add_menu.add_command(label="条件跳转", command=self._add_condition_step)
         add_menu.add_command(label="跳转", command=self._add_jump_step)
@@ -109,12 +111,24 @@ class CustomOpsWindow:
         self.tree.bind("<Button-3>", self._show_context_menu)
 
         # ----- 说明 -----
-        tip = ("说明：支持三种步骤——找图点击（匹配图片）/ 坐标点击（固定位置）/ OCR点击（识别文字）。\n"
+        tip = ("说明：每个步骤=找图/坐标/OCR/键盘/多图/拖拽/滚轮/截图保存/条件跳转/跳转等操作（「＋ 添加步骤」菜单）。\n"
                "主流程每个账号运行完、游戏回到主界面后，会依次执行这些步骤；"
                "某一步找不到目标则中止该账号的自定义操作，跳到下一个账号。\n"
-               "双击或右键可修改步骤属性（含类型）。")
-        ttk.Label(self.win, text=tip, style='SettingsSmall.TLabel', justify=tk.LEFT,
-                  padding=(10, 4)).pack(anchor=tk.W, fill=tk.X)
+               "双击或右键可修改步骤属性（含类型），底部「设置」可配置频率限制与截图保存目录。")
+        self.tip_lbl = ttk.Label(self.win, text=tip, style='SettingsSmall.TLabel', justify=tk.LEFT,
+                                 padding=(10, 4))
+        self.tip_lbl.pack(anchor=tk.W, fill=tk.X)
+        # 窗口宽度变化时说明文字自动换行
+        def _tip_wrap(_e=None):
+            try:
+                w = self.win.winfo_width() - 24
+                if w > 60:
+                    self.tip_lbl.config(wraplength=w)
+            except Exception:
+                pass
+        self.win.bind('<Configure>', _tip_wrap, add='+')
+        self.win.update_idletasks()
+        _tip_wrap()
 
         # ----- 底部操作栏：运行测试/停止（左下角）+ 保存步骤（右下角） -----
         bottom = ttk.Frame(self.win, padding=(8, 2, 8, 8))
@@ -156,6 +170,8 @@ class CustomOpsWindow:
             return f"({op.get('x1', 0)},{op.get('y1', 0)})→({op.get('x2', 0)},{op.get('y2', 0)})"
         if t == "scroll":
             return f"{op.get('scroll_amount', 3)} 格"
+        if t == "screenshot":
+            return "→ 设置目录/日期/账号名_时间.png"
         if t == "condition":
             cond = op.get("cond_type", "image")
             if cond == "ocr":
@@ -229,12 +245,6 @@ class CustomOpsWindow:
         menu.add_command(label="下移", command=self._move_down)
         menu.add_separator()
         menu.add_command(label="删除步骤", command=self._delete_step)
-        menu.add_separator()
-        for st, st_name in STEP_TYPES.items():
-            menu.add_command(
-                label=f"✅ 设为{st_name}",
-                command=lambda s=st: self._set_step_type(s),
-                state='normal' if t != st else 'disabled')
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -271,6 +281,8 @@ class CustomOpsWindow:
             op.setdefault("duration", 0.5)
         elif new_type == "scroll":
             op.setdefault("scroll_amount", 3)
+        elif new_type == "screenshot":
+            pass   # 截图保存无额外参数
         elif new_type == "condition":
             op.setdefault("cond_type", "image")
             op.setdefault("text", "")
@@ -326,12 +338,28 @@ class CustomOpsWindow:
         ttk.Label(form, text="超限后该账号跳过自定义操作，主流程照常运行",
                   foreground='#7f8c8d').pack(anchor='w')
 
+        # 截图保存目录（截图保存步骤的全局保存位置）
+        dir_row = ttk.Frame(form)
+        dir_row.pack(fill=tk.X, pady=(10, 3))
+        ttk.Label(dir_row, text="截图保存目录").pack(side=tk.LEFT)
+        dir_var = tk.StringVar(value=self.app.settings.get("custom_ops_screenshot_dir", "") or "")
+        ttk.Entry(dir_row, textvariable=dir_var, width=26).pack(side=tk.LEFT, padx=(6, 4))
+        def _browse_dir():
+            import tkinter.filedialog as fd
+            p = fd.askdirectory(parent=dlg, title="选择截图保存目录")
+            if p:
+                dir_var.set(p)
+        ttk.Button(dir_row, text="浏览", command=_browse_dir, width=6).pack(side=tk.LEFT)
+        ttk.Label(form, text="截图保存步骤会存到: 该目录/当天日期/账号名_时间.png",
+                  foreground='#7f8c8d').pack(anchor='w')
+
         def on_save():
             try:
                 self.app.settings["enable_custom_ops"] = enable_var.get()
                 self.app.settings["custom_ops_jitter"] = jitter_var.get()
                 self.app.settings["custom_ops_max_runs"] = max(0, int(runs_var.get()))
                 self.app.settings["custom_ops_freq_days"] = max(1, int(days_var.get()))
+                self.app.settings["custom_ops_screenshot_dir"] = dir_var.get().strip()
                 config.save_settings(self.app.settings)
                 print(f"📌 自定义操作设置已保存：自动执行={'开' if enable_var.get() else '关'}，"
                       f"抖动={'开' if jitter_var.get() else '关'}，"
@@ -536,6 +564,10 @@ class CustomOpsWindow:
         """添加鼠标滚轮步骤"""
         self._append_step({"type": "scroll", "scroll_amount": 3})
 
+    def _add_screenshot_step(self):
+        """添加截图保存步骤"""
+        self._append_step({"type": "screenshot"})
+
     def _add_condition_step(self):
         """添加条件跳转步骤"""
         self._append_step({"type": "condition", "cond_type": "image",
@@ -702,6 +734,11 @@ class CustomOpsWindow:
                 ttk.Entry(fr, textvariable=scroll_var, width=8).pack(side=tk.LEFT)
                 ttk.Label(fields, text="正数向上滚，负数向下滚（如 -3 向下 3 格）",
                           foreground='#7f8c8d').pack(anchor='w')
+            elif t == "screenshot":
+                save_dir = self.app.settings.get("custom_ops_screenshot_dir", "") or "（未设置）"
+                ttk.Label(fields, text="保存位置（在「设置」中配置）:", foreground='#7f8c8d').pack(anchor='w', pady=2)
+                ttk.Label(fields, text=save_dir, wraplength=300, foreground='#2c3e50').pack(anchor='w', pady=(0, 2))
+                ttk.Label(fields, text="保存为: 日期文件夹/账号名_时间.png", foreground='#7f8c8d').pack(anchor='w')
             elif t == "condition":
                 fr = ttk.Frame(fields); fr.pack(fill=tk.X, pady=3)
                 ttk.Label(fr, text="判断", style='Settings.TLabel', width=10).pack(side=tk.LEFT)

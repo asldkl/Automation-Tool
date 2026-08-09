@@ -217,6 +217,7 @@ DEFAULT_SETTINGS = {
     "custom_ops_jitter": False,                  # 自定义操作点击是否受随机偏移影响（复用 click_jitter_max）
     "custom_ops_max_runs": 0,                    # 每个账号自定义操作频率限制：0=不限（每 freq_days 天最多运行 max_runs 次）
     "custom_ops_freq_days": 7,                   # 频率限制的时间窗口（天）
+    "custom_ops_screenshot_dir": "",             # 截图保存步骤的全局保存目录（空=未配置）
 }
 
 _settings_cache = None

@@ -11,6 +11,7 @@
     multi_image 多图匹配点击（按顺序试多张图）
     drag       鼠标拖拽（起点→终点）
     scroll     鼠标滚轮
+    screenshot 截图保存（存到设置目录/当天日期/账号名_时间.png）
     condition  条件跳转（找图/OCR 探测，满足则跳转到指定步骤）
     jump       无条件跳转到指定步骤（配合 condition 实现循环）
 """
@@ -325,6 +326,25 @@ def run_custom_ops(app, account_name, stop_event=None):
                 print(f"  [{idx}/{total}] 滚轮 {amount} 格...")
                 pyautogui.scroll(amount)
                 print(f"    ✅ 滚轮完成")
+            elif op_type == "screenshot":
+                # 截图保存：保存到 <全局目录>/<当天日期>/<账号名>_<时间>.png
+                base_dir = (settings.get("custom_ops_screenshot_dir", "") or "").strip()
+                if not base_dir:
+                    print(f"  [{idx}/{total}] ⚠️ 未设置截图保存目录（在自定义操作设置中配置），跳过")
+                else:
+                    try:
+                        import pyautogui
+                        date_dir = time.strftime("%Y-%m-%d")
+                        save_dir = os.path.join(base_dir, date_dir)
+                        os.makedirs(save_dir, exist_ok=True)
+                        shot = pyautogui.screenshot()
+                        safe_name = "".join(c for c in account_name if c not in '\\/:*?"<>|').strip() or "账号"
+                        fname = f"{safe_name}_{time.strftime('%H%M%S')}.png"
+                        path = os.path.join(save_dir, fname)
+                        shot.save(path)
+                        print(f"  [{idx}/{total}] 已截图保存: {path}")
+                    except Exception as e:
+                        print(f"    ⚠️ 截图保存失败: {e}")
             else:
                 # 找图点击（默认）
                 img = image_path(op.get("image", ""))
