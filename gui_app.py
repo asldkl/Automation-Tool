@@ -44,6 +44,7 @@ ACCOUNTS_JSON_PATH = os.path.join(config.APP_DATA_DIR, "accounts.json")
 _qt_overlay = None           # ScreenLogOverlay 实例
 _qt_app = None               # QApplication 实例（防止被 GC）
 _qt_pump_scheduled = False   # Qt 事件泵送是否已排队（合并重复请求）
+_qt_manual_hide = False      # 用户主动隐藏遮罩（屏幕取点/框选截图时临时隐藏，看门狗不恢复）
 
 
 def _classify_log_level(message):
@@ -117,8 +118,8 @@ def _qt_watchdog_tick(root):
                 enable_log_overlay(root)
                 root.after(1000, lambda: _qt_watchdog_tick(root))
                 return
-            if not visible:
-                # 遮罩被 Windows 隐藏（如游戏独占全屏）→ 重新显示
+            if not visible and not _qt_manual_hide:
+                # 遮罩被 Windows 隐藏（如游戏独占全屏）→ 重新显示；手动隐藏时跳过
                 try:
                     _qt_overlay.show()
                     print("📊 日志遮罩重新显示（被全屏游戏隐藏后恢复）")
@@ -181,6 +182,29 @@ def toggle_log_overlay(root):
     else:
         enable_log_overlay(root)
     return _qt_overlay is not None
+
+
+def hide_log_overlay():
+    """临时隐藏日志遮罩（不销毁，保留日志内容）
+    用于屏幕取点/框选截图：置顶遮罩会挡住点击，取点前隐藏、取完恢复"""
+    global _qt_manual_hide
+    _qt_manual_hide = True
+    if _qt_overlay is not None:
+        try:
+            _qt_overlay.hide()
+        except Exception:
+            pass
+
+
+def show_log_overlay():
+    """恢复显示日志遮罩（与 hide_log_overlay 成对使用）"""
+    global _qt_manual_hide
+    _qt_manual_hide = False
+    if _qt_overlay is not None:
+        try:
+            _qt_overlay.show()
+        except Exception:
+            pass
 
 
 class RedirectText:
