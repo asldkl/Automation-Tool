@@ -30,6 +30,8 @@ STEP_TYPES = {
     "condition": "条件跳转",
     "jump": "跳转",
 }
+NAME_TO_TYPE = {v: k for k, v in STEP_TYPES.items()}   # 中文名 → key
+TYPE_NAMES = list(STEP_TYPES.values())                 # 中文名列表（下拉显示用）
 
 
 class CustomOpsWindow:
@@ -57,26 +59,22 @@ class CustomOpsWindow:
         # ----- 顶部工具栏 -----
         toolbar = ttk.Frame(self.win, padding=(8, 8, 8, 4))
         toolbar.pack(fill=tk.X)
-        ttk.Button(toolbar, text="＋ 屏幕框选", style='Accent.TButton',
-                   command=self._capture_from_screen, width=12).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(toolbar, text="选择图片", style='TButton',
-                   command=self._add_step_from_file, width=9).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(toolbar, text="＋ 坐标点击", style='TButton',
-                   command=self._add_coordinate_step, width=11).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(toolbar, text="＋ OCR点击", style='TButton',
-                   command=self._add_ocr_step, width=10).pack(side=tk.LEFT, padx=(0, 12))
-
-        more_btn = ttk.Menubutton(toolbar, text="＋ 更多", width=8)
-        more_menu = tk.Menu(more_btn, tearoff=0)
-        more_menu.add_command(label="键盘输入", command=self._add_keyboard_step)
-        more_menu.add_command(label="多图点击", command=self._add_multi_image_step)
-        more_menu.add_command(label="鼠标拖拽", command=self._add_drag_step)
-        more_menu.add_command(label="鼠标滚轮", command=self._add_scroll_step)
-        more_menu.add_separator()
-        more_menu.add_command(label="条件跳转", command=self._add_condition_step)
-        more_menu.add_command(label="跳转", command=self._add_jump_step)
-        more_btn.config(menu=more_menu)
-        more_btn.pack(side=tk.LEFT, padx=(0, 12))
+        add_btn = ttk.Menubutton(toolbar, text="＋ 添加步骤", style='Accent.TButton')
+        add_menu = tk.Menu(add_btn, tearoff=0)
+        add_menu.add_command(label="找图点击（框选截图）", command=self._capture_from_screen)
+        add_menu.add_command(label="找图点击（导入图片）", command=self._add_step_from_file)
+        add_menu.add_separator()
+        add_menu.add_command(label="坐标点击", command=self._add_coordinate_step)
+        add_menu.add_command(label="OCR点击", command=self._add_ocr_step)
+        add_menu.add_command(label="键盘输入", command=self._add_keyboard_step)
+        add_menu.add_command(label="多图点击", command=self._add_multi_image_step)
+        add_menu.add_command(label="鼠标拖拽", command=self._add_drag_step)
+        add_menu.add_command(label="鼠标滚轮", command=self._add_scroll_step)
+        add_menu.add_separator()
+        add_menu.add_command(label="条件跳转", command=self._add_condition_step)
+        add_menu.add_command(label="跳转", command=self._add_jump_step)
+        add_btn.config(menu=add_menu)
+        add_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         ttk.Button(toolbar, text="上移", style='TButton',
                    command=self._move_up, width=5).pack(side=tk.LEFT, padx=(0, 4))
@@ -495,13 +493,13 @@ class CustomOpsWindow:
         form = ttk.Frame(dlg, padding=12)
         form.pack(fill=tk.BOTH, expand=True)
 
-        # 类型切换
-        type_var = tk.StringVar(value=op.get("type", "image"))
+        # 类型切换（下拉显示中文，内部存 key）
+        type_var = tk.StringVar(value=STEP_TYPES.get(op.get("type", "image"), "找图点击"))
         tr = ttk.Frame(form)
         tr.pack(fill=tk.X, pady=3)
         ttk.Label(tr, text="类型", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
         type_combo = ttk.Combobox(tr, textvariable=type_var,
-                                  values=[k for k in STEP_TYPES], state='readonly', width=12)
+                                  values=TYPE_NAMES, state='readonly', width=12)
         type_combo.pack(side=tk.LEFT)
 
         name_var = tk.StringVar(value=op.get("name", f"步骤{idx + 1}"))
@@ -542,7 +540,7 @@ class CustomOpsWindow:
         def _rebuild_fields():
             for w in fields.winfo_children():
                 w.destroy()
-            t = type_var.get()
+            t = NAME_TO_TYPE.get(type_var.get(), type_var.get())   # 中文名 → key
             if t == "coordinate":
                 fx = ttk.Frame(fields); fx.pack(fill=tk.X, pady=3)
                 ttk.Label(fx, text="X", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
@@ -708,7 +706,7 @@ class CustomOpsWindow:
 
         def on_save():
             try:
-                op["type"] = type_var.get()
+                op["type"] = NAME_TO_TYPE.get(type_var.get(), type_var.get())   # 中文名 → key
                 op["name"] = name_var.get().strip() or f"步骤{idx + 1}"
                 op["pause_after"] = max(0, float(pause_var.get()))
                 t = op["type"]
@@ -751,8 +749,22 @@ class CustomOpsWindow:
             except ValueError:
                 messagebox.showwarning("输入无效", "数字字段格式不正确", parent=dlg)
                 return
+            self._save_dlg_geo()
             self._save_ops_now()
             self._refresh_list()
+            dlg.destroy()
+
+        def _save_dlg_geo():
+            """记住编辑框位置（下次打开恢复）"""
+            try:
+                settings = config.load_settings()
+                settings["custom_ops_edit_geometry"] = dlg.geometry()
+                config.save_settings(settings)
+            except Exception:
+                pass
+
+        def _on_cancel():
+            _save_dlg_geo()
             dlg.destroy()
 
         btns = ttk.Frame(form)
@@ -760,7 +772,34 @@ class CustomOpsWindow:
         ttk.Button(btns, text="保存", style='Accent.TButton',
                    command=on_save, width=8).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="取消", style='TButton',
-                   command=dlg.destroy, width=8).pack(side=tk.LEFT)
+                   command=_on_cancel, width=8).pack(side=tk.LEFT)
+
+        # 居中 / 位置记忆：有保存位置则恢复，否则居中显示在父窗口上
+        dlg.update_idletasks()
+        saved_geo = ""
+        try:
+            saved_geo = config.load_settings().get("custom_ops_edit_geometry", "")
+        except Exception:
+            pass
+        if saved_geo and "+" in saved_geo:
+            try:
+                dlg.geometry("+" + saved_geo.split("+", 1)[1])
+            except Exception:
+                dlg.geometry("")
+        else:
+            try:
+                pw = self.win.winfo_width()
+                ph = self.win.winfo_height()
+                px = self.win.winfo_rootx()
+                py = self.win.winfo_rooty()
+                dw = dlg.winfo_width()
+                dh = dlg.winfo_height()
+                x = max(0, px + (pw - dw) // 2)
+                y = max(0, py + (ph - dh) // 2)
+                dlg.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+        dlg.protocol("WM_DELETE_WINDOW", lambda: (_save_dlg_geo(), dlg.destroy()))
 
     def _pick_point(self, x_var, y_var, dlg):
         """屏幕取点：隐藏窗口 → 点击屏幕一点 → 记录坐标到 x_var/y_var"""
