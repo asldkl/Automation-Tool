@@ -46,6 +46,8 @@ class CustomOpsWindow:
         self.win.title("自定义操作")
         self.win.resizable(True, True)
         self.win.minsize(560, 420)
+        # 记住窗口大小和位置（首次居中显示）
+        utils.restore_window_geometry(self.win, "custom_ops_geometry", "720x520")
         # 注意：不加 transient —— 父窗口（设置窗口）已被导航栈隐藏，transient 到隐藏窗口可能不映射
         self.win.grab_set()   # 模态：阻止操作背后的实验功能/设置窗口
         self.win.lift()
@@ -1009,6 +1011,11 @@ class CustomOpsWindow:
         try:
             if self._test_thread and self._test_thread.is_alive():
                 self._test_stop.set()
+        except Exception:
+            pass
+        # 记住窗口大小和位置
+        try:
+            utils.save_window_geometry(self.win, "custom_ops_geometry")
         except Exception:
             pass
         # 恢复实验功能窗口（导航栈），并重新获取模态抓取

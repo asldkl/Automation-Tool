@@ -701,7 +701,7 @@ v1.3.6 (2026-08-08)
 - 自定义操作：
   - 新增 custom_ops.py / custom_ops_window.py 模块：用户配置自定义操作步骤序列
   - 支持九种步骤类型（op.type）：
-    - image 找图点击（默认）：匹配图片后点击（图片存 custom_ops/images/）
+    - image 找图点击（默认）：编辑框内可框选/导入图片，匹配后点击（图片存 custom_ops/images/）
     - coordinate 坐标点击：固定坐标点击（x/y，支持「屏幕取点」），抖动时圆内随机偏移
     - ocr OCR点击：识别指定文字后点击（utils.ocr_find_and_click）
     - keyboard 键盘输入：按键/组合键（pyautogui）或文本（driver_keyboard.send_string）
@@ -711,12 +711,15 @@ v1.3.6 (2026-08-08)
     - condition 条件跳转：找图/OCR 探测（_probe_image/_probe_ocr），满足则跳到指定步骤
     - jump 无条件跳转：配合 condition 实现循环/重试
   - 运行时：while 循环 + 可变索引支持跳转；死循环保护（10000 次上限）
-  - 入口在「设置 → 自动任务」页最下方「配置自定义操作」；工具栏「＋ 更多」菜单添加新类型
-  - 窗口布局：左下角运行测试/停止，右下角保存步骤；右键/双击步骤可修改属性、切换类型、排序、删除
-  - 「点击受随机偏移影响」全局开关（custom_ops_jitter，复用 click_jitter_max），坐标步骤也应用
-  - 每个账号主流程完成、游戏回到主界面后自动按顺序执行；某步找不到目标则中止该账号剩余操作，跳到下一个账号
-  - 数据保存到 %APPDATA%\DeltaAutoTool\custom_ops\（ops.json + images/）
-  - 配置项：enable_custom_ops / custom_ops_confidence / custom_ops_timeout / custom_ops_pause / custom_ops_jitter
+  - 频率限制：custom_ops.py 记录每个账号运行时间戳（runs.json），should_skip_by_frequency / record_account_run；
+    自动任务挂接处检查，每 freq_days 天最多运行 max_runs 次（0=不限），超限跳过自定义操作但主流程照常
+  - 入口在「设置 → 自动任务」页最下方「配置自定义操作」；工具栏「＋ 添加步骤」菜单添加新类型，编辑框类型下拉中文
+  - 设置窗口（底部「设置」按钮）：主流程后自动执行 / 随机偏移 / 频率限制
+  - 窗口布局：左下角运行测试/停止，右下角设置+保存步骤；右键/双击步骤可修改属性、切换类型、排序、删除
+  - 步骤默认命名「类型中文名+序号」（坐标点击1/2）；主窗口与编辑框均记忆大小位置
+  - 屏幕取点/框选：临时隐藏日志遮罩 + 释放模态 grab + 遮罩 grab 强制接收点击
+  - 数据保存到 %APPDATA%\DeltaAutoTool\custom_ops\（ops.json + images/ + runs.json）
+  - 配置项：enable_custom_ops / custom_ops_confidence / custom_ops_timeout / custom_ops_pause / custom_ops_jitter / custom_ops_max_runs / custom_ops_freq_days
 - 设置窗口整理：
   - 点击随机偏移从实验功能移到「全局设置」页（资产识别下方、实用工具上方）
   - 账号数据导入导出从实验功能移到「其他设置」页最下方；更新底部说明（移除已无 UI 的鼠标下移/滚动幅度条目）
