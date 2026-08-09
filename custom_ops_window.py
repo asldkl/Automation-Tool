@@ -784,7 +784,10 @@ class CustomOpsWindow:
         overlay.attributes('-topmost', True)
         overlay.configure(bg='black')
         overlay.config(cursor='crosshair')
-        hint = tk.Label(overlay, text="点击游戏里要点击的位置（任意位置点一下，Esc 取消）",
+        # 用 canvas 铺满全窗（与「屏幕框选」一致，保证点击一定到达）
+        canvas = tk.Canvas(overlay, highlightthickness=0, bg='black')
+        canvas.pack(fill=tk.BOTH, expand=True)
+        hint = tk.Label(canvas, text="点击游戏里要点击的位置（任意位置点一下，Esc 取消）",
                         font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
         hint.place(relx=0.5, rely=0.05, anchor='center')
 
@@ -796,8 +799,16 @@ class CustomOpsWindow:
         def on_esc(_):
             overlay.destroy()
 
-        overlay.bind('<Button-1>', on_click)
+        # canvas + 提示文字都绑定点击，确保任意位置都能取到点
+        canvas.bind('<ButtonPress-1>', on_click)
+        hint.bind('<ButtonPress-1>', on_click)
+        canvas.bind('<Escape>', on_esc)
         overlay.bind('<Escape>', on_esc)
+        overlay.focus_force()
+        try:
+            overlay.grab_set()   # 抓取所有输入，点击一定到达遮罩
+        except Exception:
+            pass
         self.win.wait_window(overlay)
         self.win.deiconify()
         self.win.grab_set()
