@@ -861,7 +861,7 @@ class CustomOpsWindow:
             except ValueError:
                 messagebox.showwarning("输入无效", "数字字段格式不正确", parent=dlg)
                 return
-            self._save_dlg_geo()
+            _save_dlg_geo()
             self._save_ops_now()
             self._refresh_list()
             dlg.destroy()
