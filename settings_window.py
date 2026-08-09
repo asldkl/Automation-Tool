@@ -251,7 +251,7 @@ class SettingsWindow:
         fs = ttk.Frame(frame_shot, style='SettingsInner.TFrame')
         fs.pack(fill=tk.X)
         ttk.Label(fs, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        self.screenshot_dir_var = tk.StringVar(value=app.settings.get("custom_ops_screenshot_dir", ""))
+        self.screenshot_dir_var = tk.StringVar(value=self.app.settings.get("custom_ops_screenshot_dir", ""))
         ttk.Entry(fs, textvariable=self.screenshot_dir_var, width=45).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(fs, text="浏览", command=self._browse_screenshot_dir, width=6).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Label(frame_shot, text="自定义操作「截图保存」步骤存到: 该目录/当天日期/账号名_时间.png",
