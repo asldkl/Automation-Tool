@@ -338,28 +338,12 @@ class CustomOpsWindow:
         ttk.Label(form, text="超限后该账号跳过自定义操作，主流程照常运行",
                   foreground='#7f8c8d').pack(anchor='w')
 
-        # 截图保存目录（截图保存步骤的全局保存位置）
-        dir_row = ttk.Frame(form)
-        dir_row.pack(fill=tk.X, pady=(10, 3))
-        ttk.Label(dir_row, text="截图保存目录").pack(side=tk.LEFT)
-        dir_var = tk.StringVar(value=self.app.settings.get("custom_ops_screenshot_dir", "") or "")
-        ttk.Entry(dir_row, textvariable=dir_var, width=26).pack(side=tk.LEFT, padx=(6, 4))
-        def _browse_dir():
-            import tkinter.filedialog as fd
-            p = fd.askdirectory(parent=dlg, title="选择截图保存目录")
-            if p:
-                dir_var.set(p)
-        ttk.Button(dir_row, text="浏览", command=_browse_dir, width=6).pack(side=tk.LEFT)
-        ttk.Label(form, text="截图保存步骤会存到: 该目录/当天日期/账号名_时间.png",
-                  foreground='#7f8c8d').pack(anchor='w')
-
         def on_save():
             try:
                 self.app.settings["enable_custom_ops"] = enable_var.get()
                 self.app.settings["custom_ops_jitter"] = jitter_var.get()
                 self.app.settings["custom_ops_max_runs"] = max(0, int(runs_var.get()))
                 self.app.settings["custom_ops_freq_days"] = max(1, int(days_var.get()))
-                self.app.settings["custom_ops_screenshot_dir"] = dir_var.get().strip()
                 config.save_settings(self.app.settings)
                 print(f"📌 自定义操作设置已保存：自动执行={'开' if enable_var.get() else '关'}，"
                       f"抖动={'开' if jitter_var.get() else '关'}，"
@@ -736,7 +720,8 @@ class CustomOpsWindow:
                           foreground='#7f8c8d').pack(anchor='w')
             elif t == "screenshot":
                 save_dir = self.app.settings.get("custom_ops_screenshot_dir", "") or "（未设置）"
-                ttk.Label(fields, text="保存位置（在「设置」中配置）:", foreground='#7f8c8d').pack(anchor='w', pady=2)
+                ttk.Label(fields, text="保存位置（在 设置→全局设置→截图保存目录 配置）:",
+                          foreground='#7f8c8d').pack(anchor='w', pady=2)
                 ttk.Label(fields, text=save_dir, wraplength=300, foreground='#2c3e50').pack(anchor='w', pady=(0, 2))
                 ttk.Label(fields, text="保存为: 日期文件夹/账号名_时间.png", foreground='#7f8c8d').pack(anchor='w')
             elif t == "condition":

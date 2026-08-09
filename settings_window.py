@@ -244,6 +244,19 @@ class SettingsWindow:
         log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
         log_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # ----- 截图保存目录（自定义操作·截图保存步骤） -----
+        frame_shot = ttk.LabelFrame(parent, text="  截图保存目录  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_shot.pack(fill=tk.X, pady=(0, 8))
+
+        fs = ttk.Frame(frame_shot, style='SettingsInner.TFrame')
+        fs.pack(fill=tk.X)
+        ttk.Label(fs, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self.screenshot_dir_var = tk.StringVar(value=app.settings.get("custom_ops_screenshot_dir", ""))
+        ttk.Entry(fs, textvariable=self.screenshot_dir_var, width=45).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(fs, text="浏览", command=self._browse_screenshot_dir, width=6).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Label(frame_shot, text="自定义操作「截图保存」步骤存到: 该目录/当天日期/账号名_时间.png",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
+
         # ----- 图像识别置信度 -----
         frame3 = ttk.LabelFrame(parent, text="  图像识别设置  ", style='SettingsCard.TLabelframe', padding=12)
         frame3.pack(fill=tk.X, pady=(0, 8))
@@ -703,6 +716,13 @@ class SettingsWindow:
         messagebox.showinfo("已保存",
                             f"点击随机偏移：{'开启' if self._jitter_enabled_var.get() else '关闭'}，最大偏移 {max_px}px",
                             parent=self.win)
+
+    def _browse_screenshot_dir(self):
+        """选择截图保存目录（自定义操作·截图保存步骤）"""
+        import tkinter.filedialog as fd
+        p = fd.askdirectory(parent=self.win, title="选择截图保存目录")
+        if p:
+            self.screenshot_dir_var.set(p)
 
     def _export_accounts(self):
         """导出账号数据到用户选择的文件"""
@@ -1608,6 +1628,9 @@ class SettingsWindow:
         fresh["wegame_path"] = self.wegame_var.get()
         fresh["confidence"] = round(self.confidence_var.get(), 2)
         fresh["log_save_path"] = self.log_var.get()
+        # 截图保存目录（自定义操作·截图保存步骤）
+        if hasattr(self, "screenshot_dir_var"):
+            fresh["custom_ops_screenshot_dir"] = self.screenshot_dir_var.get().strip()
         self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())
         fresh["run_on_startup"] = self.run_on_startup_var.get()
 
