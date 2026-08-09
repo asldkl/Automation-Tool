@@ -93,7 +93,7 @@ class CustomOpsWindow:
         self.tree.heading("name", text="名称")
         self.tree.heading("param", text="参数")
         self.tree.heading("pause", text="停顿(s)")
-        self.tree.column("seq", width=50, anchor=tk.CENTER, stretch=False)
+        self.tree.column("seq", width=60, anchor=tk.CENTER)
         self.tree.column("type", width=60, anchor=tk.CENTER)
         self.tree.column("name", width=80)
         self.tree.column("param", width=100)
