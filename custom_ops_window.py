@@ -83,18 +83,6 @@ class CustomOpsWindow:
         ttk.Button(toolbar, text="删除", style='TButton',
                    command=self._delete_step, width=5).pack(side=tk.LEFT)
 
-        # ----- 选项行：自动执行 + 随机偏移开关 -----
-        opt = ttk.Frame(self.win, padding=(8, 2))
-        opt.pack(fill=tk.X)
-        self._auto_var = tk.BooleanVar(value=bool(self.app.settings.get("enable_custom_ops", False)))
-        ttk.Checkbutton(opt, text="主流程完成后自动执行自定义操作",
-                        variable=self._auto_var,
-                        command=self._save_auto_setting).pack(side=tk.LEFT)
-        self._jitter_var = tk.BooleanVar(value=bool(self.app.settings.get("custom_ops_jitter", False)))
-        ttk.Checkbutton(opt, text="点击受随机偏移影响",
-                        variable=self._jitter_var,
-                        command=self._save_jitter_setting).pack(side=tk.LEFT, padx=(12, 0))
-
         # ----- 步骤列表 -----
         list_frame = ttk.Frame(self.win, padding=(8, 2))
         list_frame.pack(fill=tk.BOTH, expand=True)
@@ -105,7 +93,7 @@ class CustomOpsWindow:
         self.tree.heading("name", text="名称")
         self.tree.heading("param", text="参数")
         self.tree.heading("pause", text="停顿(s)")
-        self.tree.column("seq", width=46, anchor=tk.CENTER)
+        self.tree.column("seq", width=32, anchor=tk.CENTER, stretch=False)
         self.tree.column("type", width=72, anchor=tk.CENTER)
         self.tree.column("name", width=150)
         self.tree.column("param", width=190)
@@ -135,6 +123,8 @@ class CustomOpsWindow:
                    command=self._stop_test, width=7).pack(side=tk.LEFT)
         ttk.Button(bottom, text="保存步骤", style='Accent.TButton',
                    command=self._save_ops_now, width=10).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="设置", style='TButton',
+                   command=self._open_settings, width=8).pack(side=tk.RIGHT, padx=(0, 4))
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -304,15 +294,70 @@ class CustomOpsWindow:
         if custom_ops.save_ops(self.ops):
             print("💾 自定义操作步骤已保存")
 
-    def _save_auto_setting(self):
-        self.app.settings["enable_custom_ops"] = self._auto_var.get()
-        config.save_settings(self.app.settings)
-        print(f"📌 自定义操作自动执行：{'开启' if self._auto_var.get() else '关闭'}")
+    def _open_settings(self):
+        """打开自定义操作设置窗口（主流程后执行 / 随机偏移 / 频率限制）"""
+        dlg = tk.Toplevel(self.win)
+        dlg.title("自定义操作设置")
+        dlg.resizable(False, False)
+        dlg.transient(self.win)
+        dlg.grab_set()
+        form = ttk.Frame(dlg, padding=14)
+        form.pack(fill=tk.BOTH, expand=True)
 
-    def _save_jitter_setting(self):
-        self.app.settings["custom_ops_jitter"] = self._jitter_var.get()
-        config.save_settings(self.app.settings)
-        print(f"📌 自定义操作点击随机偏移：{'开启' if self._jitter_var.get() else '关闭'}")
+        enable_var = tk.BooleanVar(value=bool(self.app.settings.get("enable_custom_ops", False)))
+        ttk.Checkbutton(form, text="主流程完成后自动执行自定义操作",
+                        variable=enable_var).pack(anchor='w', pady=3)
+        jitter_var = tk.BooleanVar(value=bool(self.app.settings.get("custom_ops_jitter", False)))
+        ttk.Checkbutton(form, text="点击受随机偏移影响",
+                        variable=jitter_var).pack(anchor='w', pady=3)
+
+        # 频率限制：每个账号 Y 天内最多运行 X 次自定义操作
+        freq = ttk.Frame(form)
+        freq.pack(fill=tk.X, pady=(10, 3))
+        runs_var = tk.StringVar(value=str(self.app.settings.get("custom_ops_max_runs", 0)))
+        days_var = tk.StringVar(value=str(self.app.settings.get("custom_ops_freq_days", 7)))
+        ttk.Label(freq, text="每个账号").pack(side=tk.LEFT)
+        ttk.Spinbox(freq, from_=0, to=99, textvariable=runs_var, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(freq, text="天内最多运行").pack(side=tk.LEFT)
+        ttk.Spinbox(freq, from_=1, to=365, textvariable=days_var, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(freq, text="次自定义操作（0=不限）").pack(side=tk.LEFT)
+        ttk.Label(form, text="超限后该账号跳过自定义操作，主流程照常运行",
+                  foreground='#7f8c8d').pack(anchor='w')
+
+        def on_save():
+            try:
+                self.app.settings["enable_custom_ops"] = enable_var.get()
+                self.app.settings["custom_ops_jitter"] = jitter_var.get()
+                self.app.settings["custom_ops_max_runs"] = max(0, int(runs_var.get()))
+                self.app.settings["custom_ops_freq_days"] = max(1, int(days_var.get()))
+                config.save_settings(self.app.settings)
+                print(f"📌 自定义操作设置已保存：自动执行={'开' if enable_var.get() else '关'}，"
+                      f"抖动={'开' if jitter_var.get() else '关'}，"
+                      f"频率={runs_var.get()}次/{days_var.get()}天")
+            except ValueError:
+                messagebox.showwarning("输入无效", "次数/天数必须为数字", parent=dlg)
+                return
+            dlg.destroy()
+
+        btns = ttk.Frame(form)
+        btns.pack(pady=(12, 0))
+        ttk.Button(btns, text="保存", style='Accent.TButton',
+                   command=on_save, width=8).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="取消", style='TButton',
+                   command=dlg.destroy, width=8).pack(side=tk.LEFT)
+
+        # 居中显示
+        dlg.update_idletasks()
+        try:
+            pw = self.win.winfo_width()
+            ph = self.win.winfo_height()
+            px = self.win.winfo_rootx()
+            py = self.win.winfo_rooty()
+            x = max(0, px + (pw - dlg.winfo_width()) // 2)
+            y = max(0, py + (ph - dlg.winfo_height()) // 2)
+            dlg.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
 
     # ==================== 添加步骤 ====================
     def _capture_from_screen(self):
@@ -324,6 +369,16 @@ class CustomOpsWindow:
         try:
             import gui_app
             gui_app.hide_log_overlay()   # 临时隐藏日志遮罩，避免挡住框选
+        except Exception:
+            pass
+        # 先释放所有模态抓取，避免遮罩收不到点击
+        try:
+            if dlg and dlg.winfo_exists():
+                dlg.grab_release()
+        except Exception:
+            pass
+        try:
+            self.win.grab_release()
         except Exception:
             pass
         self.win.withdraw()
@@ -378,7 +433,14 @@ class CustomOpsWindow:
         canvas.bind("<ButtonPress-1>", on_press)
         canvas.bind("<B1-Motion>", on_drag)
         canvas.bind("<ButtonRelease-1>", on_release)
+        hint.bind("<ButtonPress-1>", on_press)   # 提示文字上也能开始框选
+        canvas.bind("<Escape>", on_escape)
         overlay.bind("<Escape>", on_escape)
+        overlay.focus_force()
+        try:
+            overlay.grab_set()   # 强制抓取输入，点击一定到达遮罩
+        except Exception:
+            pass
 
         self.win.wait_window(overlay)
         self.win.deiconify()
@@ -431,8 +493,13 @@ class CustomOpsWindow:
 
     def _append_step(self, step):
         """追加一个步骤（支持不同 type），并立即打开编辑窗口"""
-        step.setdefault("name", f"步骤{len(self.ops) + 1}")
         step.setdefault("pause_after", float(self.app.settings.get("custom_ops_pause", 0.5)))
+        # 默认名称 = 类型中文名 + 同类型序号（如 坐标点击1、坐标点击2）
+        if not step.get("name"):
+            t = step.get("type", "image")
+            type_name = STEP_TYPES.get(t, t)
+            same_type_count = sum(1 for o in self.ops if o.get("type", "image") == t)
+            step["name"] = f"{type_name}{same_type_count + 1}"
         self.ops.append(step)
         self._save_ops_now()
         self._refresh_list()
@@ -523,6 +590,7 @@ class CustomOpsWindow:
         jump_var = tk.StringVar(value=str(op.get("jump_to", 1)))
         mi_images = list(op.get("images", []) or [])
         cond_img = op.get("image", "")
+        img_name = op.get("image", "")   # 找图步骤的当前图片
 
         def _row(lbl, var, width=16):
             r = ttk.Frame(form)
@@ -681,23 +749,66 @@ class CustomOpsWindow:
                 ttk.Label(jr, text="跳转→步骤", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
                 ttk.Entry(jr, textvariable=jump_var, width=6).pack(side=tk.LEFT)
             else:  # image
+                img_area = ttk.Frame(fields)
+                img_area.pack(fill=tk.X, pady=3)
+                preview_lbl = ttk.Label(fields)
+                def _refresh_img():
+                    for w in img_area.winfo_children():
+                        w.destroy()
+                    ttk.Label(img_area, text="图片", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                    ttk.Label(img_area, text=img_name or "（未设置）", width=14,
+                              foreground='#7f8c8d').pack(side=tk.LEFT)
+                    def _cap():
+                        def _on_region(region):
+                            nonlocal img_name
+                            x1, y1, x2, y2 = region
+                            try:
+                                from PIL import ImageGrab
+                                im = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+                            except Exception as e:
+                                messagebox.showerror("截图失败", str(e), parent=dlg)
+                                return
+                            fn = custom_ops.next_image_name()
+                            if custom_ops.save_captured_image(im, fn):
+                                img_name = fn
+                                _refresh_img()
+                        self._capture_region_and(_on_region, dlg)
+                    def _file():
+                        nonlocal img_name
+                        path = filedialog.askopenfilename(
+                            parent=dlg, title="选择图片",
+                            filetypes=[("图片", "*.png *.jpg *.jpeg *.bmp"), ("所有", "*.*")])
+                        if path:
+                            fn = custom_ops.next_image_name()
+                            try:
+                                shutil.copy2(path, custom_ops.image_path(fn))
+                            except Exception as e:
+                                messagebox.showerror("导入失败", str(e), parent=dlg)
+                                return
+                            img_name = fn
+                            _refresh_img()
+                    ttk.Button(img_area, text="屏幕框选", command=_cap).pack(side=tk.LEFT, padx=(6, 4))
+                    ttk.Button(img_area, text="导入图片", command=_file).pack(side=tk.LEFT)
+                    # 预览
+                    try:
+                        preview_lbl.config(image='', text='')
+                        img_path = custom_ops.image_path(img_name)
+                        if os.path.exists(img_path):
+                            from PIL import Image, ImageTk
+                            im = Image.open(img_path)
+                            im.thumbnail((200, 120))
+                            photo = ImageTk.PhotoImage(im)
+                            preview_lbl.config(image=photo, text='')
+                            preview_lbl.image = photo
+                    except Exception:
+                        pass
+                _refresh_img()
+                preview_lbl.pack(pady=4)
                 cr = ttk.Frame(fields); cr.pack(fill=tk.X, pady=3)
                 ttk.Label(cr, text="置信度", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
                 ttk.Entry(cr, textvariable=conf_var, width=6).pack(side=tk.LEFT)
                 ttk.Label(cr, text="超时(秒)", width=8).pack(side=tk.LEFT, padx=(8, 0))
                 ttk.Entry(cr, textvariable=timeout_var, width=6).pack(side=tk.LEFT)
-                img_path = custom_ops.image_path(op.get("image", ""))
-                if os.path.exists(img_path):
-                    try:
-                        from PIL import Image, ImageTk
-                        im = Image.open(img_path)
-                        im.thumbnail((200, 120))
-                        photo = ImageTk.PhotoImage(im)
-                        lbl = ttk.Label(fields, image=photo)
-                        lbl.image = photo
-                        lbl.pack(pady=4)
-                    except Exception:
-                        pass
 
         type_combo.bind("<<ComboboxSelected>>", lambda e: _rebuild_fields())
         _rebuild_fields()
@@ -744,6 +855,7 @@ class CustomOpsWindow:
                 elif t == "jump":
                     op["jump_to"] = max(1, int(jump_var.get()))
                 else:  # image
+                    op["image"] = img_name
                     op["confidence"] = max(0.1, min(float(conf_var.get()), 0.99))
                     op["timeout"] = max(1, float(timeout_var.get()))
             except ValueError:
@@ -806,6 +918,16 @@ class CustomOpsWindow:
         try:
             import gui_app
             gui_app.hide_log_overlay()   # 临时隐藏日志遮罩，避免挡住点击
+        except Exception:
+            pass
+        # 先释放所有模态抓取，避免遮罩收不到点击
+        try:
+            if dlg and dlg.winfo_exists():
+                dlg.grab_release()
+        except Exception:
+            pass
+        try:
+            self.win.grab_release()
         except Exception:
             pass
         self.win.withdraw()

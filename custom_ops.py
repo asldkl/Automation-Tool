@@ -25,6 +25,7 @@ import utils
 CUSTOM_OPS_DIR = os.path.join(config.APP_DATA_DIR, "custom_ops")
 CUSTOM_OPS_IMAGES = os.path.join(CUSTOM_OPS_DIR, "images")
 CUSTOM_OPS_JSON = os.path.join(CUSTOM_OPS_DIR, "ops.json")
+RUNS_JSON = os.path.join(CUSTOM_OPS_DIR, "runs.json")   # 每个账号自定义操作运行记录
 
 _lock = threading.Lock()
 
@@ -87,6 +88,54 @@ def next_image_name():
     while f"step_{n}.png" in existing:
         n += 1
     return f"step_{n}.png"
+
+
+def _load_runs():
+    """加载每个账号的自定义操作运行记录 {account: [时间戳, ...]}"""
+    if not os.path.exists(RUNS_JSON):
+        return {}
+    try:
+        with open(RUNS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_runs(data):
+    """保存运行记录（原子写入）"""
+    try:
+        ensure_dirs()
+        tmp = RUNS_JSON + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, RUNS_JSON)
+    except Exception:
+        pass
+
+
+def should_skip_by_frequency(account_name, max_runs, days):
+    """检查账号是否达到自定义操作频率上限（每 days 天最多 max_runs 次）。
+    max_runs<=0 表示不限。返回 True=应跳过"""
+    if max_runs <= 0 or days <= 0:
+        return False
+    data = _load_runs()
+    runs = data.get(account_name, []) or []
+    now = time.time()
+    cutoff = now - days * 86400
+    recent = [t for t in runs if t >= cutoff]
+    return len(recent) >= max_runs
+
+
+def record_account_run(account_name):
+    """记录一次自定义操作运行（当前时间戳）"""
+    data = _load_runs()
+    runs = data.get(account_name, []) or []
+    runs.append(time.time())
+    # 只保留最近 90 天记录，避免无限增长
+    cutoff = time.time() - 90 * 86400
+    data[account_name] = [t for t in runs if t >= cutoff]
+    _save_runs(data)
 
 
 def _apply_jitter(x, y, max_px):

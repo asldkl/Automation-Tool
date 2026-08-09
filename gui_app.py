@@ -192,6 +192,9 @@ def hide_log_overlay():
     if _qt_overlay is not None:
         try:
             _qt_overlay.hide()
+            # 立即处理 Qt 事件，确保隐藏立刻生效（否则遮罩还在、挡住点击）
+            if _qt_app is not None:
+                _qt_app.processEvents()
         except Exception:
             pass
 
@@ -203,6 +206,8 @@ def show_log_overlay():
     if _qt_overlay is not None:
         try:
             _qt_overlay.show()
+            if _qt_app is not None:
+                _qt_app.processEvents()
         except Exception:
             pass
 

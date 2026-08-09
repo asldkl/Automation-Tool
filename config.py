@@ -215,6 +215,8 @@ DEFAULT_SETTINGS = {
     "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）
     "custom_ops_pause": 0.5,                     # 自定义操作默认点击后停顿（秒）
     "custom_ops_jitter": False,                  # 自定义操作点击是否受随机偏移影响（复用 click_jitter_max）
+    "custom_ops_max_runs": 0,                    # 每个账号自定义操作频率限制：0=不限（每 freq_days 天最多运行 max_runs 次）
+    "custom_ops_freq_days": 7,                   # 频率限制的时间窗口（天）
 }
 
 _settings_cache = None
