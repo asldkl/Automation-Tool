@@ -370,23 +370,20 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
             print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置按键内容，中止该工作流")
             return False
         print(f"  [{idx}/{total}] 键盘输入「{keys}」...")
+        # Interception 驱动仅用于 WeGame 登录时输入账号密码，游戏内一律用 pyautogui（SendInput）
+        import pyautogui
         if mode == "text":
-            # text 模式：ASCII 用驱动逐字输入；中文等非 ASCII 用剪贴板 + Ctrl+V
+            # text 模式：ASCII 用 pyautogui 逐字输入；中文等非 ASCII 用剪贴板 + Ctrl+V
             if _is_ascii_text(keys):
-                import driver_keyboard
-                driver_keyboard.send_string(keys)
+                pyautogui.write(keys, interval=0.02)
             else:
                 _paste_clipboard_text(keys)
         else:
             keys_lower = keys.strip().lower()
             if "+" in keys_lower:
-                import pyautogui
                 pyautogui.hotkey(*[p.strip() for p in keys_lower.split("+") if p.strip()])
             else:
-                # key 模式：单键优先走驱动级（esc/enter/f5 等游戏内更可靠），驱动不可用时降级 pyautogui
-                import driver_keyboard
-                if not driver_keyboard.press_key(keys_lower):
-                    print(f"    ⚠️ 按键「{keys}」发送失败")
+                pyautogui.press(keys_lower)
         print(f"    ✅ 已输入「{keys}」")
     elif op_type == "multi_image":
         images = op.get("images", []) or []

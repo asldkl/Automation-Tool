@@ -704,7 +704,7 @@ v1.3.6 (2026-08-08)
     - image 找图点击（默认）：编辑框内可框选/导入图片，匹配后点击（图片存 custom_ops/images/）
     - coordinate 坐标点击：固定坐标点击（x/y，支持「屏幕取点」），抖动时圆内随机偏移
     - ocr OCR点击：识别指定文字后点击（utils.ocr_find_and_click）
-    - keyboard 键盘输入：按键/组合键（esc/Enter/ctrl+a 等，单键优先 Interception 驱动级发送）或文本（ASCII 走驱动扫描码，中文等非 ASCII 走剪贴板 + Ctrl+V）
+    - keyboard 键盘输入：按键/组合键（esc/Enter/ctrl+a 等）或文本（ASCII 用 pyautogui 输入，中文等非 ASCII 用剪贴板 + Ctrl+V；游戏内一律用 SendInput，Interception 驱动仅用于登录输入账号密码）
     - multi_image 多图点击：按顺序试多张图，点第一张找到的
     - drag 鼠标拖拽：起点→终点（smooth_move_to + mouseDown/Up）
     - scroll 鼠标滚轮：pyautogui.scroll（正上负下）
@@ -752,8 +752,8 @@ v1.3.6 (2026-08-08)
   - 冷却损坏保护：主文件存在但解析失败且无可用备份时标记 _load_corrupt，_save_data 拒绝用空/残缺数据覆盖磁盘（防止崩溃后冷却与暂停标记被一起抹掉）
   - 恢复兜底扩展：_restore_from_backup 候选顺序 .bak → 最近的时间戳备份，主文件与 .bak 同时损坏时也能从历史快照找回（含暂停标记）
 - 自定义操作键盘步骤修复：
-  - key 模式单键支持 esc/Enter/tab/f5/方向键等特殊键：新增 interception_keyboard.press_key（扫描码 + E0 扩展键），driver_keyboard.press_key（Interception 优先，pyautogui 降级），解决游戏内 ESC 等键收不到的问题
-  - text 模式支持中文等非 ASCII 文本：ASCII 走驱动扫描码逐字输入，中文走剪贴板 + Ctrl+V 粘贴（win32clipboard）
+  - text 模式支持中文等非 ASCII 文本：中文走剪贴板 + Ctrl+V 粘贴（win32clipboard），ASCII 用 pyautogui 输入
+  - 约束：Interception 驱动仅用于 WeGame 登录时输入账号密码；游戏内（自定义操作键盘步骤）一律使用 pyautogui（SendInput），不再调用 Interception 驱动，避免驱动在游戏场景被误用
 
 ----------------------------------------
 v1.3.5 (2026-08-01)
