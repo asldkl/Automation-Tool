@@ -53,3 +53,22 @@ def send_string(text, interval=0.02):
         ib.send_text(ch)
         time.sleep(interval)
     return True
+
+
+def press_key(name, interval=0.05):
+    """按一个按键（如 esc/enter/tab/f5 等），优先 Interception 驱动级发送，不可用时降级 pyautogui"""
+    try:
+        import interception_keyboard
+        if interception_keyboard.is_available():
+            if interception_keyboard.press_key(name, interval=interval):
+                return True
+    except Exception:
+        pass
+
+    # 降级：pyautogui 发送
+    try:
+        import pyautogui
+        pyautogui.press(name)
+        return True
+    except Exception:
+        return False

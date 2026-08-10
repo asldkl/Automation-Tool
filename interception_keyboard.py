@@ -327,3 +327,81 @@ def send_string(text, interval=0.02):
 def send_key(char, interval=0.02):
     """发送单个按键事件"""
     return _send_chars(char, interval)
+
+
+# 特殊键名 → (扫描码, 是否 E0 扩展键)
+# 扫描码为 PC/AT Set 1 make code；E0 扩展键（方向键等）发送时 code = 0xE000 | scan
+_KEY_NAME_TO_SCANCODE = {
+    "esc": (0x01, False), "escape": (0x01, False),
+    "enter": (0x1C, False), "return": (0x1C, False),
+    "tab": (0x0F, False),
+    "backspace": (0x0E, False),
+    "space": (0x39, False),
+    "capslock": (0x3A, False), "caps_lock": (0x3A, False),
+    "numlock": (0x45, False), "scrolllock": (0x46, False), "scroll_lock": (0x46, False),
+    "f1": (0x3B, False), "f2": (0x3C, False), "f3": (0x3D, False),
+    "f4": (0x3E, False), "f5": (0x3F, False), "f6": (0x40, False),
+    "f7": (0x41, False), "f8": (0x42, False), "f9": (0x43, False),
+    "f10": (0x44, False), "f11": (0x57, False), "f12": (0x58, False),
+    # E0 扩展键
+    "up": (0x48, True), "down": (0x50, True), "left": (0x4B, True), "right": (0x4D, True),
+    "home": (0x47, True), "end": (0x4F, True),
+    "pageup": (0x49, True), "pgup": (0x49, True),
+    "pagedown": (0x51, True), "pgdn": (0x51, True),
+    "insert": (0x52, True), "delete": (0x53, True), "del": (0x53, True),
+    "printscreen": (0x37, True), "prtsc": (0x37, True),
+}
+
+
+def press_key(name, interval=0.05):
+    """按下并抬起一个按键（如 esc/enter/tab/f5 等），返回 True=成功 False=失败
+    支持特殊键名、E0 扩展键（方向键等）以及单个字符按键"""
+    key = name.strip().lower()
+    scan_code = None
+    need_shift = False
+    extended = False
+    entry = _KEY_NAME_TO_SCANCODE.get(key)
+    if entry is not None:
+        scan_code, extended = entry
+    elif len(key) == 1 and key in _CHAR_TO_SCANCODE:
+        scan_code, need_shift = _CHAR_TO_SCANCODE[key]
+    if scan_code is None:
+        return False
+
+    if not _load_dll():
+        return False
+    ctx = None
+    try:
+        ctx = _create_context()
+        if not ctx:
+            return False
+        _set_filter(ctx, _predicate_callback, 0)
+        keyboard_device = _find_keyboard_device(ctx)
+
+        # 需要 Shift 的字符（大写字母/符号）
+        if need_shift:
+            shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
+            if _send(ctx, keyboard_device, shift_down, 1) <= 0:
+                return False
+
+        code = ((0xE0 << 8) | scan_code) if extended else scan_code
+        key_down = InterceptionKeyStroke(code, KEY_DOWN, 0)
+        if _send(ctx, keyboard_device, key_down, 1) <= 0:
+            return False
+        key_up = InterceptionKeyStroke(code, KEY_UP, 0)
+        if _send(ctx, keyboard_device, key_up, 1) <= 0:
+            return False
+
+        if need_shift:
+            shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
+            if _send(ctx, keyboard_device, shift_up, 1) <= 0:
+                return False
+
+        time.sleep(interval)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Interception press_key 失败: {e}")
+        return False
+    finally:
+        if ctx:
+            _destroy_context(ctx)

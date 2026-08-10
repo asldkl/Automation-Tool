@@ -142,6 +142,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 ├── driver_keyboard.py          # 驱动级键盘输入模块（v1.3.1 重写）
 │   - 统一使用 Interception 驱动
 │   - send_string()：通过 Interception 扫描码方式输入字符串
+│   - press_key(name)：按一个按键（esc/Enter/f5 等），Interception 驱动级优先，不可用时降级 pyautogui（v1.3.6）
 │   - is_available()：检查驱动是否可用
 │   - get_backend()：获取当前使用的后端名称
 │   - 所有操作委托给 interception_keyboard 模块
@@ -151,6 +152,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - is_available()：检查 DLL 加载 + context 创建（不发送测试按键）
 │   - send_string(text, interval)：逐字符发送按键（扫描码方式）
 │   - send_key(char, interval)：发送单个按键事件
+│   - press_key(name, interval)：按下+抬起特殊键（esc/enter/tab/f1-f12/方向键等，支持 E0 扩展键，v1.3.6 新增）
 │   - _find_keyboard_device()：自动扫描 device 2-10，跳过只读中转设备 1
 │   - _device_has_hardware_id()：用 interception_get_hardware_id 查找真实硬件
 │   - set_filter=0：不拦截事件，只用于发送
@@ -168,6 +170,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 │     - image 找图 / coordinate 坐标 / ocr 文字 / keyboard 键盘 / multi_image 多图
 │     - drag 拖拽 / scroll 滚轮 / screenshot 截图保存 / condition 条件跳转 / jump 无条件跳转
 │     - _execute_step() 单步分发；_run_batch_steps() 份内循环；死循环保护（10000 次上限）；某步失败中止该份
+│     - keyboard 步骤：key 模式单键走 driver_keyboard.press_key（esc 等特殊键驱动级）；text 模式 ASCII 走 send_string、中文走剪贴板+Ctrl+V（_paste_clipboard_text，v1.3.6）
 │   - should_skip_by_frequency / record_account_run：按份频率限制（run_key=账号::份名），runs.json 存时间戳
 │   - run_custom_ops_for_test()：窗口内「运行测试」试运行当前份；run_single_step() 右键「运行本步骤」
 │   - 点击是否受随机偏移影响由 custom_ops_jitter 控制（复用 click_jitter_max）

@@ -18,7 +18,7 @@
     image      找图点击（默认）
     coordinate 坐标点击
     ocr        OCR文字识别点击
-    keyboard   键盘输入（按键/组合键/文本）
+    keyboard   键盘输入（按键/组合键/文本；特殊键如 esc 走驱动级，中文等非 ASCII 走剪贴板粘贴）
     multi_image 多图匹配点击（按顺序试多张图）
     drag       鼠标拖拽（起点→终点）
     scroll     鼠标滚轮
@@ -306,6 +306,29 @@ def _run_batch_steps(app, account_name, steps, stop_event):
     return True
 
 
+def _is_ascii_text(text):
+    """判断文本是否全为 ASCII 字符（ASCII 可用驱动扫描码逐字输入，非 ASCII 需剪贴板）"""
+    return all(ord(c) < 128 for c in text)
+
+
+def _paste_clipboard_text(text):
+    """通过剪贴板 + Ctrl+V 输入文本（支持中文等非 ASCII 字符）"""
+    import pyautogui
+    try:
+        import win32clipboard
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text)
+        win32clipboard.CloseClipboard()
+    except Exception as e:
+        print(f"    ⚠️ 剪贴板设置失败：{e}")
+        return False
+    # 短暂等待剪贴板就绪
+    time.sleep(0.1)
+    pyautogui.hotkey('ctrl', 'v')
+    return True
+
+
 def _execute_step(app, op, idx, total, stop_event, account_name):
     """执行单个步骤（按 op.type 分发）。返回 False 表示该步失败应中止当前工作流"""
     op_type = op.get("type", "image")
@@ -348,15 +371,22 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
             return False
         print(f"  [{idx}/{total}] 键盘输入「{keys}」...")
         if mode == "text":
-            import driver_keyboard
-            driver_keyboard.send_string(keys)
+            # text 模式：ASCII 用驱动逐字输入；中文等非 ASCII 用剪贴板 + Ctrl+V
+            if _is_ascii_text(keys):
+                import driver_keyboard
+                driver_keyboard.send_string(keys)
+            else:
+                _paste_clipboard_text(keys)
         else:
-            import pyautogui
             keys_lower = keys.strip().lower()
             if "+" in keys_lower:
+                import pyautogui
                 pyautogui.hotkey(*[p.strip() for p in keys_lower.split("+") if p.strip()])
             else:
-                pyautogui.press(keys_lower)
+                # key 模式：单键优先走驱动级（esc/enter/f5 等游戏内更可靠），驱动不可用时降级 pyautogui
+                import driver_keyboard
+                if not driver_keyboard.press_key(keys_lower):
+                    print(f"    ⚠️ 按键「{keys}」发送失败")
         print(f"    ✅ 已输入「{keys}」")
     elif op_type == "multi_image":
         images = op.get("images", []) or []

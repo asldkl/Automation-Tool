@@ -704,7 +704,7 @@ v1.3.6 (2026-08-08)
     - image 找图点击（默认）：编辑框内可框选/导入图片，匹配后点击（图片存 custom_ops/images/）
     - coordinate 坐标点击：固定坐标点击（x/y，支持「屏幕取点」），抖动时圆内随机偏移
     - ocr OCR点击：识别指定文字后点击（utils.ocr_find_and_click）
-    - keyboard 键盘输入：按键/组合键（pyautogui）或文本（driver_keyboard.send_string）
+    - keyboard 键盘输入：按键/组合键（esc/Enter/ctrl+a 等，单键优先 Interception 驱动级发送）或文本（ASCII 走驱动扫描码，中文等非 ASCII 走剪贴板 + Ctrl+V）
     - multi_image 多图点击：按顺序试多张图，点第一张找到的
     - drag 鼠标拖拽：起点→终点（smooth_move_to + mouseDown/Up）
     - scroll 鼠标滚轮：pyautogui.scroll（正上负下）
@@ -751,6 +751,9 @@ v1.3.6 (2026-08-08)
     限频 30 秒 + 轮转保留最近 30 份，逻辑性数据清空/误操作时可通过历史备份找回
   - 冷却损坏保护：主文件存在但解析失败且无可用备份时标记 _load_corrupt，_save_data 拒绝用空/残缺数据覆盖磁盘（防止崩溃后冷却与暂停标记被一起抹掉）
   - 恢复兜底扩展：_restore_from_backup 候选顺序 .bak → 最近的时间戳备份，主文件与 .bak 同时损坏时也能从历史快照找回（含暂停标记）
+- 自定义操作键盘步骤修复：
+  - key 模式单键支持 esc/Enter/tab/f5/方向键等特殊键：新增 interception_keyboard.press_key（扫描码 + E0 扩展键），driver_keyboard.press_key（Interception 优先，pyautogui 降级），解决游戏内 ESC 等键收不到的问题
+  - text 模式支持中文等非 ASCII 文本：ASCII 走驱动扫描码逐字输入，中文走剪贴板 + Ctrl+V 粘贴（win32clipboard）
 
 ----------------------------------------
 v1.3.5 (2026-08-01)
