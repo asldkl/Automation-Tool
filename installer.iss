@@ -52,6 +52,8 @@ Name: "{userstartup}\三角洲行动自动化工具"; Filename: "{app}\三角洲
 Filename: "{app}\三角洲自动工具.exe"; Description: "启动程序"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+Filename: "sc.exe"; Parameters: "stop keyboard"; Flags: runhidden
+Filename: "sc.exe"; Parameters: "delete keyboard"; Flags: runhidden
 Filename: "sc.exe"; Parameters: "stop interception"; Flags: runhidden
 Filename: "sc.exe"; Parameters: "delete interception"; Flags: runhidden
 
@@ -110,6 +112,9 @@ begin
   begin
     if IsInterceptionInstalled then
     begin
+      Exec('sc.exe', 'stop keyboard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'delete keyboard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      DeleteFile(ExpandConstant('{sys}\drivers\keyboard.sys'));
       Exec('sc.exe', 'stop interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Exec('sc.exe', 'delete interception', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       DeleteFile(ExpandConstant('{sys}\drivers\interception.sys'));
