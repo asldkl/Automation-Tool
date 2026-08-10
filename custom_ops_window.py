@@ -1,9 +1,9 @@
 """
 自定义操作向导窗口
 从「设置 → 自动任务」页「配置自定义操作」打开：按「工作流」组织步骤序列，主流程完成后自动执行。
-- 顶部工具栏：＋添加步骤（菜单）、运行测试、停止、保存步骤（同一行）
-- 工作流选择行：切换/新增/删除工作流、工作流设置（每工作流独立频率限制）
+- 顶部行：＋添加步骤（左侧）、工作流下拉、新增/删除工作流、工作流设置（每工作流独立频率限制）
 - 步骤列表（Treeview）：序号 / 类型 / 名称 / 参数 / 停顿
+- 底部：左下角运行测试/停止，右下角保存步骤
 - 双击或右键步骤：修改属性、运行本步骤、上移/下移/删除
 """
 import os
@@ -69,10 +69,10 @@ class CustomOpsWindow:
 
     # ==================== UI 构建 ====================
     def _build_ui(self):
-        # ----- 顶部工具栏 -----
-        toolbar = ttk.Frame(self.win, padding=(8, 8, 8, 4))
-        toolbar.pack(fill=tk.X)
-        add_btn = ttk.Menubutton(toolbar, text="＋ 添加步骤", style='Accent.TButton')
+        # ----- 工作流选择行（＋添加步骤 在左侧） -----
+        batch_row = ttk.Frame(self.win, padding=(8, 8, 8, 2))
+        batch_row.pack(fill=tk.X)
+        add_btn = ttk.Menubutton(batch_row, text="＋ 添加步骤", style='Accent.TButton')
         add_menu = tk.Menu(add_btn, tearoff=0)
         add_menu.add_command(label="找图点击（框选截图）", command=self._capture_from_screen)
         add_menu.add_command(label="找图点击（导入图片）", command=self._add_step_from_file)
@@ -88,19 +88,8 @@ class CustomOpsWindow:
         add_menu.add_command(label="条件跳转", command=self._add_condition_step)
         add_menu.add_command(label="跳转", command=self._add_jump_step)
         add_btn.config(menu=add_menu)
-        add_btn.pack(side=tk.LEFT, padx=(0, 8))
+        add_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # 运行/停止/保存 与「＋添加步骤」同一行（上移/下移/删除在右键菜单里）
-        ttk.Button(toolbar, text="▶ 运行测试", style='TButton',
-                   command=self._run_test, width=9).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(toolbar, text="⏹ 停止", style='TButton',
-                   command=self._stop_test, width=7).pack(side=tk.LEFT)
-        ttk.Button(toolbar, text="保存步骤", style='Accent.TButton',
-                   command=self._save_ops_now, width=10).pack(side=tk.RIGHT)
-
-        # ----- 工作流选择行 -----
-        batch_row = ttk.Frame(self.win, padding=(8, 2))
-        batch_row.pack(fill=tk.X)
         ttk.Label(batch_row, text="工作流：").pack(side=tk.LEFT)
         self.batch_combo = ttk.Combobox(batch_row, state='readonly', width=12)
         self.batch_combo.pack(side=tk.LEFT, padx=(0, 8))
@@ -152,6 +141,16 @@ class CustomOpsWindow:
         self.win.bind('<Configure>', _tip_wrap, add='+')
         self.win.update_idletasks()
         _tip_wrap()
+
+        # ----- 底部操作栏：运行测试/停止（左下角）+ 保存步骤（右下角） -----
+        bottom = ttk.Frame(self.win, padding=(8, 2, 8, 8))
+        bottom.pack(fill=tk.X)
+        ttk.Button(bottom, text="▶ 运行测试", style='TButton',
+                   command=self._run_test, width=9).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(bottom, text="⏹ 停止", style='TButton',
+                   command=self._stop_test, width=7).pack(side=tk.LEFT)
+        ttk.Button(bottom, text="保存步骤", style='Accent.TButton',
+                   command=self._save_ops_now, width=10).pack(side=tk.RIGHT)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 

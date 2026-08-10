@@ -1,12 +1,12 @@
 """
 自定义操作模块
-用户在主流程完成后（游戏回到主界面），自行配置步骤序列，分多个"份"（批次）组织。
-每个账号的主流程结束后、关闭游戏前，所有份按顺序执行，每份各自受自己的频率限制。
+用户在主流程完成后（游戏回到主界面），自行配置步骤序列，分多个"工作流"（批次）组织。
+每个账号的主流程结束后、关闭游戏前，所有工作流按顺序执行，每个工作流各自受自己的频率限制。
 
 数据结构：
     ops.json = [  # 批次列表
         {
-            "name": "份1",        # 批次名
+            "name": "工作流1",   # 批次名
             "max_runs": 3,        # 每 freq_days 天最多运行次数（0=不限）
             "freq_days": 7,       # 频率窗口（天）
             "steps": [ {step}, ... ],  # 步骤列表
@@ -49,7 +49,8 @@ def ensure_dirs():
 
 def load_batches():
     """加载自定义操作批次列表，返回 [{"name","max_runs","freq_days","steps":[...]}, ...]
-    兼容旧格式：若顶层是步骤列表（无 steps 键），自动包装成单个「份1」"""
+    兼容旧格式：若顶层是步骤列表（无 steps 键），自动包装成单个「工作流1」；
+    旧命名「份N」自动迁移为「工作流N」"""
     if not os.path.exists(CUSTOM_OPS_JSON):
         return []
     try:
@@ -57,7 +58,13 @@ def load_batches():
             data = json.load(f)
         if isinstance(data, list):
             if data and isinstance(data[0], dict) and "steps" in data[0]:
-                return data                       # 新格式：批次列表
+                # 新格式：批次列表；旧命名「份N」→「工作流N」迁移
+                for b in data:
+                    if isinstance(b, dict):
+                        nm = str(b.get("name", ""))
+                        if nm.startswith("份"):
+                            b["name"] = "工作流" + nm[1:]
+                return data
             return [{"name": "工作流1", "max_runs": 0, "freq_days": 7, "steps": data}]  # 旧格式
     except Exception:
         pass
@@ -209,7 +216,7 @@ def _probe_ocr(text, confidence=0.6, timeout=3, stop_event=None):
 
 def run_custom_ops(app, account_name, stop_event=None):
     """执行自定义操作（主流程完成后、关闭游戏前调用）
-    所有份按顺序执行，每份各自受自己的频率限制。
+    所有工作流按顺序执行，每个工作流各自受自己的频率限制。
     返回 True=全部完成，False=被停止
     """
     if stop_event is None:
@@ -224,13 +231,13 @@ def run_custom_ops(app, account_name, stop_event=None):
     if jitter_enabled:
         utils.set_click_jitter(True, int(settings.get("click_jitter_max", 5)))
 
-    print(f"🎯 账号 {account_name} 开始执行自定义操作（共 {len(batches)} 份）...")
+    print(f"🎯 账号 {account_name} 开始执行自定义操作（共 {len(batches)} 个工作流）...")
     try:
         for bi, batch in enumerate(batches, 1):
             if stop_event.is_set():
                 print("⏹ 自定义操作被用户停止")
                 return False
-            batch_name = batch.get("name", f"份{bi}")
+            batch_name = batch.get("name", f"工作流{bi}")
             steps = batch.get("steps", []) or []
             if not steps:
                 continue
@@ -244,7 +251,7 @@ def run_custom_ops(app, account_name, stop_event=None):
             ok = _run_batch_steps(app, account_name, steps, stop_event)
             if ok:
                 record_account_run(run_key)
-            # 某份失败（找不到目标）不影响其他份，继续执行下一份
+            # 某工作流失败（找不到目标）不影响其他工作流，继续执行下一个
     finally:
         if jitter_enabled:
             utils.set_click_jitter(False)
@@ -300,7 +307,7 @@ def _run_batch_steps(app, account_name, steps, stop_event):
 
 
 def _execute_step(app, op, idx, total, stop_event, account_name):
-    """执行单个步骤（按 op.type 分发）。返回 False 表示该步失败应中止当前份"""
+    """执行单个步骤（按 op.type 分发）。返回 False 表示该步失败应中止当前工作流"""
     op_type = op.get("type", "image")
     name = op.get("name", f"步骤{idx}")
     settings = getattr(app, 'settings', None) or {}
@@ -321,7 +328,7 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
     elif op_type == "ocr":
         text = op.get("text", "")
         if not text:
-            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置要识别的文字，中止该份")
+            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置要识别的文字，中止该工作流")
             return False
         ocr_conf = float(op.get("confidence", 0.6))
         ocr_timeout = float(op.get("timeout", 5))
@@ -330,14 +337,14 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
         found = utils.ocr_find_and_click(text, region=region,
                                          timeout=ocr_timeout, confidence=ocr_conf)
         if not found:
-            print(f"    ❌ 未找到文字「{text}」，中止该份")
+            print(f"    ❌ 未找到文字「{text}」，中止该工作流")
             return False
         print(f"    ✅ 已点击「{text}」")
     elif op_type == "keyboard":
         keys = op.get("keys", "")
         mode = op.get("key_mode", "key")
         if not keys:
-            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置按键内容，中止该份")
+            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置按键内容，中止该工作流")
             return False
         print(f"  [{idx}/{total}] 键盘输入「{keys}」...")
         if mode == "text":
@@ -354,7 +361,7 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
     elif op_type == "multi_image":
         images = op.get("images", []) or []
         if not images:
-            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置图片，中止该份")
+            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置图片，中止该工作流")
             return False
         confidence = float(op.get("confidence", 0.7))
         timeout = float(op.get("timeout", 2))
@@ -370,7 +377,7 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
                 found = True
                 break
         if not found:
-            print(f"    ❌ 所有图片都未找到，中止该份")
+            print(f"    ❌ 所有图片都未找到，中止该工作流")
             return False
     elif op_type == "drag":
         x1, y1 = int(op.get("x1", 0)), int(op.get("y1", 0))
@@ -415,12 +422,12 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
         confidence = float(op.get("confidence", 0.7))
         timeout = float(op.get("timeout", 5))
         if not os.path.exists(img):
-            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」图片不存在，中止该份")
+            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」图片不存在，中止该工作流")
             return False
         print(f"  [{idx}/{total}] 查找「{name}」...")
         found = utils.find_and_click(img, timeout=timeout, confidence=confidence)
         if not found:
-            print(f"    ❌ 未找到「{name}」，中止该份")
+            print(f"    ❌ 未找到「{name}」，中止该工作流")
             return False
         print(f"    ✅ 已点击「{name}」")
     return True
@@ -450,7 +457,7 @@ def run_custom_ops_for_test(app, batch, stop_event):
     if jitter_enabled:
         utils.set_click_jitter(True, int(settings.get("click_jitter_max", 5)))
     try:
-        print(f"▶ 测试运行批次「{(batch or {}).get('name', '份')}」（{len(steps)} 步）...")
+        print(f"▶ 测试运行批次「{(batch or {}).get('name', '工作流')}」（{len(steps)} 步）...")
         return _run_batch_steps(app, "测试", steps, stop_event)
     finally:
         if jitter_enabled:
