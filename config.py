@@ -213,7 +213,6 @@ DEFAULT_SETTINGS = {
     "custom_ops_confidence": 0.7,                # 自定义操作默认找图置信度
     "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）
     "custom_ops_pause": 0.5,                     # 自定义操作默认点击后停顿（秒）
-    "custom_ops_screenshot_dir": "",             # 截图保存步骤的全局保存目录（空=未配置）
 }
 
 _settings_cache = None

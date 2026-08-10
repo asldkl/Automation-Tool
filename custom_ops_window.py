@@ -97,7 +97,6 @@ class CustomOpsWindow:
         ttk.Button(batch_row, text="＋ 新增工作流", command=self._add_batch, width=11).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(batch_row, text="删除工作流", command=self._delete_batch, width=10).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(batch_row, text="工作流设置", command=self._batch_settings, width=10).pack(side=tk.LEFT)
-        ttk.Label(batch_row, text="（每个工作流可设不同运行次数）", foreground='#7f8c8d').pack(side=tk.LEFT, padx=(8, 0))
 
         # ----- 步骤列表 -----
         list_frame = ttk.Frame(self.win, padding=(8, 2))
@@ -149,8 +148,8 @@ class CustomOpsWindow:
                    command=self._run_test, width=9).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(bottom, text="⏹ 停止", style='TButton',
                    command=self._stop_test, width=7).pack(side=tk.LEFT)
-        ttk.Button(bottom, text="保存步骤", style='Accent.TButton',
-                   command=self._save_ops_now, width=10).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="保存并退出", style='Accent.TButton',
+                   command=self._save_and_close, width=10).pack(side=tk.RIGHT)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -318,6 +317,11 @@ class CustomOpsWindow:
     def _save_ops_now(self):
         if custom_ops.save_batches(self.batches):
             print("💾 自定义操作已保存")
+
+    def _save_and_close(self):
+        """保存并关闭窗口（每步已自动保存，这里确认保存并退出）"""
+        self._save_ops_now()
+        self._on_close()
 
     # ==================== 批次（工作流）管理 ====================
     def _refresh_batch_combo(self):
@@ -757,11 +761,12 @@ class CustomOpsWindow:
                 ttk.Label(fields, text="正数向上滚，负数向下滚（如 -3 向下 3 格）",
                           foreground='#7f8c8d').pack(anchor='w')
             elif t == "screenshot":
-                save_dir = self.app.settings.get("custom_ops_screenshot_dir", "") or "（未设置）"
-                ttk.Label(fields, text="保存位置（在 设置→全局设置→截图保存目录 配置）:",
+                save_dir = self.app.settings.get("log_save_path", "") or "（未设置）"
+                ttk.Label(fields, text="保存位置（在 设置→全局设置→日志/截图保存目录 配置）:",
                           foreground='#7f8c8d').pack(anchor='w', pady=2)
                 ttk.Label(fields, text=save_dir, wraplength=300, foreground='#2c3e50').pack(anchor='w', pady=(0, 2))
-                ttk.Label(fields, text="保存为: 日期文件夹/账号名_时间.png", foreground='#7f8c8d').pack(anchor='w')
+                ttk.Label(fields, text="保存为: 当天日期文件夹/账号名_时间.png（与日志同目录）",
+                          foreground='#7f8c8d').pack(anchor='w')
             elif t == "condition":
                 fr = ttk.Frame(fields); fr.pack(fill=tk.X, pady=3)
                 ttk.Label(fr, text="判断", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
