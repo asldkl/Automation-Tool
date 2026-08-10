@@ -71,7 +71,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - _ensure_wegame_focused()：WeGame 窗口聚焦检查，失去焦点时自动激活（v1.2.1 新增）
 │   - _login_account()：WeGame 直接登录（v1.2.0，Interception 驱动级键盘输入）
 │     - 图像识别双击 account_select（左偏 15px）→ Ctrl+A + Backspace 清空
-│     - Interception 驱动级键盘输入账号和密码（绕开 QQ 同 IP 验证码）
+│     - Interception 驱动级键盘输入账号和密码（WeGame 支持多账号单独登录）
 │     - 输入前检查 WeGame 窗口聚焦（v1.2.1）
 │     - 图像识别点击 Sign-in 登录
 │     - 失败时记录具体错误到 app._last_account_error（v1.2.1）
