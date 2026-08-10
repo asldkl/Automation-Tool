@@ -999,20 +999,15 @@ def _run_single_account(app, img_path, total, processed_accounts):
         # else: _launch_game 内部已调用 _recognize_and_store_asset、game_operations_wrapper（含一键出售）
 
     # 自定义操作（主流程完成、游戏在主界面，关闭游戏前执行）
+    # 频率限制在 custom_ops.run_custom_ops 内部按"份"各自判断
     if (not account_failed and not account_interrupted
             and not app._stop_event.is_set()
             and app.settings.get("enable_custom_ops", False)):
-        max_runs = int(app.settings.get("custom_ops_max_runs", 0))
-        freq_days = int(app.settings.get("custom_ops_freq_days", 7))
-        if custom_ops.should_skip_by_frequency(file_name, max_runs, freq_days):
-            print(f"⏭️ 账号 {file_name} 本周期（{freq_days}天）自定义操作次数已达上限，跳过")
-        else:
-            try:
-                custom_ops.run_custom_ops(app, file_name)
-                custom_ops.record_account_run(file_name)
-            except Exception as e:
-                print(f"⚠️ 自定义操作执行异常：{e}")
-                traceback.print_exc()
+        try:
+            custom_ops.run_custom_ops(app, file_name)
+        except Exception as e:
+            print(f"⚠️ 自定义操作执行异常：{e}")
+            traceback.print_exc()
 
     if not account_interrupted:
         _close_game(app)
@@ -1135,21 +1130,15 @@ def run_script_main(app):
                         account_failed = True
 
             # 步骤2.5：自定义操作（主流程完成、游戏在主界面，关闭游戏前执行）
+            # 频率限制在 custom_ops.run_custom_ops 内部按"份"各自判断
             if (not account_failed and not account_interrupted
                     and not app._stop_event.is_set()
                     and app.settings.get("enable_custom_ops", False)):
-                # 频率限制：每 freq_days 天最多运行 max_runs 次（0=不限），超限跳过但主流程照常
-                max_runs = int(app.settings.get("custom_ops_max_runs", 0))
-                freq_days = int(app.settings.get("custom_ops_freq_days", 7))
-                if custom_ops.should_skip_by_frequency(file_name, max_runs, freq_days):
-                    print(f"⏭️ 账号 {file_name} 本周期（{freq_days}天）自定义操作次数已达上限，跳过")
-                else:
-                    try:
-                        custom_ops.run_custom_ops(app, file_name)
-                        custom_ops.record_account_run(file_name)
-                    except Exception as e:
-                        print(f"⚠️ 自定义操作执行异常：{e}")
-                        traceback.print_exc()
+                try:
+                    custom_ops.run_custom_ops(app, file_name)
+                except Exception as e:
+                    print(f"⚠️ 自定义操作执行异常：{e}")
+                    traceback.print_exc()
 
             # 步骤3：清理进程
             if not account_interrupted:
@@ -1303,11 +1292,8 @@ def on_finish(app):
     except Exception as e:
         print(f"⚠️ 冷却数据兜底保存失败: {e}")
 
-    # 运行完成，恢复主窗口（从托盘回到前台）
-    try:
-        app._show_window()
-    except Exception:
-        pass
+    # 运行完成：保持主窗口隐藏（托盘），需要时手动点托盘图标恢复
+    # 移除原来的 _show_window()，避免运行完自动弹出窗口
 
 
 def get_account_next_run(app, account_name):

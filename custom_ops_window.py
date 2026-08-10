@@ -39,7 +39,10 @@ class CustomOpsWindow:
     def __init__(self, parent, app):
         self.app = app
         self.parent_win = parent          # 设置窗口
-        self.ops = custom_ops.load_ops()  # [{name, image, confidence, timeout, pause_after}, ...]
+        self.batches = custom_ops.load_batches()   # 批次列表（份）
+        if not self.batches:
+            self.batches = [{"name": "份1", "max_runs": 0, "freq_days": 7, "steps": []}]
+        self.current_bi = 0               # 当前编辑的批次索引
         self._test_stop = threading.Event()
         self._test_thread = None
 
@@ -55,7 +58,15 @@ class CustomOpsWindow:
         utils.set_window_icon(self.win)
 
         self._build_ui()
+        self._refresh_batch_combo()
         self._refresh_list()
+
+    @property
+    def ops(self):
+        """当前批次（份）的步骤列表"""
+        if 0 <= self.current_bi < len(self.batches):
+            return self.batches[self.current_bi]["steps"]
+        return []
 
     # ==================== UI 构建 ====================
     def _build_ui(self):
@@ -87,6 +98,18 @@ class CustomOpsWindow:
         ttk.Button(toolbar, text="删除", style='TButton',
                    command=self._delete_step, width=5).pack(side=tk.LEFT)
 
+        # ----- 批次选择行（份） -----
+        batch_row = ttk.Frame(self.win, padding=(8, 2))
+        batch_row.pack(fill=tk.X)
+        ttk.Label(batch_row, text="份：").pack(side=tk.LEFT)
+        self.batch_combo = ttk.Combobox(batch_row, state='readonly', width=10)
+        self.batch_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.batch_combo.bind('<<ComboboxSelected>>', self._on_batch_select)
+        ttk.Button(batch_row, text="＋ 新增份", command=self._add_batch, width=9).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(batch_row, text="删除份", command=self._delete_batch, width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(batch_row, text="份设置", command=self._batch_settings, width=8).pack(side=tk.LEFT)
+        ttk.Label(batch_row, text="（每份可设不同运行次数）", foreground='#7f8c8d').pack(side=tk.LEFT, padx=(8, 0))
+
         # ----- 步骤列表 -----
         list_frame = ttk.Frame(self.win, padding=(8, 2))
         list_frame.pack(fill=tk.BOTH, expand=True)
@@ -111,10 +134,9 @@ class CustomOpsWindow:
         self.tree.bind("<Button-3>", self._show_context_menu)
 
         # ----- 说明 -----
-        tip = ("说明：每个步骤=找图/坐标/OCR/键盘/多图/拖拽/滚轮/截图保存/条件跳转/跳转等操作（「＋ 添加步骤」菜单）。\n"
-               "主流程每个账号运行完、游戏回到主界面后，会依次执行这些步骤；"
-               "某一步找不到目标则中止该账号的自定义操作，跳到下一个账号。\n"
-               "双击或右键可修改步骤属性（含类型），底部「设置」可配置频率限制与截图保存目录。")
+        tip = ("说明：步骤按「份」组织（顶部切换），每份可设不同运行次数。\n"
+               "主流程每个账号运行完、游戏回到主界面后，所有份依次执行；某步找不到目标则中止该份。\n"
+               "双击或右键可修改步骤属性、运行本步骤；「份设置」配置每份频率，底部「设置」含自动执行与随机偏移。")
         self.tip_lbl = ttk.Label(self.win, text=tip, style='SettingsSmall.TLabel', justify=tk.LEFT,
                                  padding=(10, 4))
         self.tip_lbl.pack(anchor=tk.W, fill=tk.X)
@@ -239,6 +261,7 @@ class CustomOpsWindow:
         op = self.ops[idx]
         t = op.get("type", "image")
         menu = tk.Menu(self.win, tearoff=0)
+        menu.add_command(label="▶ 运行本步骤", command=self._run_single_step)
         menu.add_command(label="✏️ 修改属性", command=self._edit_selected)
         menu.add_separator()
         menu.add_command(label="上移", command=self._move_up)
@@ -305,8 +328,100 @@ class CustomOpsWindow:
         self._edit_selected()
 
     def _save_ops_now(self):
-        if custom_ops.save_ops(self.ops):
-            print("💾 自定义操作步骤已保存")
+        if custom_ops.save_batches(self.batches):
+            print("💾 自定义操作已保存")
+
+    # ==================== 批次（份）管理 ====================
+    def _refresh_batch_combo(self):
+        """刷新份下拉列表"""
+        names = [b.get("name", f"份{i + 1}") for i, b in enumerate(self.batches)]
+        self.batch_combo.config(values=names)
+        if 0 <= self.current_bi < len(names):
+            self.batch_combo.set(names[self.current_bi])
+
+    def _on_batch_select(self, _e=None):
+        self.current_bi = self.batch_combo.current()
+        if self.current_bi < 0:
+            self.current_bi = 0
+        self._refresh_list()
+
+    def _add_batch(self):
+        self.batches.append({"name": f"份{len(self.batches) + 1}", "max_runs": 0,
+                             "freq_days": 7, "steps": []})
+        self.current_bi = len(self.batches) - 1
+        self._save_ops_now()
+        self._refresh_batch_combo()
+        self._refresh_list()
+
+    def _delete_batch(self):
+        if len(self.batches) <= 1:
+            messagebox.showinfo("提示", "至少保留一个份", parent=self.win)
+            return
+        bi = self.current_bi
+        name = self.batches[bi].get("name", f"份{bi + 1}")
+        if not messagebox.askyesno("删除份", f"确定删除「{name}」及其所有步骤？", parent=self.win):
+            return
+        self.batches.pop(bi)
+        self.current_bi = max(0, bi - 1)
+        self._save_ops_now()
+        self._refresh_batch_combo()
+        self._refresh_list()
+
+    def _batch_settings(self):
+        """设置当前份的名称和频率限制（每份独立）"""
+        bi = self.current_bi
+        batch = self.batches[bi]
+        dlg = tk.Toplevel(self.win)
+        dlg.title("份设置")
+        dlg.resizable(False, False)
+        dlg.transient(self.win)
+        dlg.grab_set()
+        form = ttk.Frame(dlg, padding=12)
+        form.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(form, text="份名称").pack(anchor='w')
+        name_var = tk.StringVar(value=batch.get("name", f"份{bi + 1}"))
+        ttk.Entry(form, textvariable=name_var, width=20).pack(fill=tk.X, pady=(2, 8))
+
+        fr = ttk.Frame(form)
+        fr.pack(fill=tk.X)
+        days_var = tk.StringVar(value=str(batch.get("freq_days", 7)))
+        runs_var = tk.StringVar(value=str(batch.get("max_runs", 0)))
+        ttk.Label(fr, text="每").pack(side=tk.LEFT)
+        ttk.Spinbox(fr, from_=1, to=365, textvariable=days_var, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(fr, text="天最多运行").pack(side=tk.LEFT)
+        ttk.Spinbox(fr, from_=0, to=99, textvariable=runs_var, width=4).pack(side=tk.LEFT, padx=2)
+        ttk.Label(fr, text="次（0=不限）").pack(side=tk.LEFT)
+        ttk.Label(form, text="超限后该份跳过，其他份照常执行", foreground='#7f8c8d').pack(anchor='w', pady=(4, 0))
+
+        def on_save():
+            try:
+                batch["name"] = name_var.get().strip() or f"份{bi + 1}"
+                batch["max_runs"] = max(0, int(runs_var.get()))
+                batch["freq_days"] = max(1, int(days_var.get()))
+            except ValueError:
+                messagebox.showwarning("输入无效", "次数/天数必须为数字", parent=dlg)
+                return
+            self._save_ops_now()
+            self._refresh_batch_combo()
+            dlg.destroy()
+
+        btns = ttk.Frame(form)
+        btns.pack(pady=(12, 0))
+        ttk.Button(btns, text="保存", style='Accent.TButton', command=on_save, width=8).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="取消", style='TButton', command=dlg.destroy, width=8).pack(side=tk.LEFT)
+
+        dlg.update_idletasks()
+        try:
+            pw = self.win.winfo_width()
+            ph = self.win.winfo_height()
+            px = self.win.winfo_rootx()
+            py = self.win.winfo_rooty()
+            x = max(0, px + (pw - dlg.winfo_width()) // 2)
+            y = max(0, py + (ph - dlg.winfo_height()) // 2)
+            dlg.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
 
     def _open_settings(self):
         """打开自定义操作设置窗口（主流程后执行 / 随机偏移 / 频率限制）"""
@@ -324,30 +439,16 @@ class CustomOpsWindow:
         jitter_var = tk.BooleanVar(value=bool(self.app.settings.get("custom_ops_jitter", False)))
         ttk.Checkbutton(form, text="点击受随机偏移影响",
                         variable=jitter_var).pack(anchor='w', pady=3)
-
-        # 频率限制：每个账号 Y 天内最多运行 X 次自定义操作
-        freq = ttk.Frame(form)
-        freq.pack(fill=tk.X, pady=(10, 3))
-        runs_var = tk.StringVar(value=str(self.app.settings.get("custom_ops_max_runs", 0)))
-        days_var = tk.StringVar(value=str(self.app.settings.get("custom_ops_freq_days", 7)))
-        ttk.Label(freq, text="每个账号").pack(side=tk.LEFT)
-        ttk.Spinbox(freq, from_=0, to=99, textvariable=runs_var, width=4).pack(side=tk.LEFT, padx=2)
-        ttk.Label(freq, text="天内最多运行").pack(side=tk.LEFT)
-        ttk.Spinbox(freq, from_=1, to=365, textvariable=days_var, width=4).pack(side=tk.LEFT, padx=2)
-        ttk.Label(freq, text="次自定义操作（0=不限）").pack(side=tk.LEFT)
-        ttk.Label(form, text="超限后该账号跳过自定义操作，主流程照常运行",
-                  foreground='#7f8c8d').pack(anchor='w')
+        ttk.Label(form, text="频率限制在「份设置」里按每份单独配置（每份 X次/Y天）",
+                  foreground='#7f8c8d').pack(anchor='w', pady=(4, 0))
 
         def on_save():
             try:
                 self.app.settings["enable_custom_ops"] = enable_var.get()
                 self.app.settings["custom_ops_jitter"] = jitter_var.get()
-                self.app.settings["custom_ops_max_runs"] = max(0, int(runs_var.get()))
-                self.app.settings["custom_ops_freq_days"] = max(1, int(days_var.get()))
                 config.save_settings(self.app.settings)
                 print(f"📌 自定义操作设置已保存：自动执行={'开' if enable_var.get() else '关'}，"
-                      f"抖动={'开' if jitter_var.get() else '关'}，"
-                      f"频率={runs_var.get()}次/{days_var.get()}天")
+                      f"抖动={'开' if jitter_var.get() else '关'}")
             except ValueError:
                 messagebox.showwarning("输入无效", "次数/天数必须为数字", parent=dlg)
                 return
@@ -1023,7 +1124,22 @@ class CustomOpsWindow:
         print("▶ 自定义操作测试运行开始（可在日志中查看进度，点「停止」可中止）")
 
     def _test_worker(self):
-        custom_ops.run_custom_ops_for_test(self.app, self._test_stop)
+        custom_ops.run_custom_ops_for_test(self.app, self.batches[self.current_bi], self._test_stop)
+
+    def _run_single_step(self):
+        """运行选中步骤（右键「运行本步骤」），用于单独测试某一步"""
+        idx = self._selected_index()
+        if idx is None:
+            return
+        op = self.ops[idx]
+        if self._test_thread and self._test_thread.is_alive():
+            messagebox.showinfo("提示", "已有步骤在运行中", parent=self.win)
+            return
+        self._test_stop.clear()
+        self._test_thread = threading.Thread(
+            target=custom_ops.run_single_step, args=(self.app, op, self._test_stop), daemon=True)
+        self._test_thread.start()
+        print(f"▶ 正在运行单步骤「{op.get('name', '')}」...")
 
     def _stop_test(self):
         self._test_stop.set()

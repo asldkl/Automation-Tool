@@ -161,20 +161,22 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - next_image_name() / save_captured_image()：截图保存
 │   - _apply_jitter()：坐标点击的拟人抖动（圆内随机偏移）
 │   - _probe_image() / _probe_ocr()：找图/OCR 探测（条件跳转用，不点击）
-│   - run_custom_ops()：主流程完成后执行步骤序列，while 循环 + 可变索引支持跳转，按 op.type 分发：
+│   - 批次模型：ops.json = [{"name","max_runs","freq_days","steps":[...]}, ...]，load_batches 兼容旧格式
+│   - run_custom_ops()：主流程后所有份按顺序执行，每份各自频率限制（超限跳过），份内 while 循环支持跳转：
 │     - image 找图 / coordinate 坐标 / ocr 文字 / keyboard 键盘 / multi_image 多图
 │     - drag 拖拽 / scroll 滚轮 / screenshot 截图保存 / condition 条件跳转 / jump 无条件跳转
-│     - 死循环保护（10000 次上限）；某步找不到目标 → 中止该账号剩余操作
-│   - should_skip_by_frequency / record_account_run：频率限制（每 Y 天最多 X 次），runs.json 存时间戳
-│   - run_custom_ops_for_test()：窗口内「运行测试」按钮的试运行
+│     - _execute_step() 单步分发；_run_batch_steps() 份内循环；死循环保护（10000 次上限）；某步失败中止该份
+│   - should_skip_by_frequency / record_account_run：按份频率限制（run_key=账号::份名），runs.json 存时间戳
+│   - run_custom_ops_for_test()：窗口内「运行测试」试运行当前份；run_single_step() 右键「运行本步骤」
 │   - 点击是否受随机偏移影响由 custom_ops_jitter 控制（复用 click_jitter_max）
 │
 ├── custom_ops_window.py        # 自定义操作配置向导（v1.3.6 新增）
 │   - CustomOpsWindow 类：从「设置 → 自动任务」页「配置自定义操作」按钮打开；窗口大小位置记忆
+│   - 份管理：份下拉切换、新增/删除份、份设置（名称 + 频率限制）；ops 属性返回当前份的步骤
 │   - 支持十种步骤（工具栏「＋ 添加步骤」菜单，编辑框类型下拉中文）：找图/坐标/OCR/键盘/多图/拖拽/滚轮/截图保存/条件跳转/跳转
-│   - 步骤默认命名「类型中文名+序号」；右键菜单：修改属性 / 上移下移 / 删除（类型在编辑框下拉切换）
+│   - 步骤默认命名「类型中文名+序号」；右键菜单：修改属性 / 运行本步骤 / 上移下移 / 删除（类型在编辑框下拉切换）
 │   - 找图/多图步骤编辑框支持屏幕框选/导入图片增删；坐标支持「屏幕取点」
-│   - 设置窗口（底部「设置」按钮）：主流程后自动执行 / 随机偏移 / 频率限制（截图目录在全局设置页）
+│   - 设置窗口（底部「设置」按钮）：主流程后自动执行 / 随机偏移（截图目录在全局设置页）
 │   - 底部说明文本随窗口宽度自动换行；窗口大小位置记忆
 │   - 屏幕取点/框选：临时隐藏日志遮罩 + 释放模态 grab + 遮罩 grab 强制接收点击
 │   - 顶部工具栏：＋屏幕框选 / 选择图片 / 上移 / 下移 / 删除 / 运行测试 / 停止 / 保存
