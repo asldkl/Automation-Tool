@@ -904,14 +904,11 @@ class App:
     def _show_account_menu(self, event):
         account_manager.show_account_menu(self, event)
 
-    def _manual_add_cooldown(self, event):
-        account_manager.manual_add_cooldown(self, event)
+    def _double_click_next_run(self, event):
+        account_manager.double_click_next_run(self, event)
 
     def _reset_selected_cooldown(self):
         account_manager.reset_selected_cooldown(self)
-
-    def _custom_cooldown_time(self):
-        account_manager.custom_cooldown_time(self)
 
     def _start_periodic_tree_refresh(self):
         account_manager.start_periodic_tree_refresh(self)
@@ -1050,9 +1047,6 @@ class App:
     def _send_account_failure_email(self, account_name, next_run_str, processed_accounts=None):
         email_notifier.send_account_failure_email(self, account_name, next_run_str, processed_accounts)
 
-    def _send_cooldown_ready_email(self, ready_accounts):
-        email_notifier.send_cooldown_ready_email(self, ready_accounts)
-
     # ==================== UI 构建 ====================
     def _build_ui(self):
         # 设置根窗口浅色背景
@@ -1107,7 +1101,7 @@ class App:
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame2.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(btn_frame2, text="右键账号可进行上移、下移、删除、重置冷却等操作",
+        ttk.Label(btn_frame2, text="右键账号可上移/下移/删除/重置冷却；双击「下次运行时间」列可设置冷却时间",
                   style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888').pack(side=tk.LEFT)
 
         self.account_menu = tk.Menu(self.root, tearoff=0)
@@ -1119,12 +1113,11 @@ class App:
         self.account_menu.add_command(label="下移", command=self._move_down)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="重置选中冷却", command=self._reset_selected_cooldown)
-        self.account_menu.add_command(label="自定义冷却时间", command=self._custom_cooldown_time)
         self.account_menu.add_command(label="暂停账号", command=self._toggle_cooldown_pause)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_tree.bind("<Button-3>", self._show_account_menu)
-        self.account_tree.bind("<Double-1>", self._manual_add_cooldown)
+        self.account_tree.bind("<Double-1>", self._double_click_next_run)
         self.account_tree.bind("<Button-1>", self._on_tree_click)
 
         # ----- 状态信息栏 -----

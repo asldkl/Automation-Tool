@@ -10,7 +10,6 @@ import traceback
 
 import utils
 import cooldown_manager
-import email_notifier
 
 
 def start_cooldown_watcher(app):
@@ -75,30 +74,6 @@ def cooldown_watcher_loop(app):
                         if has_ready:
                             last_trigger_minute = current_minute
                             print("🔔 检测到账号冷却到期，自动执行任务...")
-
-                            # 发送冷却到期邮件提醒
-                            ready_list = []
-                            all_cd = cooldown_manager.get_all_cooldowns()
-                            for img_path in app.qq_account_images:
-                                cd_name = cooldown_manager.normalize_key(img_path)
-                                entry = all_cd.get(cd_name)
-                                if entry is None:
-                                    ready_list.append(cd_name)
-                                    continue
-                                if entry.get("paused") or entry.get("account_paused"):
-                                    continue
-                                next_run_str = entry.get("next_run_time", "")
-                                if not next_run_str:
-                                    ready_list.append(cd_name)
-                                    continue
-                                try:
-                                    next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-                                    if datetime.datetime.now() >= next_run:
-                                        ready_list.append(cd_name)
-                                except Exception:
-                                    pass
-                            if ready_list:
-                                email_notifier.send_cooldown_ready_email(app, ready_list)
 
                             # 直接设置标志位并安全调用 start()
                             app._ignore_cooldown_this_run = True

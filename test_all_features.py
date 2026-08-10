@@ -439,14 +439,12 @@ class TestSettingsSaveIntegrity(unittest.TestCase):
         settings = dict(DEFAULT_SETTINGS)
         settings["enable_cooldown"] = True
         settings["cooldown_hours"] = 12
-        settings["cooldown_delay_minutes"] = 8
         settings["cooldown_run_immediately"] = True
         save_settings(settings)
 
         loaded = load_settings()
         self.assertTrue(loaded["enable_cooldown"])
         self.assertEqual(loaded["cooldown_hours"], 12)
-        self.assertEqual(loaded["cooldown_delay_minutes"], 8)
         self.assertTrue(loaded["cooldown_run_immediately"])
 
     def test_save_preserves_all_auto_settings(self):
@@ -456,7 +454,6 @@ class TestSettingsSaveIntegrity(unittest.TestCase):
         settings["cooldown_run_immediately"] = True
         settings["cooldown_scheduled_task_enabled"] = True
         settings["cooldown_hours"] = 12
-        settings["cooldown_delay_minutes"] = 5
         settings["enable_cooldown"] = True
         save_settings(settings)
 
@@ -464,7 +461,6 @@ class TestSettingsSaveIntegrity(unittest.TestCase):
         self.assertTrue(loaded["cooldown_run_immediately"])
         self.assertTrue(loaded["cooldown_scheduled_task_enabled"])
         self.assertEqual(loaded["cooldown_hours"], 12)
-        self.assertEqual(loaded["cooldown_delay_minutes"], 5)
         self.assertTrue(loaded["enable_cooldown"])
 
 

@@ -62,46 +62,6 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
     threading.Thread(target=_send, daemon=True).start()
 
 
-def send_cooldown_ready_email(app, ready_accounts):
-    """冷却到期时发送邮件提醒"""
-    if not app.settings.get("cooldown_email_enabled", False):
-        return
-    cfg = _get_email_config(app)
-    if not cfg:
-        return
-    smtp_code, sender, receiver = cfg
-
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    account_items = "".join(f"<li style='padding:3px 0;'>{html.escape(name)}</li>" for name in ready_accounts)
-    count = len(ready_accounts)
-
-    body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
-<h2 style="color:#27ae60;border-bottom:2px solid #27ae60;padding-bottom:10px;">三角洲行动自动化工具 - 冷却到期提醒</h2>
-<table style="border-collapse:collapse;width:100%;margin:15px 0;">
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">提醒时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">到期账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;font-weight:bold;">{count} 个</td></tr>
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">到期账号列表</td></tr>
-<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{account_items}</ul></td></tr>
-</table>
-<div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#27ae6015;border:1px solid #27ae6040;">
-<span style="font-size:16px;font-weight:bold;color:#27ae60;">以上账号冷却已到期，即将自动执行任务</span>
-</div>
-<p style="color:#7f8c8d;font-size:12px;text-align:center;margin-top:15px;">此邮件由三角洲行动自动化工具自动发送</p>
-</div>"""
-
-    def _send():
-        success, msg = utils.send_email_notification(
-            smtp_code, sender, receiver,
-            f"三角洲自动化 - 冷却到期提醒 ({count}个账号)", body
-        )
-        if success:
-            print(f"📧 冷却到期提醒邮件已发送（{count}个账号）")
-        else:
-            print(f"📧 冷却到期提醒邮件发送失败：{msg}")
-
-    threading.Thread(target=_send, daemon=True).start()
-
-
 def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     """在后台线程中发送邮件通知"""
     cfg = _get_email_config(app)

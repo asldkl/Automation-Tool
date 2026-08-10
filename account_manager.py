@@ -501,49 +501,19 @@ def show_account_menu(app, event):
     app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
-def manual_add_cooldown(app, event):
-    """双击账号列表手动为该账号记录冷却时间"""
-    sel = app.account_tree.selection()
-    if not sel:
+def double_click_next_run(app, event):
+    """双击账号列表：仅当双击「下次运行时间」列时打开自定义冷却时间"""
+    region = app.account_tree.identify("region", event.x, event.y)
+    if region != "cell":
         return
-    if "separator" in app.account_tree.item(sel[0], "tags"):
+    column = app.account_tree.identify_column(event.x)
+    if column != "#3":  # next_run 列（name=#1, asset=#2, next_run=#3, note=#4）
         return
-    idx = _tree_idx_to_account_idx(app, sel[0])
-    if idx >= len(app.qq_account_images):
+    item = app.account_tree.identify_row(event.y)
+    if not item or "separator" in app.account_tree.item(item, "tags"):
         return
-    img_path = app.qq_account_images[idx]
-    account_name = cooldown_manager.normalize_key(img_path)
-
-    if not app.settings.get("enable_cooldown", False):
-        messagebox.showinfo("提示",
-            "冷却功能未启用，请先在设置中启用「账号冷却」。",
-            parent=app.root)
-        return
-
-    cooling, next_time = cooldown_manager.is_cooling_down(account_name)
-    cd_hours = app.settings.get("cooldown_hours", 8)
-
-    if cooling:
-        if not messagebox.askyesno("确认加入冷却",
-                f"「{account_name}」当前仍在冷却中（下次运行：{next_time}）。\n\n"
-                f"是否重新记录冷却时间（{cd_hours}小时）？",
-                parent=app.root):
-            return
-    else:
-        if not messagebox.askyesno("确认加入冷却",
-                f"确定将「{account_name}」加入冷却？\n\n"
-                f"冷却时间：{cd_hours}小时\n"
-                f"加入后该账号在冷却期间不会被自动执行。",
-                parent=app.root):
-            return
-
-    cooldown_manager.record_run(account_name, cd_hours)
-    _, new_next = cooldown_manager.is_cooling_down(account_name)
-    refresh_account_tree(app)
-    messagebox.showinfo("已记录冷却",
-        f"「{account_name}」已记录冷却时间。\n\n"
-        f"下次运行时间：{new_next or '未知'}",
-        parent=app.root)
+    app.account_tree.selection_set(item)
+    custom_cooldown_time(app)
 
 
 def reset_selected_cooldown(app):
@@ -571,7 +541,7 @@ def reset_selected_cooldown(app):
 
 
 def custom_cooldown_time(app):
-    """自定义选中账号的冷却时间"""
+    """自定义选中账号的冷却时间（两个数字输入框，H/M 为固定单位文本）"""
     import cooldown_manager
     sel = app.account_tree.selection()
     if not sel:
@@ -589,31 +559,47 @@ def custom_cooldown_time(app):
     dialog = tk.Toplevel(app.root)
     dialog.title("自定义冷却时间")
     dialog.resizable(True, True)
-    dialog.minsize(320, 200)
+    dialog.minsize(320, 220)
     dialog.transient(app.root)
     dialog.grab_set()
     utils.set_window_icon(dialog)
-    utils.bind_window_geometry(dialog, "custom_cooldown_geometry", "360x220", (320, 200))
+    utils.bind_window_geometry(dialog, "custom_cooldown_geometry", "360x230", (320, 220))
 
     ttk.Label(dialog, text=f"账号：{account_name}", font=('Microsoft YaHei UI', 10, 'bold')).pack(pady=(15, 10))
+    ttk.Label(dialog, text="冷却时间：", font=('Microsoft YaHei UI', 9)).pack(pady=(5, 0))
 
-    # 小时 + 分钟
+    # 小时 + 分钟两个数字输入框，H/M 为固定文本（默认 8H 0M，用户只填数字）
+    default_hours = app.settings.get("cooldown_hours", 8)
+    hours_var = tk.StringVar(value=str(default_hours))
+    minutes_var = tk.StringVar(value="0")
+
     time_frame = ttk.Frame(dialog)
     time_frame.pack(pady=5)
+    hours_entry = ttk.Entry(time_frame, textvariable=hours_var, width=4,
+                            font=('Microsoft YaHei UI', 12), justify=tk.CENTER)
+    hours_entry.pack(side=tk.LEFT, padx=(0, 2))
+    ttk.Label(time_frame, text="H", font=('Microsoft YaHei UI', 10, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
+    minutes_entry = ttk.Entry(time_frame, textvariable=minutes_var, width=4,
+                              font=('Microsoft YaHei UI', 12), justify=tk.CENTER)
+    minutes_entry.pack(side=tk.LEFT, padx=(0, 2))
+    ttk.Label(time_frame, text="M", font=('Microsoft YaHei UI', 10, 'bold')).pack(side=tk.LEFT)
 
-    ttk.Label(time_frame, text="冷却时间：", font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT, padx=(0, 8))
-    hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
-    minutes_var = tk.IntVar(value=0)
-    hours_spin = ttk.Spinbox(time_frame, from_=0, to=72, textvariable=hours_var, width=5, font=('Microsoft YaHei UI', 11))
-    hours_spin.pack(side=tk.LEFT, padx=(0, 4))
-    ttk.Label(time_frame, text="小时", font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT, padx=(0, 12))
-    minutes_spin = ttk.Spinbox(time_frame, from_=0, to=59, increment=5, textvariable=minutes_var, width=5, font=('Microsoft YaHei UI', 11))
-    minutes_spin.pack(side=tk.LEFT, padx=(0, 4))
-    ttk.Label(time_frame, text="分钟", font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT)
+    hours_entry.focus_set()
+    hours_entry.select_range(0, tk.END)
 
-    def confirm():
-        hours = hours_var.get()
-        minutes = minutes_var.get()
+    def confirm(event=None):
+        try:
+            hours = int(hours_var.get().strip() or 0)
+            minutes = int(minutes_var.get().strip() or 0)
+        except ValueError:
+            messagebox.showwarning("提示", "请输入数字（例如：8 小时 30 分钟）", parent=dialog)
+            return
+        if hours < 0 or minutes < 0:
+            messagebox.showwarning("提示", "冷却时间不能为负数", parent=dialog)
+            return
+        if minutes > 59:
+            messagebox.showwarning("提示", "分钟数不能超过 59", parent=dialog)
+            return
         if hours <= 0 and minutes <= 0:
             messagebox.showwarning("提示", "冷却时间不能为 0", parent=dialog)
             return
@@ -625,7 +611,9 @@ def custom_cooldown_time(app):
         messagebox.showinfo("已设置", f"「{account_name}」冷却 {time_text}。\n下次运行：{new_next or '未知'}", parent=dialog)
         dialog.destroy()
 
-    ttk.Button(dialog, text="确认", command=confirm).pack(pady=15)
+    hours_entry.bind("<Return>", confirm)
+    minutes_entry.bind("<Return>", confirm)
+    ttk.Button(dialog, text="确认", command=confirm).pack(pady=10)
 
 
 def reset_all_cooldowns(app):

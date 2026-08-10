@@ -158,7 +158,8 @@ account_manager.py（约 738 行）
     - 账号 CRUD：save/load/add/delete/clear
     - 排序：move_up / move_down
     - Treeview 管理：refresh_account_tree（四列：账号名称/现有资产/下次运行时间/备注）
-    - 冷却 UI：reset_selected_cooldown / custom_cooldown_time / reset_all_cooldowns
+    - 冷却 UI：reset_selected_cooldown / custom_cooldown_time（双击「下次运行时间」列打开，两个数字框 + 固定 H/M 单位，如 8H 30M）/ reset_all_cooldowns
+    - double_click_next_run：仅当双击 next_run 列时打开自定义冷却时间（替代原右键「自定义冷却时间」）
     - 账号信息设置：_open_account_info_window（游戏账号/密码/备注）
     - 资产监测：show_asset_monitor（自定义天数统计）
 
@@ -166,7 +167,6 @@ email_notifier.py（约 250 行）
     - send_run_report_email：运行完成报告
     - send_failure_email：运行失败通知
     - send_account_failure_email：单账号失败通知
-    - send_cooldown_ready_email：冷却到期提醒
 
 cooldown_watcher.py（约 160 行）
     - start/stop/restart_cooldown_watcher
@@ -727,8 +727,23 @@ v1.3.6 (2026-08-08)
   - 点击随机偏移从实验功能移到「全局设置」页（资产识别下方、实用工具上方）
   - 账号数据导入导出从实验功能移到「其他设置」页最下方；更新底部说明（移除已无 UI 的鼠标下移/滚动幅度条目）
   - 实验功能窗口仅保留：驱动键盘测试、日志遮罩
+  - 「皮肤抢购」按钮从「实用工具」移入「实验功能」窗口（新增皮肤抢购区块）；「实用工具」区域仅保留「实验功能」按钮，说明改为"驱动键盘测试、日志遮罩、皮肤抢购"
+  - 删除「日志/截图保存目录」下方的说明文本（截图保存步骤说明不再显示）
+  - 「额外等待时间」输入框取消右对齐，改为紧跟标签文本并在输入框后加「秒」单位；「其他设置」底部说明移除已删除的「账号间隔时间」条目
 - 邮件通知：
   - 运行报告邮件与失败邮件新增「最先运行」和「最后运行」时间字段
+  - 删除「冷却结束后发送邮件提醒」选项及 cooldown_email_enabled 配置；移除 email_notifier.send_cooldown_ready_email、cooldown_watcher 中冷却到期邮件发送逻辑、gui_app._send_cooldown_ready_email
+  - 「邮件通知」页使用提示文本改为跟随窗口宽度自动换行（绑定 <Configure> 动态更新 wraplength）
+- 冷却设置简化：
+  - 删除「启用账号冷却」开关，账号冷却始终开启（config.DEFAULT_SETTINGS enable_cooldown=True，load_settings 强制 enable_cooldown=True 兼容旧配置）
+  - 删除「账号间隔时间」设置（cooldown_delay_minutes）及 automation_runner._wait_account_interval 账号间隔等待逻辑
+  - 「冷却小时数」保留，输入框后加「小时」单位
+- 自定义冷却时间交互调整：
+  - 双击主界面账号列表「下次运行时间」列打开自定义冷却时间（account_manager.double_click_next_run，仅 next_run 列生效），替代原右键菜单「自定义冷却时间」
+  - 输入改为「两个数字框 + 固定 H/M 单位文本」（如 8H 30M），默认预填 8H 0M，小时框自动聚焦全选；回车或点确认生效
+  - 删除「取消」按钮，仅保留「确认」（可点窗口右上角 × 关闭）
+- 一键出售：
+  - sell_operations 将「未配置售卖物品」检查提前到函数开头：未添加任何售卖物品时完全跳过出售流程（不进入仓库），日志提示"未配置任何售卖物品，跳过售卖"
 
 ----------------------------------------
 v1.3.5 (2026-08-01)

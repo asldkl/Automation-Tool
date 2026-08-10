@@ -84,6 +84,13 @@ def sell_operations(settings, stop_event, set_operation):
     print("\n--- 一键出售 ---")
     set_operation("一键出售")
 
+    # 未配置任何售卖物品时完全跳过售卖（不进入仓库）
+    items_meta = config.load_sell_items_meta()
+    sell_items = items_meta.get("items", [])
+    if not sell_items:
+        print("⚠️ 未配置任何售卖物品，跳过售卖")
+        return False, sell_stats
+
     # 检查售卖时间区间
     if settings.get("sell_time_enabled", False):
         now = datetime.datetime.now().time()
@@ -107,13 +114,6 @@ def sell_operations(settings, stop_event, set_operation):
         return False, sell_stats
     # 等待仓库界面完全加载
     time.sleep(3)
-
-    # 加载物品元数据（每物品独立配置）
-    items_meta = config.load_sell_items_meta()
-    sell_items = items_meta.get("items", [])
-    if not sell_items:
-        print("⚠️ 未配置任何售卖物品")
-        return False, sell_stats
 
     sell_confidence = settings.get("sell_confidence", 0.55)
 

@@ -54,7 +54,6 @@ class SettingsWindow:
         self.smtp_code_var = tk.StringVar(value=app.settings.get("smtp_code", ""))
         self.sender_email_var = tk.StringVar(value=app.settings.get("sender_email", ""))
         self.receiver_email_var = tk.StringVar(value=app.settings.get("receiver_email", ""))
-        self.cooldown_email_enabled_var = tk.BooleanVar(value=app.settings.get("cooldown_email_enabled", False))
 
         # 账号列表滚动查找变量
         self.scroll_amount_var = tk.IntVar(value=app.settings.get("scroll_amount", 100))
@@ -73,9 +72,7 @@ class SettingsWindow:
         self.email_currency_var = tk.BooleanVar(value=app.settings.get("enable_email_currency", False))
 
         # 冷却管理变量
-        self.cooldown_enable_var = tk.BooleanVar(value=app.settings.get("enable_cooldown", False))
         self.cooldown_hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
-        self.cooldown_delay_var = tk.IntVar(value=app.settings.get("cooldown_delay_minutes", 1))
 
         # 自动关机变量
         self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
@@ -243,8 +240,6 @@ class SettingsWindow:
         ttk.Label(f4, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
         log_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(frame4, text="自定义操作「截图保存」步骤存到: 该目录/当天日期/账号名_时间.png",
-                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
 
         # ----- 图像识别置信度 -----
         frame3 = ttk.LabelFrame(parent, text="  图像识别设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -331,12 +326,10 @@ class SettingsWindow:
         guide_frame = ttk.LabelFrame(parent, text="  实用工具  ", style='SettingsCard.TLabelframe', padding=12)
         guide_frame.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(guide_frame, text="游戏辅助工具：皮肤抢购（图片识别查找购买按钮 + 余额检测）",
+        ttk.Label(guide_frame, text="实验功能：驱动键盘测试、日志遮罩、皮肤抢购",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
         btn_row = ttk.Frame(guide_frame, style='SettingsInner.TFrame')
         btn_row.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(btn_row, text="皮肤抢购", style='Accent.TButton',
-                   command=self._open_sniper_window, width=14).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="实验功能", style='TButton',
                    command=self._open_dev_test_window, width=12).pack(side=tk.LEFT)
 
@@ -346,20 +339,12 @@ class SettingsWindow:
         cooldown_frame = ttk.LabelFrame(parent, text="  冷却执行  ", style='SettingsCard.TLabelframe', padding=10)
         cooldown_frame.pack(fill=tk.X, pady=(0, 8))
 
-        cd_row1 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
-        cd_row1.pack(fill=tk.X, pady=(0, 4))
-        ttk.Checkbutton(cd_row1, text="启用账号冷却（每次运行完成后进入冷却期）",
-                       variable=self.cooldown_enable_var).pack(side=tk.LEFT, padx=5, pady=5)
-
         cd_row2 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
         cd_row2.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(cd_row2, text="冷却小时数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
         ttk.Spinbox(cd_row2, from_=1, to=24, increment=1,
-                    textvariable=self.cooldown_hours_var, width=6).pack(side=tk.LEFT, padx=(0, 18))
-        ttk.Label(cd_row2, text="账号间隔时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Spinbox(cd_row2, from_=0, to=5, increment=1,
-                    textvariable=self.cooldown_delay_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(cd_row2, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
+                    textvariable=self.cooldown_hours_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(cd_row2, text="小时", style='Settings.TLabel').pack(side=tk.LEFT)
 
         cd_row3 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
         cd_row3.pack(fill=tk.X, pady=(0, 4))
@@ -426,8 +411,6 @@ class SettingsWindow:
 
         ttk.Checkbutton(enable_frame, text="启用邮件通知（工作流执行完成后自动发送运行结果）",
                        variable=self.email_enable_var).pack(anchor=tk.W, padx=5, pady=5)
-        ttk.Checkbutton(enable_frame, text="冷却结束后发送邮件提醒（账号冷却到期时自动发送通知）",
-                       variable=self.cooldown_email_enabled_var).pack(anchor=tk.W, padx=5, pady=(0, 5))
 
         # ----- 邮箱配置 -----
         config_frame = ttk.LabelFrame(parent, text="  邮箱配置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -468,11 +451,19 @@ class SettingsWindow:
             "2. 将生成的授权码填入上方「SMTP 授权码」栏\n"
             "3. 发送者邮箱和接收者邮箱可以相同（自己发给自己）\n"
             "4. 点击「发送测试邮件」验证配置是否正确\n"
-            "5. 工作流执行完成后将自动发送包含运行结果的邮件通知\n"
-            "6. 冷却到期提醒需先启用「启用邮件通知」，再单独勾选冷却提醒"
+            "5. 工作流执行完成后将自动发送包含运行结果的邮件通知"
         )
-        ttk.Label(tips_frame, text=tips_text, style='SettingsSmall.TLabel',
-                 wraplength=500, justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
+        tips_label = ttk.Label(tips_frame, text=tips_text, style='SettingsSmall.TLabel',
+                 wraplength=500, justify=tk.LEFT)
+        tips_label.pack(anchor='w', padx=5, pady=5)
+
+        # 说明文本跟随窗口宽度自动换行
+        def _on_tips_resize(event):
+            try:
+                tips_label.configure(wraplength=max(200, event.width - 10))
+            except tk.TclError:
+                pass
+        tips_frame.bind("<Configure>", _on_tips_resize)
 
         server_info = ttk.Frame(tips_frame, style='SettingsInner.TFrame')
         server_info.pack(fill=tk.X, padx=5, pady=(0, 5))
@@ -571,7 +562,8 @@ class SettingsWindow:
         f4.pack(fill=tk.X)
         ttk.Label(f4, text="额外等待时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Spinbox(f4, from_=0, to=120, increment=5,
-                    textvariable=self.game_launch_wait_var, width=6).pack(side=tk.RIGHT, padx=(0, 4))
+                    textvariable=self.game_launch_wait_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(f4, text="秒", style='Settings.TLabel').pack(side=tk.LEFT)
 
         # ----- 账号数据导入导出 -----
         frame_acct = ttk.LabelFrame(parent, text="  账号数据导入导出  ", style='SettingsCard.TLabelframe', padding=12)
@@ -592,7 +584,6 @@ class SettingsWindow:
         tips_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
         tips_frame.pack(fill=tk.X, pady=(0, 0))
         tips_lines = (
-            "• 账号间隔时间：0-5分钟，相邻账号执行间隔，0=连续执行（在「自动任务」页设置）\n"
             "• 额外等待时间：0-120秒，机器配置较低时可增加游戏启动等待，默认0\n"
             "• 账号数据导入导出：导出为 JSON 备份；导入会覆盖当前账号数据（导入前自动备份）"
         )
@@ -669,6 +660,17 @@ class SettingsWindow:
         ttk.Checkbutton(frame_overlay, text="启用日志遮罩（默认开启）",
                         variable=self._overlay_var,
                         command=self._toggle_overlay).pack(anchor=tk.W, padx=5)
+
+        # ----- 皮肤抢购 -----
+        frame_sniper = ttk.LabelFrame(parent, text="  皮肤抢购  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_sniper.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_sniper, text="图片识别查找购买按钮 + 余额检测 + 超时自动停止",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+        sniper_btn_frame = ttk.Frame(frame_sniper, style='SettingsInner.TFrame')
+        sniper_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(sniper_btn_frame, text="打开皮肤抢购", style='Accent.TButton',
+                   command=lambda: self._open_sniper_window(getattr(self, '_dev_win', None)), width=14).pack(side=tk.LEFT)
 
     def _open_custom_ops_window(self):
         """打开自定义操作配置窗口（隐藏设置窗口，返回时恢复）"""
@@ -767,13 +769,14 @@ class SettingsWindow:
         except Exception as e:
             messagebox.showerror("导入失败", f"导入异常：{e}", parent=self.win)
 
-    def _open_sniper_window(self):
-        """打开皮肤抢购独立窗口"""
-        win = tk.Toplevel(self.win)
+    def _open_sniper_window(self, parent=None):
+        """打开皮肤抢购独立窗口（parent 缺省时为设置窗口）"""
+        parent = parent or self.win
+        win = tk.Toplevel(parent)
         win.title("皮肤抢购")
         win.resizable(True, True)
         win.minsize(480, 350)
-        win.transient(self.win)
+        win.transient(parent)
         utils.set_window_icon(win)
         utils.bind_window_geometry(win, "sniper_geometry", "500x400")
 
@@ -1643,7 +1646,6 @@ class SettingsWindow:
         fresh["smtp_code"] = self.smtp_code_var.get()
         fresh["sender_email"] = self.sender_email_var.get()
         fresh["receiver_email"] = self.receiver_email_var.get()
-        fresh["cooldown_email_enabled"] = self.cooldown_email_enabled_var.get()
 
         # 游戏启动等待
         fresh["game_launch_wait"] = self.game_launch_wait_var.get()
@@ -1675,9 +1677,7 @@ class SettingsWindow:
             pass
 
         # 冷却管理设置
-        fresh["enable_cooldown"] = self.cooldown_enable_var.get()
         fresh["cooldown_hours"] = self.cooldown_hours_var.get()
-        fresh["cooldown_delay_minutes"] = self.cooldown_delay_var.get()
 
         # 滚动量
         fresh["scroll_amount"] = self.scroll_amount_var.get()

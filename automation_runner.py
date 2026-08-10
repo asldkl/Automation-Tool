@@ -1016,24 +1016,6 @@ def _run_single_account(app, img_path, total, processed_accounts):
     _process_account_result(app, file_name, account_failed, account_interrupted, processed_accounts)
 
 
-def _wait_account_interval(app, i, total):
-    """账号间隔等待，返回 True=被中断应退出循环"""
-    if i >= total - 1 or app._stop_event.is_set():
-        return app._stop_event.is_set()
-    interval = app.settings.get("cooldown_delay_minutes", 1)
-    if interval <= 0:
-        return False
-    print(f"⏳ 等待 {interval} 分钟后执行下一个账号...")
-    set_operation(app, f"账号间隔等待 ({interval}分钟)")
-    wait_seconds = interval * 60
-    waited = 0
-    while waited < wait_seconds and not app._stop_event.is_set():
-        chunk = min(5, wait_seconds - waited)
-        time.sleep(chunk)
-        waited += chunk
-    return app._stop_event.is_set()
-
-
 def run_script_main(app):
     """主工作线程：遍历账号执行登录和游戏操作"""
     processed_accounts = []
@@ -1150,9 +1132,6 @@ def run_script_main(app):
                                     processed_accounts)
 
             if account_interrupted:
-                break
-
-            if _wait_account_interval(app, i, total):
                 break
 
         print("\n🎉 所有账号处理完毕！")

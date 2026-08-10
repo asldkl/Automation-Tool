@@ -160,9 +160,8 @@ DEFAULT_SETTINGS = {
     # 邮箱货币
     "enable_email_currency": False,   # 是否启用自动领取邮箱货币
     # 冷却管理
-    "enable_cooldown": False,         # 是否启用账号冷却
+    "enable_cooldown": True,          # 账号冷却（始终开启，不再提供开关）
     "cooldown_hours": 8,              # 冷却小时数（默认8小时）
-    "cooldown_delay_minutes": 0,      # 账号间隔时间（0-5分钟）
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
@@ -181,7 +180,6 @@ DEFAULT_SETTINGS = {
     "global_text_config_geometry": "",       # 全局文本配置窗口大小和位置
     "custom_cooldown_geometry": "",          # 自定义冷却时间窗口大小和位置
     "cooldown_window_geometry": "",          # 账号冷却状态窗口大小和位置
-    "cooldown_email_enabled": False,  # 冷却结束后发送邮件提醒
     # 模板分辨率记录
     "template_resolution": "",        # 模板截图时的屏幕分辨率
     # 模板上传状态记录
@@ -238,6 +236,8 @@ def load_settings():
                 saved = json.load(f)
             settings = dict(DEFAULT_SETTINGS)
             settings.update(saved)
+            # 冷却功能不再提供开关，始终开启（兼容旧配置里 enable_cooldown=false）
+            settings["enable_cooldown"] = True
             _settings_cache = settings
             _settings_cache_mtime = mtime
             return dict(settings)
