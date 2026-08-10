@@ -209,14 +209,10 @@ DEFAULT_SETTINGS = {
     "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
     # 日志遮罩（PyQt6 透明叠加层）
     "enable_log_overlay": True,                  # 是否启用日志遮罩（默认开启，开启时延迟加载 PyQt6）
-    # 自定义操作（主流程完成后自动执行：逐步骤找图→单击）
-    "enable_custom_ops": False,                  # 是否在主流程完成后自动执行自定义操作
+    # 自定义操作（主流程完成后自动执行，只要配置了工作流即启用）
     "custom_ops_confidence": 0.7,                # 自定义操作默认找图置信度
     "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）
     "custom_ops_pause": 0.5,                     # 自定义操作默认点击后停顿（秒）
-    "custom_ops_jitter": False,                  # 自定义操作点击是否受随机偏移影响（复用 click_jitter_max）
-    "custom_ops_max_runs": 0,                    # 每个账号自定义操作频率限制：0=不限（每 freq_days 天最多运行 max_runs 次）
-    "custom_ops_freq_days": 7,                   # 频率限制的时间窗口（天）
     "custom_ops_screenshot_dir": "",             # 截图保存步骤的全局保存目录（空=未配置）
 }
 

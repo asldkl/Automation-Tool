@@ -999,10 +999,10 @@ def _run_single_account(app, img_path, total, processed_accounts):
         # else: _launch_game 内部已调用 _recognize_and_store_asset、game_operations_wrapper（含一键出售）
 
     # 自定义操作（主流程完成、游戏在主界面，关闭游戏前执行）
-    # 频率限制在 custom_ops.run_custom_ops 内部按"份"各自判断
+    # 只要配置了自定义操作（有工作流含步骤）就执行；频率限制在 run_custom_ops 内部按工作流判断
     if (not account_failed and not account_interrupted
             and not app._stop_event.is_set()
-            and app.settings.get("enable_custom_ops", False)):
+            and custom_ops.has_configured()):
         try:
             custom_ops.run_custom_ops(app, file_name)
         except Exception as e:
@@ -1130,10 +1130,10 @@ def run_script_main(app):
                         account_failed = True
 
             # 步骤2.5：自定义操作（主流程完成、游戏在主界面，关闭游戏前执行）
-            # 频率限制在 custom_ops.run_custom_ops 内部按"份"各自判断
+            # 只要配置了自定义操作（有工作流含步骤）就执行；频率限制在 run_custom_ops 内部按工作流判断
             if (not account_failed and not account_interrupted
                     and not app._stop_event.is_set()
-                    and app.settings.get("enable_custom_ops", False)):
+                    and custom_ops.has_configured()):
                 try:
                     custom_ops.run_custom_ops(app, file_name)
                 except Exception as e:

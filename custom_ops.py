@@ -58,7 +58,7 @@ def load_batches():
         if isinstance(data, list):
             if data and isinstance(data[0], dict) and "steps" in data[0]:
                 return data                       # 新格式：批次列表
-            return [{"name": "份1", "max_runs": 0, "freq_days": 7, "steps": data}]  # 旧格式
+            return [{"name": "工作流1", "max_runs": 0, "freq_days": 7, "steps": data}]  # 旧格式
     except Exception:
         pass
     return []
@@ -76,6 +76,14 @@ def save_batches(batches):
     except Exception as e:
         print(f"⚠️ 保存自定义操作失败：{e}")
         return False
+
+
+def has_configured():
+    """是否配置了自定义操作（有工作流且含步骤）——有即主流程后自动执行"""
+    for b in load_batches():
+        if b.get("steps"):
+            return True
+    return False
 
 
 def image_path(filename):
@@ -212,7 +220,7 @@ def run_custom_ops(app, account_name, stop_event=None):
 
     # 拟人抖动：自定义操作窗口「点击受随机偏移影响」开关（复用全局 click_jitter_max）
     settings = getattr(app, 'settings', None) or {}
-    jitter_enabled = bool(settings.get("custom_ops_jitter", False))
+    jitter_enabled = bool(settings.get("enable_click_jitter", False))
     if jitter_enabled:
         utils.set_click_jitter(True, int(settings.get("click_jitter_max", 5)))
 
@@ -296,7 +304,7 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
     op_type = op.get("type", "image")
     name = op.get("name", f"步骤{idx}")
     settings = getattr(app, 'settings', None) or {}
-    jitter_enabled = bool(settings.get("custom_ops_jitter", False))
+    jitter_enabled = bool(settings.get("enable_click_jitter", False))
     jitter_max = int(settings.get("click_jitter_max", 5))
 
     if op_type == "coordinate":
@@ -423,7 +431,7 @@ def run_single_step(app, op, stop_event=None):
     if stop_event is None:
         stop_event = app._stop_event
     settings = getattr(app, 'settings', None) or {}
-    jitter_enabled = bool(settings.get("custom_ops_jitter", False))
+    jitter_enabled = bool(settings.get("enable_click_jitter", False))
     if jitter_enabled:
         utils.set_click_jitter(True, int(settings.get("click_jitter_max", 5)))
     try:
@@ -438,7 +446,7 @@ def run_custom_ops_for_test(app, batch, stop_event):
     """窗口内「运行测试」：运行指定批次"""
     steps = (batch or {}).get("steps", []) or []
     settings = getattr(app, 'settings', None) or {}
-    jitter_enabled = bool(settings.get("custom_ops_jitter", False))
+    jitter_enabled = bool(settings.get("enable_click_jitter", False))
     if jitter_enabled:
         utils.set_click_jitter(True, int(settings.get("click_jitter_max", 5)))
     try:

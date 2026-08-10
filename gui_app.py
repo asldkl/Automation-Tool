@@ -152,10 +152,10 @@ def enable_log_overlay(root):
         _qt_overlay = ScreenLogOverlay(max_lines=500, translucent_bg=False)
         _qt_overlay.show()
         # 开启提示：告知如何关闭（遮罩鼠标穿透，需通过托盘菜单或实验功能窗口关闭）
-        _qt_overlay.info("💡 日志遮罩：关闭请在 托盘菜单「日志遮罩」或「实验功能」窗口操作")
+        _qt_overlay.info("💡 日志遮罩：默认开启，关闭请在 托盘菜单「日志遮罩」操作")
         _schedule_qt_pump(root)
         _start_qt_watchdog(root)
-        print("📊 日志遮罩已开启（左下角透明日志层；关闭：托盘菜单「日志遮罩」或「实验功能」窗口）")
+        print("📊 日志遮罩已开启（左下角透明日志层；关闭：托盘菜单「日志遮罩」）")
     except Exception as e:
         _qt_overlay = None
         print(f"⚠️ 日志遮罩开启失败（不影响主程序）：{e}")
