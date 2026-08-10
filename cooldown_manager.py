@@ -4,6 +4,8 @@
 """
 import os
 import json
+import time
+import glob
 import datetime
 import threading
 import config
@@ -11,6 +13,11 @@ import utils
 
 COOLDOWN_JSON_PATH = os.path.join(config.APP_DATA_DIR, "cooldown.json")
 COOLDOWN_JSON_BACKUP = COOLDOWN_JSON_PATH + ".bak"
+
+# 带时间戳的历史备份：限频（最小间隔秒）+ 轮转（保留最近 N 份）
+_TS_BACKUP_INTERVAL = 30.0
+_MAX_TS_BACKUPS = 30
+_last_ts_backup_time = 0.0
 
 
 def normalize_key(img_path):
@@ -82,6 +89,35 @@ def _load_data():
     return _cache
 
 
+def _create_timestamped_backup():
+    """把当前 cooldown.json 复制一份带时间戳的历史备份（限频 + 轮转保留最近 N 份）
+    用于在逻辑性数据清空 / 误操作时找回保存前的状态"""
+    global _last_ts_backup_time
+    now = time.time()
+    if now - _last_ts_backup_time < _TS_BACKUP_INTERVAL:
+        return
+    try:
+        if not os.path.exists(COOLDOWN_JSON_PATH):
+            return
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest = f"{COOLDOWN_JSON_PATH}.bak.{ts}"
+        if os.path.exists(dest):
+            _last_ts_backup_time = now
+            return
+        import shutil
+        shutil.copy2(COOLDOWN_JSON_PATH, dest)
+        _last_ts_backup_time = now
+        # 轮转：只保留最近 N 份
+        backups = sorted(glob.glob(COOLDOWN_JSON_PATH + ".bak.[0-9]*"))
+        for old in backups[:-_MAX_TS_BACKUPS]:
+            try:
+                os.remove(old)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _save_data(data):
     """保存冷却数据（原子写入 + 备份保护，防止崩溃导致数据损坏/丢失）
     写盘成功后把最新数据同步到 .bak，保证备份始终是最新状态（含暂停账号和冷却）"""
@@ -93,6 +129,7 @@ def _save_data(data):
             try:
                 import shutil
                 shutil.copy2(COOLDOWN_JSON_PATH, COOLDOWN_JSON_BACKUP)
+                _create_timestamped_backup()  # 保留当前状态的时间戳备份（逻辑性清空前可找回）
             except Exception:
                 pass
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -399,35 +436,40 @@ def mark_game_failed(account_name):
 def remove_expired_cooldowns():
     """
     移除所有已过期的冷却记录
-    保留 account_paused 状态的记录（仅清除冷却字段，不清除暂停标记）
+    暂停账号在暂停期间保留冷却进度（不清时间戳），仅在冷却真正到期时清除冷却字段、保留暂停标记；
+    非暂停账号冷却到期或没有冷却记录时移除整个条目。
     返回: 被移除的账号名称列表
     """
     with _lock:
         data = _load_data()
         now = datetime.datetime.now()
         removed = []
+        cleared_paused = False
         for name, entry in list(data.items()):
-            # 账号暂停状态的记录不删除，仅清除冷却相关字段
-            if entry.get("account_paused"):
-                if "next_run_time" in entry or "last_run_time" in entry:
-                    entry.pop("next_run_time", None)
-                    entry.pop("last_run_time", None)
-                    entry.pop("paused", None)
-                    entry.pop("paused_remaining", None)
-                    entry.pop("paused_at", None)
-                continue
+            paused = entry.get("account_paused")
             next_run_str = entry.get("next_run_time", "")
             if not next_run_str:
-                removed.append(name)
+                # 无冷却记录：暂停账号仅保留暂停标记（不动），其余视为残留可移除
+                if not paused:
+                    removed.append(name)
                 continue
             try:
                 next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-                if now >= next_run:
-                    removed.append(name)
+                if now < next_run:
+                    continue  # 仍在冷却中，保留（含暂停账号的冷却进度）
             except Exception:
+                removed.append(name)
+                continue
+            # 冷却已到期
+            if paused:
+                # 暂停账号：仅清除冷却字段，保留 account_paused 标记
+                for key in ("next_run_time", "last_run_time", "paused", "paused_remaining", "paused_at"):
+                    entry.pop(key, None)
+                cleared_paused = True
+            else:
                 removed.append(name)
         for name in removed:
             del data[name]
-        if removed:
+        if removed or cleared_paused:
             _save_data(data)
         return removed
