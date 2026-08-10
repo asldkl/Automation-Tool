@@ -35,6 +35,7 @@ class TestCooldownManagerCache(unittest.TestCase):
         cm.COOLDOWN_JSON_PATH = os.path.join(TEST_DIR, "cd_cache.json")
         cm._cache = None
         cm._cache_mtime = 0.0
+        cm._load_corrupt = False
         if os.path.exists(cm.COOLDOWN_JSON_PATH):
             os.remove(cm.COOLDOWN_JSON_PATH)
 
@@ -42,6 +43,7 @@ class TestCooldownManagerCache(unittest.TestCase):
         self.cm.COOLDOWN_JSON_PATH = self._orig_path
         self.cm._cache = None
         self.cm._cache_mtime = 0.0
+        self.cm._load_corrupt = False
 
     def test_cache_hit_after_save(self):
         """保存后立即读取应命中缓存，不重新读文件"""

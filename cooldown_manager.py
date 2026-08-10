@@ -37,55 +37,76 @@ def normalize_key(img_path):
 _cache = None
 _cache_mtime = 0.0
 _lock = threading.Lock()
+# 上次加载是否因文件损坏且无可用备份而未取到真实数据；
+# 为 True 时禁止 _save_data 覆盖磁盘（防止崩溃后空/残缺数据抹掉冷却和暂停状态）
+_load_corrupt = False
 
 
 def _restore_from_backup():
-    """从备份文件恢复冷却数据，成功返回数据，失败返回空 dict"""
+    """从备份恢复冷却数据（优先 .bak，再尝试最近的时间戳备份）
+    成功返回数据，全部失败返回空 dict"""
     import shutil
-    if not os.path.exists(COOLDOWN_JSON_BACKUP):
-        return {}
+    candidates = [COOLDOWN_JSON_BACKUP]
     try:
-        with open(COOLDOWN_JSON_BACKUP, "r", encoding="utf-8") as f:
-            backup_data = json.load(f)
-        if backup_data:
-            # 恢复主文件
-            try:
-                shutil.copy2(COOLDOWN_JSON_BACKUP, COOLDOWN_JSON_PATH)
-            except Exception:
-                pass
-            print("🔄 冷却数据已从备份恢复")
-            return backup_data
+        ts_backups = sorted(glob.glob(COOLDOWN_JSON_PATH + ".bak.[0-9]*"), reverse=True)
+        candidates.extend(ts_backups)
     except Exception:
         pass
+    for path in candidates:
+        try:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as f:
+                backup_data = json.load(f)
+            if backup_data:
+                # 恢复主文件
+                try:
+                    shutil.copy2(path, COOLDOWN_JSON_PATH)
+                except Exception:
+                    pass
+                # 打印失败不影响恢复结果
+                try:
+                    print(f"冷却数据已从备份恢复: {os.path.basename(path)}")
+                except Exception:
+                    pass
+                return backup_data
+        except Exception:
+            continue
     return {}
 
 
 def _load_data():
     """加载冷却数据（带内存缓存，仅在文件修改时间变化时重新读取）
-    主文件不存在、损坏或为空时自动从备份恢复"""
-    global _cache, _cache_mtime
+    主文件不存在、损坏或为空时自动从备份恢复（.bak → 时间戳备份）；
+    仅当文件存在但解析失败且无可用备份时标记 _load_corrupt，防止后续空数据覆盖磁盘"""
+    global _cache, _cache_mtime, _load_corrupt
     try:
         mtime = os.path.getmtime(COOLDOWN_JSON_PATH)
     except OSError:
-        # 主文件不存在，尝试从备份恢复
+        # 主文件不存在：全新状态，尝试从备份恢复（若无备份则为空，允许新建）
         _cache = _restore_from_backup()
         _cache_mtime = 0.0
+        _load_corrupt = False
         return _cache
     if _cache is not None and mtime == _cache_mtime:
         return _cache
     try:
         with open(COOLDOWN_JSON_PATH, "r", encoding="utf-8") as f:
-            _cache = json.load(f)
-        # 主文件为空（如崩溃后变成 {}）但备份有数据 → 从备份恢复
-        if not _cache and os.path.exists(COOLDOWN_JSON_BACKUP):
+            parsed = json.load(f)
+        if parsed:
+            _cache = parsed
+            _load_corrupt = False
+        else:
+            # 空数据：尝试从备份恢复（无备份则视为空状态，不阻塞保存）
             backup_data = _restore_from_backup()
-            if backup_data:
-                _cache = backup_data
+            _cache = backup_data if backup_data else {}
+            _load_corrupt = False
         _cache_mtime = mtime
     except Exception:
-        # 读取失败（文件损坏），尝试从备份恢复
+        # 文件存在但解析失败（损坏）：尝试从备份恢复；恢复失败则标记损坏，禁止覆盖
         _cache = _restore_from_backup()
         _cache_mtime = 0.0
+        _load_corrupt = not _cache
     return _cache
 
 
@@ -121,7 +142,14 @@ def _create_timestamped_backup():
 def _save_data(data):
     """保存冷却数据（原子写入 + 备份保护，防止崩溃导致数据损坏/丢失）
     写盘成功后把最新数据同步到 .bak，保证备份始终是最新状态（含暂停账号和冷却）"""
-    global _cache, _cache_mtime
+    global _cache, _cache_mtime, _load_corrupt
+    # 防误覆盖：上次加载异常（文件损坏且无可用备份），拒绝用空/残缺数据覆盖磁盘上的有效数据
+    if _load_corrupt:
+        try:
+            print("冷却数据文件损坏且无可用备份，拒绝覆盖磁盘数据（请手动恢复 cooldown.json）")
+        except Exception:
+            pass
+        return
     tmp_path = COOLDOWN_JSON_PATH + ".tmp"
     try:
         # 保存前先备份旧文件（兜底，防止写入中途崩溃丢数据）
