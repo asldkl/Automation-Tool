@@ -222,8 +222,8 @@ Tkinter / OpenCV / PyAutoGUI / psutil / pywin32 / pystray+Pillow / RapidOCR / Py
 
 ## 贡献者
 
-- **开发团队** — 项目开发与维护
-- **Claude (Anthropic)** — AI 辅助代码审查、Bug 修复、代码优化与文档完善
+- **开发团队** — 产品设计与规划、自动化流程实现、游戏与平台适配、服务器部署与维护、打包与分发
+- **Claude (Anthropic)** — AI 辅助开发，涵盖：代码审查与缺陷修复、功能设计与实现、模块化重构、数据可靠性加固（冷却备份/崩溃恢复）、文档撰写与同步、打包与安装脚本维护
 
 ## 免责声明
 
