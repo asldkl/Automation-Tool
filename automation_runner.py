@@ -725,11 +725,35 @@ def _recognize_and_store_asset(app, stage=""):
         print(f"ℹ️ {stage}未识别到资产数值" if stage else "ℹ️ 未识别到资产数值")
 
 
+def _game_process_running():
+    """检查三角洲游戏进程是否仍在运行"""
+    import psutil
+    return any(
+        p.info['name'] and p.info['name'].lower() == config.DELTA_PROCESS.lower()
+        for p in psutil.process_iter(['name'])
+    )
+
+
+def _wait_game_process_exit(max_wait):
+    """等待三角洲游戏进程退出，最多 max_wait 秒，返回是否已退出"""
+    start = time.time()
+    while time.time() - start < max_wait:
+        if not _game_process_running():
+            return True
+        time.sleep(0.5)
+    return not _game_process_running()
+
+
 def _close_game(app):
-    """关闭三角洲游戏窗口"""
+    """关闭三角洲游戏窗口
+
+    优先优雅关闭：先发送 WM_CLOSE 并等待进程退出；
+    仅当 WM_CLOSE 无效时再兜底 Alt+F4 + 强制结束。
+    避免对全屏游戏直接注入 Alt+F4 强制退出（该路径会硬拆输入栈，
+    与拦截驱动/反作弊收尾冲突，曾导致 0x139/0xBE 蓝屏）。"""
     set_operation(app, "关闭三角洲游戏")
     print("\n--- 关闭三角洲游戏 ---")
-    # 先激活游戏窗口再发送 Alt+F4，避免关闭其他窗口
+    # 先激活游戏窗口，避免关闭其他窗口
     for title in DELTA_TITLES:
         hwnd = utils.find_window_by_title(title, partial_match=True)
         if hwnd:
@@ -743,15 +767,29 @@ def _close_game(app):
             except Exception:
                 pass
             break
-    for _ in range(3):
-        pyautogui.hotkey('alt', 'f4')
-        time.sleep(0.5)
-    time.sleep(1)
+
+    # 优雅关闭：发送 WM_CLOSE，等待进程退出（最多约 8 秒）
     for title in DELTA_TITLES:
         if app._stop_event.is_set():
             break
         utils.close_window_by_title(title, partial_match=True)
-    time.sleep(2)
+    if not app._stop_event.is_set():
+        _wait_game_process_exit(8)
+
+    # 仍未退出 → 兜底 Alt+F4（SendInput，不含驱动注入）
+    if not app._stop_event.is_set() and _game_process_running():
+        print("⚠️ WM_CLOSE 未生效，尝试 Alt+F4 关闭...")
+        for _ in range(3):
+            pyautogui.hotkey('alt', 'f4')
+            time.sleep(0.5)
+        time.sleep(1)
+        for title in DELTA_TITLES:
+            if app._stop_event.is_set():
+                break
+            utils.close_window_by_title(title, partial_match=True)
+        _wait_game_process_exit(6)
+
+    time.sleep(1)
     utils.kill_process(config.DELTA_PROCESS, wait_exit=True, max_wait=10)
 
 

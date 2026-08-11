@@ -754,6 +754,10 @@ v1.3.6 (2026-08-08)
 - 自定义操作键盘步骤修复：
   - text 模式支持中文等非 ASCII 文本：中文走剪贴板 + Ctrl+V 粘贴（win32clipboard），ASCII 用 pyautogui 输入
   - 约束：Interception 驱动仅用于 WeGame 登录时输入账号密码；游戏内（自定义操作键盘步骤）一律使用 pyautogui（SendInput），不再调用 Interception 驱动，避免驱动在游戏场景被误用
+- 游戏关闭方式修复（蓝屏 0x139/0xBE）：
+  - 用户反馈：对全屏游戏直接注入 Alt+F4 强制退出时，偶发蓝屏（KERNEL_SECURITY_CHECK_FAILURE / ATTEMPTED_WRITE_TO_READONLY_MEMORY），手动关闭游戏几乎不触发
+  - _close_game 改为「优雅关闭优先」：先发送 WM_CLOSE 并等待进程退出（最多约 8 秒），仅当无效时再兜底 Alt+F4（SendInput）+ 强制结束
+  - 新增 _game_process_running() / _wait_game_process_exit() 辅助函数；主循环在中断时跳过 _close_game 的逻辑保持不变
 
 ----------------------------------------
 v1.3.5 (2026-08-01)
