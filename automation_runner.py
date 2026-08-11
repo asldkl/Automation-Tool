@@ -1309,6 +1309,12 @@ def on_finish(app):
     except Exception as e:
         print(f"⚠️ 冷却数据兜底保存失败: {e}")
 
+    # 账号数据自动备份（达到间隔天数则备份，防崩溃/蓝屏导致账号数据丢失）
+    try:
+        account_manager.auto_backup_account_data(app)
+    except Exception as e:
+        print(f"⚠️ 账号数据自动备份失败: {e}")
+
     # 运行完成：保持主窗口隐藏（托盘），需要时手动点托盘图标恢复
     # 移除原来的 _show_window()，避免运行完自动弹出窗口
 

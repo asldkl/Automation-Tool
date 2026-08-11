@@ -25,6 +25,67 @@ def _account_key_from_path(path):
     return os.path.splitext(name)[0]
 
 
+def auto_backup_account_data(app, force=False):
+    """自动备份账号数据（accounts.json + cooldown.json + settings.json）到「目录及数据/账号数据备份/」
+
+    按 account_backup_days 间隔（0=关闭）；启动时 + 任务完成后调用。
+    返回是否执行了备份。备份文件与运行数据完全隔离，崩溃/蓝屏不影响。
+    """
+    import datetime
+    import shutil
+    days = app.settings.get("account_backup_days", 0)
+    if days <= 0:
+        return False
+    base_dir = (app.settings.get("log_save_path", "") or "").strip()
+    if not base_dir:
+        print("⚠️ 未设置「目录及数据」路径，跳过账号数据自动备份")
+        return False
+
+    # 检查是否到达间隔
+    last = app.settings.get("account_backup_last", "")
+    if not force and last:
+        try:
+            last_dt = datetime.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+            if (datetime.datetime.now() - last_dt).total_seconds() < days * 86400:
+                return False
+        except Exception:
+            pass
+
+    backup_dir = os.path.join(base_dir, "账号数据备份")
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+    except Exception as e:
+        print(f"⚠️ 创建备份目录失败：{e}")
+        return False
+
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    import cooldown_manager
+    src_files = [
+        ("accounts.json", ACCOUNTS_JSON_PATH),
+        ("cooldown.json", cooldown_manager.COOLDOWN_JSON_PATH),
+        ("settings.json", config.SETTINGS_JSON_PATH),
+    ]
+    count = 0
+    for name, src in src_files:
+        if not os.path.exists(src):
+            continue
+        try:
+            shutil.copy2(src, os.path.join(backup_dir, f"{name}.{ts}.bak"))
+            count += 1
+        except Exception as e:
+            print(f"⚠️ 备份 {name} 失败：{e}")
+
+    if count:
+        app.settings["account_backup_last"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            config.save_settings(app.settings)
+        except Exception:
+            pass
+        print(f"📦 账号数据自动备份完成（{count} 个文件）→ {backup_dir}")
+        return True
+    return False
+
+
 
 
 

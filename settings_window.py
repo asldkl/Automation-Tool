@@ -79,6 +79,9 @@ class SettingsWindow:
         self.shutdown_time_var = tk.StringVar(value=app.settings.get("auto_shutdown_time", "22:00"))
         self.post_run_shutdown_delay_var = tk.IntVar(value=app.settings.get("post_run_shutdown_delay", 0))
 
+        # 账号数据自动备份间隔（天，0=关闭）
+        self.account_backup_days_var = tk.IntVar(value=app.settings.get("account_backup_days", 0))
+
         self._active_canvas = None
         self._trace_ids = []  # 存储 trace 回调 ID，关闭时移除
         self._setup_styles()
@@ -231,8 +234,8 @@ class SettingsWindow:
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ----- 日志/截图保存目录（日志与截图共用一个根目录，按日期再分「日志」「图片」子文件夹） -----
-        frame4 = ttk.LabelFrame(parent, text="  日志/截图保存目录  ", style='SettingsCard.TLabelframe', padding=8)
+        # ----- 目录及数据（日志/截图/账号备份共用根目录，按日期分「日志」「图片」子文件夹） -----
+        frame4 = ttk.LabelFrame(parent, text="  目录及数据  ", style='SettingsCard.TLabelframe', padding=8)
         frame4.pack(fill=tk.X, pady=(0, 8))
 
         f4 = ttk.Frame(frame4, style='SettingsInner.TFrame')
@@ -579,6 +582,15 @@ class SettingsWindow:
                    command=self._export_accounts, width=14).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(acct_btn_frame, text="导入账号数据", style='TButton',
                    command=self._import_accounts, width=14).pack(side=tk.LEFT)
+
+        # 自动备份间隔（防崩溃/蓝屏导致账号数据丢失）
+        backup_row = ttk.Frame(frame_acct, style='SettingsInner.TFrame')
+        backup_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(backup_row, text="自动备份间隔：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(backup_row, from_=0, to=3, increment=1,
+                    textvariable=self.account_backup_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(backup_row, text="天（0=关闭；每 N 天自动备份账号+冷却+配置到「目录及数据/账号数据备份/」）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 设置说明 -----
         tips_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
@@ -1672,6 +1684,9 @@ class SettingsWindow:
         fresh["auto_shutdown_enabled"] = self.shutdown_enable_var.get()
         fresh["auto_shutdown_time"] = self.shutdown_time_var.get()
         fresh["post_run_shutdown_delay"] = self.post_run_shutdown_delay_var.get()
+
+        # 账号数据自动备份间隔（天，0=关闭）
+        fresh["account_backup_days"] = self.account_backup_days_var.get()
 
         # 邮件通知设置
         fresh["email_enabled"] = self.email_enable_var.get()

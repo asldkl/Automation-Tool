@@ -138,7 +138,9 @@ def save_sell_items_meta(data):
 DEFAULT_SETTINGS = {
     "wegame_path": "",                # 若空则自动从注册表获取
     "confidence": 0.7,                # 全局图像匹配置信度
-    "log_save_path": "",              # 日志保存目录，若为空则仅显示在界面
+    "log_save_path": "",              # 目录及数据（日志/截图/账号备份）根目录，若为空则仅显示在界面
+    "account_backup_days": 0,         # 账号数据自动备份间隔（天，0=关闭，1-3=每N天备份一次）
+    "account_backup_last": "",        # 上次账号数据自动备份时间（YYYY-MM-DD HH:MM:SS）
     "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
     # 自动关机
     "auto_shutdown_enabled": False,   # 是否启用自动关机

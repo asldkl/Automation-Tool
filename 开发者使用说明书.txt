@@ -764,6 +764,14 @@ v1.3.6 (2026-08-08)
 - 实验功能新增「测试关闭游戏」：
   - 设置 → 实验功能 → 测试关闭游戏区块，点击「关闭三角洲游戏」后台调用 automation_runner._close_game
   - 用于手动验证优雅关闭（WM_CLOSE 优先）是否生效、是否仍触发蓝屏
+- 账号数据自动备份（防崩溃/蓝屏导致账号数据丢失）：
+  - 设置 → 其他设置 → 账号数据导入导出 新增「自动备份间隔」选项（0-3 天，0=关闭，默认 0）
+  - account_manager.auto_backup_account_data()：将 accounts.json + cooldown.json + settings.json 复制到「目录及数据/账号数据备份/」，
+    文件名带时间戳（如 accounts.json.20260812_0217.bak）；备份与运行数据完全隔离，崩溃/蓝屏不影响
+  - 触发时机：程序启动时（gui_app._continue_init）+ 每次任务完成后（automation_runner.on_finish），按 account_backup_last 检查间隔
+  - 配置项：account_backup_days / account_backup_last
+- 「日志/截图保存目录」改名「目录及数据」：
+  - 设置 → 全局设置 的目录项改名为「目录及数据」（现包含日志、截图、账号数据备份）；log_save_path 含义不变
 
 ----------------------------------------
 v1.3.5 (2026-08-01)

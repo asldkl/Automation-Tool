@@ -400,6 +400,12 @@ class App:
         else:
             self._log_file_path = None
 
+        # 账号数据自动备份（防崩溃/蓝屏导致账号数据丢失，按间隔天数备份到「目录及数据/账号数据备份/」）
+        try:
+            account_manager.auto_backup_account_data(self)
+        except Exception:
+            pass
+
         # 初始化样式
         self._setup_styles()
 
