@@ -708,7 +708,7 @@ v1.3.6 (2026-08-08)
     - multi_image 多图点击：按顺序试多张图，点第一张找到的
     - drag 鼠标拖拽：起点→终点（smooth_move_to + mouseDown/Up）
     - scroll 鼠标滚轮：pyautogui.scroll（正上负下）
-    - screenshot 截图保存：pyautogui 截图存到 全局设置→截图保存目录/当天日期/账号名_时间.png
+    - screenshot 截图保存：pyautogui 截图存到 全局设置→截图保存目录/日期/图片/账号名_时间.png（如 8月11日/图片）
     - condition 条件跳转：找图/OCR 探测（_probe_image/_probe_ocr），满足则跳到指定步骤
     - jump 无条件跳转：配合 condition 实现循环/重试
   - 运行时：while 循环 + 可变索引支持跳转；死循环保护（10000 次上限）
@@ -758,6 +758,12 @@ v1.3.6 (2026-08-08)
   - 用户反馈：对全屏游戏直接注入 Alt+F4 强制退出时，偶发蓝屏（KERNEL_SECURITY_CHECK_FAILURE / ATTEMPTED_WRITE_TO_READONLY_MEMORY），手动关闭游戏几乎不触发
   - _close_game 改为「优雅关闭优先」：先发送 WM_CLOSE 并等待进程退出（最多约 8 秒），仅当无效时再兜底 Alt+F4（SendInput）+ 强制结束
   - 新增 _game_process_running() / _wait_game_process_exit() 辅助函数；主循环在中断时跳过 _close_game 的逻辑保持不变
+- 日志/截图目录整理：
+  - 日志与截图共用 log_save_path 根目录，日期文件夹内再分「日志」「图片」子文件夹：如 8月11日/日志/、8月11日/图片/
+  - 新增 utils.date_folder_name()：返回「M月D日」（如 8月11日）；gui_app 日志路径与 custom_ops 截图路径统一使用
+- 实验功能新增「测试关闭游戏」：
+  - 设置 → 实验功能 → 测试关闭游戏区块，点击「关闭三角洲游戏」后台调用 automation_runner._close_game
+  - 用于手动验证优雅关闭（WM_CLOSE 优先）是否生效、是否仍触发蓝屏
 
 ----------------------------------------
 v1.3.5 (2026-08-01)

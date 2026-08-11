@@ -394,8 +394,7 @@ class App:
         # 日志文件路径（初始 startup.log，每次运行时自动切换）
         log_dir = self.settings.get("log_save_path", "")
         if log_dir:
-            today = datetime.datetime.now().strftime("%Y-%m-%d")
-            date_dir = os.path.join(log_dir, today)
+            date_dir = os.path.join(log_dir, utils.date_folder_name(), "日志")
             os.makedirs(date_dir, exist_ok=True)
             self._log_file_path = os.path.join(date_dir, "startup.log")
         else:
@@ -1287,7 +1286,7 @@ class App:
         """切换日志到以运行时间命名的文件，按日期分文件夹存放
 
         每次运行开始时调用：
-        - 日志保存路径 / YYYY-MM-DD / HH-MM-SS.log
+        - 日志保存路径 / 8月11日 / 日志 / HH-MM-SS.log
         """
         if run_start_time is None:
             run_start_time = datetime.datetime.now()
@@ -1295,10 +1294,9 @@ class App:
         if not log_dir:
             self._log_file_path = None
             return
-        # 创建日期文件夹：YYYY-MM-DD
-        date_str = run_start_time.strftime("%Y-%m-%d")
+        # 创建日期/日志文件夹：8月11日/日志
         time_str = run_start_time.strftime("%H-%M-%S")
-        date_dir = os.path.join(log_dir, date_str)
+        date_dir = os.path.join(log_dir, utils.date_folder_name(run_start_time), "日志")
         os.makedirs(date_dir, exist_ok=True)
         new_log_path = os.path.join(date_dir, f"{time_str}.log")
         self._log_file_path = new_log_path

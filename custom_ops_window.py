@@ -765,7 +765,7 @@ class CustomOpsWindow:
                 ttk.Label(fields, text="保存位置（在 设置→全局设置→日志/截图保存目录 配置）:",
                           foreground='#7f8c8d').pack(anchor='w', pady=2)
                 ttk.Label(fields, text=save_dir, wraplength=300, foreground='#2c3e50').pack(anchor='w', pady=(0, 2))
-                ttk.Label(fields, text="保存为: 当天日期文件夹/账号名_时间.png（与日志同目录）",
+                ttk.Label(fields, text="保存为: 日期文件夹/图片/账号名_时间.png（如 8月11日/图片）",
                           foreground='#7f8c8d').pack(anchor='w')
             elif t == "condition":
                 fr = ttk.Frame(fields); fr.pack(fill=tk.X, pady=3)

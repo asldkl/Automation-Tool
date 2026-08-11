@@ -735,6 +735,14 @@ def format_asset_num(val):
         return f"{val:.0f}"
 
 
+def date_folder_name(dt=None):
+    """返回日期文件夹名，如 8月11日（日志与截图按此分文件夹）"""
+    import datetime
+    if dt is None:
+        dt = datetime.datetime.now()
+    return f"{dt.month}月{dt.day}日"
+
+
 # ==================== 冷却到期定时任务兜底 ====================
 COOLDOWN_SIGNAL_PATH = os.path.join(config.APP_DATA_DIR, "cooldown_signal")
 COOLDOWN_TASK_NAME = "DeltaAutoTool_Cooldown"

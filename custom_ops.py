@@ -426,15 +426,14 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
         pyautogui.scroll(amount)
         print(f"    ✅ 滚轮完成")
     elif op_type == "screenshot":
-        # 截图保存到 日志/截图保存目录/当天日期/账号名_时间.png（与日志同一天文件夹）
+        # 截图保存到 日志/截图保存目录/日期/图片/账号名_时间.png（与日志同日期，图片独立子文件夹）
         base_dir = (settings.get("log_save_path", "") or "").strip()
         if not base_dir:
             print(f"  [{idx}/{total}] ⚠️ 未设置日志/截图保存目录（在全局设置中配置），跳过")
         else:
             try:
                 import pyautogui
-                date_dir = time.strftime("%Y-%m-%d")
-                save_dir = os.path.join(base_dir, date_dir)
+                save_dir = os.path.join(base_dir, utils.date_folder_name(), "图片")
                 os.makedirs(save_dir, exist_ok=True)
                 shot = pyautogui.screenshot()
                 safe_name = "".join(c for c in account_name if c not in '\\/:*?"<>|').strip() or "账号"

@@ -231,7 +231,7 @@ class SettingsWindow:
         wegame_entry = ttk.Entry(f1, textvariable=self.wegame_var, width=45)
         wegame_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ----- 日志/截图保存目录（截图保存步骤共用此目录，与日志同天文件夹） -----
+        # ----- 日志/截图保存目录（日志与截图共用一个根目录，按日期再分「日志」「图片」子文件夹） -----
         frame4 = ttk.LabelFrame(parent, text="  日志/截图保存目录  ", style='SettingsCard.TLabelframe', padding=8)
         frame4.pack(fill=tk.X, pady=(0, 8))
 
@@ -671,6 +671,38 @@ class SettingsWindow:
         sniper_btn_frame.pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(sniper_btn_frame, text="打开皮肤抢购", style='Accent.TButton',
                    command=lambda: self._open_sniper_window(getattr(self, '_dev_win', None)), width=14).pack(side=tk.LEFT)
+
+        # ----- 测试关闭游戏 -----
+        frame_close = ttk.LabelFrame(parent, text="  测试关闭游戏  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_close.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_close, text="优雅关闭《三角洲行动》（WM_CLOSE 优先，无效才 Alt+F4）；请先打开游戏再测试",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
+        close_btn_frame = ttk.Frame(frame_close, style='SettingsInner.TFrame')
+        close_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(close_btn_frame, text="关闭三角洲游戏", style='Accent.TButton',
+                   command=self._test_close_game, width=16).pack(side=tk.LEFT)
+
+    def _test_close_game(self):
+        """测试优雅关闭三角洲游戏（WM_CLOSE 优先，验证蓝屏修复是否生效）"""
+        if not messagebox.askyesno("测试关闭游戏",
+                "将尝试优雅关闭正在运行的《三角洲行动》（WM_CLOSE 优先，无效才 Alt+F4）。\n\n"
+                "请确认游戏已打开、当前无需保存的游戏进度。是否继续？",
+                parent=self.win):
+            return
+        import threading
+        threading.Thread(target=self._run_close_game_test, daemon=True).start()
+        messagebox.showinfo("已执行", "关闭流程已在后台触发，请观察游戏窗口是否正常关闭、是否蓝屏。",
+                            parent=self.win)
+
+    def _run_close_game_test(self):
+        """后台执行关闭游戏测试"""
+        try:
+            import automation_runner
+            automation_runner._close_game(self.app)
+            print("✅ 测试关闭游戏流程执行完成")
+        except Exception as e:
+            print(f"⚠️ 测试关闭游戏异常：{e}")
 
     def _open_custom_ops_window(self):
         """打开自定义操作配置窗口（隐藏设置窗口，返回时恢复）"""
