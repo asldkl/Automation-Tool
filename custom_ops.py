@@ -145,15 +145,18 @@ def _save_runs(data):
 
 
 def should_skip_by_frequency(run_key, max_runs, days):
-    """检查 run_key（账号::批次）是否达到频率上限（每 days 天最多 max_runs 次）。
-    max_runs<=0 表示不限。返回 True=应跳过"""
+    """检查 run_key（账号::批次）是否达到频率上限（每 days 个自然日最多 max_runs 次）。
+    max_runs<=0 表示不限。窗口按自然日计算（含今天：days=1 即今天之内最多 max_runs 次）。
+    返回 True=应跳过"""
     if max_runs <= 0 or days <= 0:
         return False
     data = _load_runs()
     runs = data.get(run_key, []) or []
-    now = time.time()
-    cutoff = now - days * 86400
-    recent = [t for t in runs if t >= cutoff]
+    import datetime
+    today = datetime.date.today()
+    cutoff_date = today - datetime.timedelta(days=days - 1)   # days=1 → 今天 0 点
+    cutoff_ts = datetime.datetime(cutoff_date.year, cutoff_date.month, cutoff_date.day).timestamp()
+    recent = [t for t in runs if t >= cutoff_ts]
     return len(recent) >= max_runs
 
 
