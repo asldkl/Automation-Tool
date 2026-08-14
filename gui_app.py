@@ -405,6 +405,11 @@ class App:
             account_manager.auto_backup_account_data(self)
         except Exception:
             pass
+        # 清理过期日志/截图/账号备份（按保留天数，默认3天，0=不清理）
+        try:
+            account_manager.cleanup_old_data(self)
+        except Exception:
+            pass
 
         # 初始化样式
         self._setup_styles()

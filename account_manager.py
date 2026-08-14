@@ -86,6 +86,62 @@ def auto_backup_account_data(app, force=False):
     return False
 
 
+def cleanup_old_data(app):
+    """自动清理过期的日志/截图日期文件夹和账号数据备份，保留最近 log_retention_days 天（0=不清理）"""
+    import datetime
+    import re
+    import shutil
+    days = app.settings.get("log_retention_days", 3)
+    if days <= 0:
+        return
+    base_dir = (app.settings.get("log_save_path", "") or "").strip()
+    if not base_dir or not os.path.isdir(base_dir):
+        return
+    now = datetime.date.today()
+    cutoff = now - datetime.timedelta(days=days)
+    removed = 0
+
+    # 1. 清理日期文件夹（如 8月11日/，含日志和图片子文件夹）
+    for entry in os.listdir(base_dir):
+        path = os.path.join(base_dir, entry)
+        if not os.path.isdir(path):
+            continue
+        m = re.match(r'^(\d{1,2})月(\d{1,2})日$', entry)
+        if not m:
+            continue   # 跳过非日期文件夹（如 账号数据备份）
+        try:
+            folder_date = datetime.date(now.year, int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            continue
+        if folder_date > now:
+            # 年份回绕（如上年 8月11日）：视为已过期
+            folder_date = folder_date.replace(year=folder_date.year - 1)
+        if folder_date < cutoff:
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+
+    # 2. 清理账号数据备份（账号数据备份/xxx.YYYYMMDD_HHMM.bak）
+    backup_dir = os.path.join(base_dir, "账号数据备份")
+    if os.path.isdir(backup_dir):
+        for fn in os.listdir(backup_dir):
+            m = re.search(r'(\d{8})_(\d{4})', fn)
+            if not m:
+                continue
+            try:
+                file_date = datetime.datetime.strptime(m.group(1), "%Y%m%d").date()
+            except ValueError:
+                continue
+            if file_date < cutoff:
+                try:
+                    os.remove(os.path.join(backup_dir, fn))
+                    removed += 1
+                except Exception:
+                    pass
+
+    if removed:
+        print(f"已清理过期日志/备份 {removed} 项（保留最近 {days} 天）")
+
+
 
 
 

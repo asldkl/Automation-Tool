@@ -1315,6 +1315,12 @@ def on_finish(app):
     except Exception as e:
         print(f"⚠️ 账号数据自动备份失败: {e}")
 
+    # 清理过期日志/截图/账号备份（按保留天数，默认3天，0=不清理）
+    try:
+        account_manager.cleanup_old_data(app)
+    except Exception as e:
+        print(f"⚠️ 清理过期日志/备份失败: {e}")
+
     # 运行完成：保持主窗口隐藏（托盘），需要时手动点托盘图标恢复
     # 移除原来的 _show_window()，避免运行完自动弹出窗口
 

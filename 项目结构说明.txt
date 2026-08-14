@@ -96,6 +96,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 ├── account_manager.py          # 账号管理模块（v1.1.0 拆分，约 738 行）
 │   - save_accounts() / load_accounts()：账号持久化（含 notes 备注数据）
 │   - auto_backup_account_data()：账号数据自动备份（accounts.json + cooldown.json + settings.json 到「目录及数据/账号数据备份/」，按 account_backup_days 间隔，v1.3.6）
+│   - cleanup_old_data()：自动清理过期日志/截图日期文件夹与账号备份（按 log_retention_days 保留天数，0=不清理，v1.3.6）
 │   - add_account() / delete_account() / clear_accounts()：账号增删
 │   - move_up() / move_down()：账号排序
 │   - refresh_account_tree()：刷新 Treeview 列表（四列：账号名称/现有资产/下次运行时间/备注）
@@ -401,6 +402,7 @@ gui_app.py (入口层)
 |-----------------------------|----------------------------------|------------------------------|
 | confidence                  | 图像匹配置信度                     | 0.7                          |
 | account_backup_days         | 账号数据自动备份间隔（天，0=关闭）  | 0                            |
+| log_retention_days          | 日志/备份保留天数（0=不清理）       | 3                            |
 | server_url                  | 服务器地址                         | http://112.74.106.69:8000    |
 | client_key                  | 客户端密钥                         | Client_Normal_Key_2026       |
 | post_run_shutdown_delay     | 运行完成后延迟关机（分钟，0=不关机）  | 0                            |

@@ -82,6 +82,9 @@ class SettingsWindow:
         # 账号数据自动备份间隔（天，0=关闭）
         self.account_backup_days_var = tk.IntVar(value=app.settings.get("account_backup_days", 0))
 
+        # 日志/备份保留天数（0=不清理，默认3）
+        self.log_retention_days_var = tk.IntVar(value=app.settings.get("log_retention_days", 3))
+
         self._active_canvas = None
         self._trace_ids = []  # 存储 trace 回调 ID，关闭时移除
         self._setup_styles()
@@ -243,6 +246,15 @@ class SettingsWindow:
         ttk.Label(f4, text="保存路径：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         log_entry = ttk.Entry(f4, textvariable=self.log_var, width=45)
         log_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 日志/备份保留天数（自动清理）
+        ret_row = ttk.Frame(frame4, style='SettingsInner.TFrame')
+        ret_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(ret_row, text="日志/备份保留：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(ret_row, from_=0, to=90, increment=1,
+                    textvariable=self.log_retention_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(ret_row, text="天（0=不清理，默认3；启动时与任务完成后自动清理过期日志/截图/账号备份）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 图像识别置信度 -----
         frame3 = ttk.LabelFrame(parent, text="  图像识别设置  ", style='SettingsCard.TLabelframe', padding=12)
@@ -1691,6 +1703,9 @@ class SettingsWindow:
 
         # 账号数据自动备份间隔（天，0=关闭）
         fresh["account_backup_days"] = self.account_backup_days_var.get()
+
+        # 日志/备份保留天数（0=不清理）
+        fresh["log_retention_days"] = self.log_retention_days_var.get()
 
         # 邮件通知设置
         fresh["email_enabled"] = self.email_enable_var.get()
