@@ -779,7 +779,7 @@ class SettingsWindow:
         import account_manager
         src = filedialog.askopenfilename(
             parent=self.win, title="导入账号数据",
-            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")])
+            filetypes=[("账号数据文件", "*.json *.bak"), ("JSON 文件", "*.json"), ("所有文件", "*.*")])
         if not src:
             return
         if not messagebox.askyesno(
@@ -792,7 +792,11 @@ class SettingsWindow:
                 data = json.load(f)
             # 校验格式
             if not isinstance(data, dict) or "qq" not in data:
-                messagebox.showerror("导入失败", "文件格式不正确，不是有效的账号数据文件", parent=self.win)
+                messagebox.showerror("导入失败",
+                    "文件格式不正确，不是有效的账号数据文件。\n"
+                    "自动备份请选择 accounts.json 开头的文件（如 accounts.json.20260812_0217.bak）；\n"
+                    "cooldown.json / settings.json 的备份不能用于导入账号。",
+                    parent=self.win)
                 return
             # 先备份当前数据
             if os.path.exists(account_manager.ACCOUNTS_JSON_PATH):
