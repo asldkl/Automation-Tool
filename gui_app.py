@@ -1106,7 +1106,8 @@ class App:
         self.account_tree.tag_configure("cooling", foreground="#0078d4")   # 蓝色 - 冷却中
         self.account_tree.tag_configure("runnable", foreground="#4CAF50")  # 绿色 - 可运行
         self.account_tree.tag_configure("paused", foreground="#f44336")    # 红色 - 已暂停
-        self.account_tree.tag_configure("game_failed", foreground="#ff8c00")  # 黄色 - 游戏失败
+        self.account_tree.tag_configure("auto_paused", foreground="#f1c40f")  # 黄色 - 连续失败自动暂停
+        self.account_tree.tag_configure("game_failed", foreground="#ff8c00")  # 橙黄 - 游戏失败
         self.account_tree.tag_configure("separator", background="#e0e0e0")  # 分隔线
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')

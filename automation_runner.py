@@ -152,7 +152,7 @@ def start_run(app):
     app.stats_label.config(text="")
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
     app._last_account_error = ""
-    app._consecutive_failures = {}  # 重置连续失败计数
+    # 连续失败计数不随本轮重置（跨轮累计，成功或手动恢复才清零）
     app._cooldown_wait_done = False  # 重置冷却等待标志
     app.start_btn.config(state='disabled')
     app.stop_btn.config(state='normal')
@@ -203,7 +203,7 @@ def start_single_account_run(app, img_path):
     app.stats_label.config(text="")
     app.run_stats = {"total": 0, "success": 0, "fail": 0, "start_time": time.time()}
     app._last_account_error = ""
-    app._consecutive_failures = {}
+    # 连续失败计数不随本轮重置（跨轮累计，成功或手动恢复才清零）
     # 运行自动化时隐藏主窗口到托盘，防止遮挡游戏画面
     app._hide_to_tray()
     app.start_btn.config(state='disabled')
@@ -854,11 +854,16 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         if not app._user_stopped_cooldown:
             error_msg = getattr(app, '_last_account_error', '未知错误')
             email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts, error_msg)
-        # 连续失败计数
+        # 连续失败计数（跨轮累计）：达到 2 次自动暂停该账号（标黄，不弹窗）
         app._consecutive_failures[account_name] = app._consecutive_failures.get(account_name, 0) + 1
         if app._consecutive_failures[account_name] >= 2:
-            print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，跳过本轮")
-            processed_accounts[-1] = f"{account_name} (失败-跳过本轮)"
+            print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，自动暂停")
+            processed_accounts[-1] = f"{account_name} (失败-自动暂停)"
+            try:
+                cooldown_manager.set_account_paused(account_name, True)
+                cooldown_manager.set_auto_paused(account_name, True)
+            except Exception as e:
+                print(f"⚠️ 自动暂停账号失败: {e}")
     else:
         if app.settings.get("enable_cooldown", False):
             cd_hours = app.settings.get("cooldown_hours", 8)

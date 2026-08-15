@@ -541,10 +541,14 @@ def refresh_account_tree(app):
         # 计算下次运行时间（合并冷却剩余和下次运行）
         next_run_str = ""
         tag = "runnable"  # 默认可运行
-        # 检查账号暂停状态（独立于冷却暂停）
+        # 检查账号暂停状态（独立于冷却暂停）；连续失败自动暂停 → 标黄
         if cooldown_manager.is_account_paused(name):
-            next_run_str = "已暂停"
-            tag = "paused"
+            if cooldown_manager.is_auto_paused(name):
+                next_run_str = "连续失败已暂停"
+                tag = "auto_paused"
+            else:
+                next_run_str = "已暂停"
+                tag = "paused"
         elif name in all_cooldowns:
             cd_info = all_cooldowns[name]
             paused = cd_info.get("paused", False)
@@ -761,10 +765,14 @@ def toggle_account_pause(app):
     is_paused = cooldown_manager.is_account_paused(account_name)
     if is_paused:
         cooldown_manager.set_account_paused(account_name, False)
+        cooldown_manager.set_auto_paused(account_name, False)
+        # 手动恢复时清零连续失败计数
+        app._consecutive_failures.pop(account_name, None)
         refresh_account_tree(app)
         messagebox.showinfo("已恢复", f"「{account_name}」已恢复，运行时将正常执行。", parent=app.root)
     else:
         cooldown_manager.set_account_paused(account_name, True)
+        cooldown_manager.set_auto_paused(account_name, False)
         refresh_account_tree(app)
         messagebox.showinfo("已暂停", f"「{account_name}」已暂停，运行时将跳过该账号。", parent=app.root)
 

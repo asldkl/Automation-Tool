@@ -378,6 +378,26 @@ def is_account_paused(account_name):
         return bool(data[account_name].get("account_paused"))
 
 
+def set_auto_paused(account_name, auto_paused):
+    """设置账号是否因「连续失败」被自动暂停（列表标黄区分于手动暂停红色）"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            data[account_name] = {}
+        data[account_name]["auto_paused"] = auto_paused
+        _save_data(data)
+        return True
+
+
+def is_auto_paused(account_name):
+    """检查账号是否因「连续失败」被自动暂停"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        return bool(data[account_name].get("auto_paused"))
+
+
 def extend_all_cooldowns(hours=0.5):
     """给所有冷却中的账号延长冷却时间，不影响暂停账号
     只延长 next_run_time 还在未来（冷却中）的账号
