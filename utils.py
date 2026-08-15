@@ -44,7 +44,9 @@ def start_app(exe_path, app_name, wait_time=5):
         return False
     try:
         work_dir = os.path.dirname(exe_path)
-        subprocess.Popen(exe_path, cwd=work_dir)
+        # CREATE_NO_WINDOW：即使被启动的是控制台程序也不弹 cmd 窗口
+        subprocess.Popen(exe_path, cwd=work_dir,
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(f"✅ 已启动：{app_name}")
         time.sleep(wait_time)
         return True
@@ -484,7 +486,8 @@ def schedule_shutdown(delay_seconds=120):
     try:
         subprocess.run(
             ["shutdown", "/s", "/t", str(int(delay_seconds))],
-            check=True, capture_output=True, timeout=5
+            check=True, capture_output=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         return True
     except Exception as e:
@@ -498,7 +501,8 @@ def cancel_shutdown():
     try:
         subprocess.run(
             ["shutdown", "/a"],
-            check=True, capture_output=True, timeout=5
+            check=True, capture_output=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         print("🔌 已取消自动关机计划")
         return True
@@ -805,7 +809,8 @@ def create_cooldown_scheduled_task(trigger_time):
         # 先删除旧任务（静默，失败无所谓）
         subprocess.run(
             ["schtasks", "/delete", "/tn", COOLDOWN_TASK_NAME, "/f"],
-            capture_output=True, timeout=10
+            capture_output=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
 
         # 创建新任务（用 wscript.exe 运行 VBScript，完全无窗口）
@@ -817,7 +822,8 @@ def create_cooldown_scheduled_task(trigger_time):
              "/st", trigger_time_str,
              "/sd", trigger_date,
              "/f"],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         if result.returncode == 0:
             print(f"[OK] 已创建冷却定时任务：{trigger_time.strftime('%Y-%m-%d %H:%M')}")

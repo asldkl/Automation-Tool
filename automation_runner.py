@@ -438,9 +438,11 @@ def _login_account(app, account_name, i, total, processed_accounts):
             driver_restored = False
             # 先尝试重启驱动服务（不重启电脑），通常可恢复
             try:
-                subprocess.run(["sc", "stop", "interception"], capture_output=True, timeout=5)
+                subprocess.run(["sc", "stop", "interception"], capture_output=True, timeout=5,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
                 time.sleep(1)
-                result = subprocess.run(["sc", "start", "interception"], capture_output=True, timeout=5, text=True)
+                result = subprocess.run(["sc", "start", "interception"], capture_output=True, timeout=5, text=True,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
                 time.sleep(1)
                 if driver_keyboard.is_available():
                     print("✅ Interception 驱动服务已重新加载，继续执行")
@@ -451,7 +453,8 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 print(f"⚠️ 驱动服务重启失败 ({e})", end="")
             if not driver_restored:
                 print("，即将重启电脑...")
-                subprocess.run(["shutdown", "/r", "/t", "10", "/c", "Interception 驱动不可用，自动重启以重新加载驱动"], capture_output=True)
+                subprocess.run(["shutdown", "/r", "/t", "10", "/c", "Interception 驱动不可用，自动重启以重新加载驱动"], capture_output=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
                 app.root.after(0, lambda: messagebox.showinfo("提示", "Interception 驱动不可用，已尝试重启驱动服务未成功，系统将在 10 秒后自动重启电脑以重新加载驱动。"))
                 app._stop_event.set()  # 阻止后续账号执行（避免 cancel_shutdown 中断重启计划）
                 return False
