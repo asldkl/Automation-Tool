@@ -740,8 +740,14 @@ class TemplateCaptureWizard:
             prev_btn.config(state=tk.DISABLED)
             next_btn.config(state=tk.DISABLED)
             _load_next()
+        save_btn = ttk.Button(nav_frame, text="保存", style="Accent.TButton", command=on_save, width=12)
+        save_btn.pack(side=tk.RIGHT, padx=(0, 5))
+        ttk.Button(nav_frame, text="取消", command=win.destroy, width=10).pack(side=tk.RIGHT, padx=(0, 5))
+
+        def _upload_image():
+            """上传图片/文件夹进行模板匹配测试"""
             choice = messagebox.askyesno("上传方式",
-            "选择「是」上传单个或多个图片（文件选择）\\n选择「否」选择整个文件夹（批量匹配）",
+                "选择「是」上传单个或多个图片（文件选择）\n选择「否」选择整个文件夹（批量匹配）",
                 parent=win)
             files = []
             if choice:
@@ -766,9 +772,6 @@ class TemplateCaptureWizard:
             pending_files.append(None)
             _load_next()
             save_btn.config(text="保存并下一张")
-        save_btn = ttk.Button(nav_frame, text="保存", style="Accent.TButton", command=on_save, width=12)
-        save_btn.pack(side=tk.RIGHT, padx=(0, 5))
-        ttk.Button(nav_frame, text="取消", command=win.destroy, width=10).pack(side=tk.RIGHT, padx=(0, 5))
         if current_file[0]:
             do_matching(current_file[0])
         else:
