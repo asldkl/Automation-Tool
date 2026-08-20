@@ -149,7 +149,7 @@ class ScreenLogOverlay(QWidget):
                 font-size: 12px;
                 font-weight: bold;
                 padding: 2px 4px;
-                background: rgba(0, 0, 0, 120);
+                background: transparent;
             }
         """)
         layout.addWidget(self.status_label)

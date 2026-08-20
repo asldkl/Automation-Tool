@@ -1154,9 +1154,9 @@ def show_asset_history(app):
 
     tree.bind("<Double-1>", _on_double_click)
 
-    # 底部区域：清除按钮 + 统计信息
+    # 底部区域：清除按钮 + 统计信息（按钮固定在窗口右下角）
     bottom_frame = ttk.Frame(win)
-    bottom_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+    bottom_frame.pack(fill=tk.X, pady=(0, 10))
 
     # 清除记录资产按钮（先 pack 到右侧，保证小窗口下不被统计标签挤掉而看不见）
     def _clear_asset_records():
@@ -1205,10 +1205,10 @@ def show_asset_history(app):
             trend = "累计无变化"
             color = "#888"
         ttk.Label(bottom_frame, text=f"共 {len(history)} 条记录  |  {trend}",
-                  font=('Microsoft YaHei UI', 9), foreground=color).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                  font=('Microsoft YaHei UI', 9), foreground=color).pack(side=tk.LEFT, padx=(15, 0), fill=tk.X, expand=True)
     else:
         ttk.Label(bottom_frame, text=f"共 {len(history)} 条记录",
-                  font=('Microsoft YaHei UI', 9), foreground='#888').pack(side=tk.LEFT, fill=tk.X, expand=True)
+                  font=('Microsoft YaHei UI', 9), foreground='#888').pack(side=tk.LEFT, padx=(15, 0), fill=tk.X, expand=True)
 
 
 def _format_asset_num(val):
