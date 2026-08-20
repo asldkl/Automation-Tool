@@ -167,6 +167,11 @@ def start_run(app):
     server_client.start_heartbeat(app)
     app.work_thread = threading.Thread(target=run_script_main, args=(app,), daemon=True)
     app.work_thread.start()
+    # 启动日志遮罩顶行运行时长刷新
+    try:
+        app._start_overlay_ticker()
+    except Exception:
+        pass
 
 
 def stop_run(app):
@@ -217,6 +222,11 @@ def start_single_account_run(app, img_path):
     server_client.start_heartbeat(app)
     app.work_thread = threading.Thread(target=_run_single_account_main, args=(app, img_path), daemon=True)
     app.work_thread.start()
+    # 启动日志遮罩顶行运行时长刷新
+    try:
+        app._start_overlay_ticker()
+    except Exception:
+        pass
 
 
 def _run_single_account_main(app, img_path):
@@ -226,6 +236,10 @@ def _run_single_account_main(app, img_path):
         file_name = _get_cooldown_key(img_path)
         app._current_account_name = file_name
         total = len(app.qq_account_images)
+        try:
+            app._set_overlay_status(1, file_name)  # 更新日志遮罩顶行
+        except Exception:
+            pass
         print(f"🟢 单账号运行：{file_name}")
         utils.cancel_shutdown()  # 取消待执行的关机计划
 
@@ -279,9 +293,22 @@ def _run_single_account_main(app, img_path):
                         time.sleep(5)  # 等待游戏界面加载
                         automation._ensure_game_focused()
 
-                        # 进入烽火地带
+                        # 进入烽火地带（与主流程一致：最多重试 5 次）
                         print("进入烽火地带...")
-                        if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
+                        hazard_found = False
+                        for retry in range(5):
+                            if app._stop_event.is_set():
+                                account_interrupted = True
+                                break
+                            if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
+                                hazard_found = True
+                                break
+                            print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/5)...")
+                            automation._ensure_game_focused()
+                            time.sleep(5)
+                        if account_interrupted:
+                            pass  # 用户中断，交给后面统一处理
+                        elif hazard_found:
                             time.sleep(5)
 
                             # 按 Space、Space、Tab 进入特勤处（与主流程一致）
@@ -299,7 +326,7 @@ def _run_single_account_main(app, img_path):
                             print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
                             processed_accounts.append(f"{file_name} (已登录)")
                         else:
-                            print("❌ 未找到烽火地带入口")
+                            print("❌ 5次重试后仍未找到烽火地带入口")
                             account_failed = True
                     else:
                         print("❌ 未检测到游戏窗口")
@@ -1109,6 +1136,10 @@ def run_script_main(app):
 
             acc_text = f"第 {i+1}/{total} 个账号"
             app.root.after(0, app.update_ui, False, acc_text, file_name)
+            try:
+                app._set_overlay_status(i + 1, file_name)  # 更新日志遮罩顶行
+            except Exception:
+                pass
             print(f"\n{'='*40}")
             print(f"    {acc_text}  -  {file_name}")
             print(f"{'='*40}")
@@ -1241,6 +1272,11 @@ def on_finish(app):
     app._stop_event.clear()  # 清除工作线程停止信号，不影响调度器
     app._ignore_cooldown_this_run = False  # 重置冷却忽略标志
     app._is_boot_startup = False  # 重置开机启动标志
+    # 停止日志遮罩顶行运行时长刷新并复位为「未运行」
+    try:
+        app._stop_overlay_ticker()
+    except Exception:
+        pass
     # 停止心跳同步
     server_client.stop_heartbeat(app)
     app.start_btn.config(state='normal')

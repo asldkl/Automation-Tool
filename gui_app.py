@@ -45,6 +45,10 @@ _qt_overlay = None           # ScreenLogOverlay 实例
 _qt_app = None               # QApplication 实例（防止被 GC）
 _qt_pump_scheduled = False   # Qt 事件泵送是否已排队（合并重复请求）
 _qt_manual_hide = False      # 用户主动隐藏遮罩（屏幕取点/框选截图时临时隐藏，看门狗不恢复）
+# 遮罩顶行状态（正在运行第x个账号 / 运行时长）
+_ov_status_index = None      # 当前账号序号（None=未运行）
+_ov_status_account = None    # 当前账号名
+_ov_ticker_id = None         # 运行时长刷新定时器（root.after id）
 
 
 def _classify_log_level(message):
@@ -115,7 +119,7 @@ def _qt_watchdog_tick(root):
                 # 遮罩被意外销毁（如 Qt 窗口被外部关闭）→ 重新创建
                 print("🔄 日志遮罩被销毁，正在重新创建...")
                 _qt_overlay = None
-                enable_log_overlay(root)
+                enable_log_overlay(root, config.APP_SETTINGS.get("log_overlay_corner", 0))
                 root.after(1000, lambda: _qt_watchdog_tick(root))
                 return
             if not visible and not _qt_manual_hide:
@@ -137,7 +141,7 @@ def _qt_watchdog_tick(root):
             _qt_watchdog_running = False
 
 
-def enable_log_overlay(root):
+def enable_log_overlay(root, corner_index=0):
     """开启日志遮罩（延迟加载 PyQt6；失败不影响主程序）"""
     global _qt_overlay, _qt_app
     if _qt_overlay is not None:
@@ -150,12 +154,17 @@ def enable_log_overlay(root):
         if _qt_app is None:
             _qt_app = QApplication([])
         _qt_overlay = ScreenLogOverlay(max_lines=500, translucent_bg=False)
+        try:
+            _qt_overlay.cycle_corner(int(corner_index))  # 恢复上次关闭时的角落
+        except Exception:
+            pass
+        _qt_overlay.set_status_text("未运行")
         _qt_overlay.show()
         # 开启提示：告知如何关闭（遮罩鼠标穿透，需通过托盘菜单或实验功能窗口关闭）
         _qt_overlay.info("💡 日志遮罩：默认开启，关闭请在 托盘菜单「日志遮罩」操作")
         _schedule_qt_pump(root)
         _start_qt_watchdog(root)
-        print("📊 日志遮罩已开启（左下角透明日志层；关闭：托盘菜单「日志遮罩」）")
+        print("📊 日志遮罩已开启（透明日志层；关闭：托盘菜单「日志遮罩」）")
     except Exception as e:
         _qt_overlay = None
         print(f"⚠️ 日志遮罩开启失败（不影响主程序）：{e}")
@@ -175,12 +184,12 @@ def disable_log_overlay():
     print("📊 日志遮罩已关闭")
 
 
-def toggle_log_overlay(root):
+def toggle_log_overlay(root, corner_index=0):
     """切换日志遮罩开/关，返回开启状态"""
     if _qt_overlay is not None:
         disable_log_overlay()
     else:
-        enable_log_overlay(root)
+        enable_log_overlay(root, corner_index)
     return _qt_overlay is not None
 
 
@@ -208,6 +217,75 @@ def show_log_overlay():
             _qt_overlay.show()
             if _qt_app is not None:
                 _qt_app.processEvents()
+        except Exception:
+            pass
+
+
+def _overlay_status_text(app):
+    """生成遮罩顶行文本（正在运行第x个账号 / 运行时长）"""
+    if _qt_overlay is None:
+        return None
+    if _ov_status_index is None or not app.running:
+        return "未运行"
+    duration = 0
+    try:
+        st = app.run_stats.get("start_time") if isinstance(app.run_stats, dict) else None
+        if st:
+            duration = max(0, int(time.time() - st))
+    except Exception:
+        pass
+    h, m, s = duration // 3600, (duration % 3600) // 60, duration % 60
+    return f"正在运行第{_ov_status_index}个账号:'{_ov_status_account}';运行时长:'{h}H{m}M{s}S'"
+
+
+def _apply_overlay_status(app):
+    """把当前状态写到遮罩顶行"""
+    text = _overlay_status_text(app)
+    if text is not None and _qt_overlay is not None:
+        try:
+            _qt_overlay.set_status_text(text)
+        except Exception:
+            pass
+
+
+def _start_overlay_ticker(app):
+    """启动运行时长刷新定时器（每秒更新顶行）"""
+    global _ov_ticker_id
+    try:
+        if _ov_ticker_id:
+            app.root.after_cancel(_ov_ticker_id)
+    except Exception:
+        pass
+    _ov_ticker_id = None
+
+    def _tick():
+        global _ov_ticker_id
+        if _qt_overlay is None or not app.running:
+            _ov_ticker_id = None
+            return
+        _apply_overlay_status(app)
+        try:
+            _ov_ticker_id = app.root.after(1000, _tick)
+        except Exception:
+            _ov_ticker_id = None
+
+    _tick()
+
+
+def _stop_overlay_ticker(app):
+    """停止定时器并把顶行复位为「未运行」"""
+    global _ov_ticker_id, _ov_status_index, _ov_status_account
+    try:
+        if _ov_ticker_id:
+            app.root.after_cancel(_ov_ticker_id)
+    except Exception:
+        pass
+    _ov_ticker_id = None
+    _ov_status_index = None
+    _ov_status_account = None
+    if _qt_overlay is not None:
+        try:
+            _qt_overlay.set_status_text("未运行")
         except Exception:
             pass
 
@@ -652,7 +730,7 @@ class App:
 
     def _toggle_log_overlay(self):
         """切换日志遮罩开/关，并保存状态到设置"""
-        enabled = toggle_log_overlay(self.root)
+        enabled = toggle_log_overlay(self.root, self.settings.get("log_overlay_corner", 0))
         self.settings["enable_log_overlay"] = enabled
         config.save_settings(self.settings)
         # 刷新托盘菜单文本
@@ -661,6 +739,37 @@ class App:
                 self.tray_icon.update_menu()
             except Exception:
                 pass
+
+    def _set_overlay_status(self, index, account_name):
+        """设置遮罩顶行的当前账号（运行中的第x个账号 / 账号名）"""
+        global _ov_status_index, _ov_status_account
+        _ov_status_index = index
+        _ov_status_account = account_name
+        _apply_overlay_status(self)
+
+    def _start_overlay_ticker(self):
+        """启动遮罩运行时长刷新"""
+        _start_overlay_ticker(self)
+
+    def _stop_overlay_ticker(self):
+        """停止遮罩运行时长刷新并复位为未运行"""
+        _stop_overlay_ticker(self)
+
+    def _cycle_overlay_corner(self):
+        """日志遮罩角落逆时针旋转一次（左下→右下→右上→左上→左下），并保存位置"""
+        global _qt_overlay
+        if _qt_overlay is None:
+            return None
+        try:
+            idx = _qt_overlay.cycle_corner()
+            self.settings["log_overlay_corner"] = idx
+            config.save_settings(self.settings)
+            if _qt_app is not None:
+                _qt_app.processEvents()
+            return idx
+        except Exception as e:
+            print(f"⚠️ 切换日志遮罩角落失败: {e}")
+            return None
 
     def _hide_to_tray(self):
         """隐藏主窗口到系统托盘（运行自动化时防止遮挡游戏画面）"""
@@ -1336,7 +1445,7 @@ def main():
 
     # 日志遮罩：默认关闭，仅当设置开启时才延迟加载（PyQt6 可选，失败不影响主程序）
     if config.APP_SETTINGS.get("enable_log_overlay", False):
-        enable_log_overlay(root)
+        enable_log_overlay(root, config.APP_SETTINGS.get("log_overlay_corner", 0))
 
     # 显示加载界面
     loading_frame = ttk.Frame(root, padding=40)

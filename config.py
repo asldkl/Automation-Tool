@@ -210,6 +210,7 @@ DEFAULT_SETTINGS = {
     "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
     # 日志遮罩（PyQt6 透明叠加层）
     "enable_log_overlay": True,                  # 是否启用日志遮罩（默认开启，开启时延迟加载 PyQt6）
+    "log_overlay_corner": 0,                     # 日志遮罩所在角落（0=左下 1=右下 2=右上 3=左上，逆时针）
     # 自定义操作（主流程完成后自动执行，只要配置了工作流即启用）
     "custom_ops_confidence": 0.7,                # 自定义操作默认找图置信度
     "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）

@@ -20,6 +20,22 @@ import relative_mouse_move
 import ctypes
 
 
+# ==================== 日志节流（去重高频重复消息） ====================
+_dup_print_state = {}
+_dup_print_lock = threading.Lock()
+
+
+def throttled_print(message, interval=3.0):
+    """同一消息在 interval 秒内只打印一次，避免高频重复日志刷屏（如反复"未找到窗口"）"""
+    now = time.time()
+    with _dup_print_lock:
+        last = _dup_print_state.get(message, 0.0)
+        if now - last < interval:
+            return
+        _dup_print_state[message] = now
+    print(message)
+
+
 def smooth_move_to(x, y, duration=0.2, use_bezier=True):
     """使用贝塞尔曲线/Smoothstep算法平滑移动鼠标到目标位置"""
     try:
@@ -80,7 +96,7 @@ def activate_window_by_title(title_contains, partial_match=True, exclude_titles=
     windows = []
     win32gui.EnumWindows(enum_callback, windows)
     if not windows:
-        print(f"❌ 未找到包含 '{title_contains}' 的窗口")
+        throttled_print(f"❌ 未找到包含 '{title_contains}' 的窗口")
         return False
 
     hwnd, title = windows[0]

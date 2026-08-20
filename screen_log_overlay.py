@@ -36,7 +36,7 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QApplication, QPlainTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QVBoxLayout, QWidget
 
 
 # ==================== 日志级别枚举 ====================
@@ -77,6 +77,8 @@ class ScreenLogOverlay(QWidget):
 
     # Qt 信号：日志提交通道（int=等级, str=消息）
     log_signal = pyqtSignal(int, str)
+    # 顶行状态文本通道（线程安全）
+    status_signal = pyqtSignal(str)
 
     def __init__(self, max_lines: int = 500,
                  pos: QPoint | None = None,
@@ -136,24 +138,36 @@ class ScreenLogOverlay(QWidget):
             }}
         """)
 
-        # 布局
+        # 布局：顶部固定状态行 + 日志区
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.status_label = QLabel("未运行", self)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #ffd54a;
+                font-family: Consolas;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 2px 4px;
+                background: rgba(0, 0, 0, 120);
+            }
+        """)
+        layout.addWidget(self.status_label)
         layout.addWidget(self.text_edit)
         self.setLayout(layout)
 
         # 窗口尺寸与位置
         self.resize(width, height)
+        self._corner_index = 0   # 0=左下 1=右下 2=右上 3=左上（逆时针）
         if pos is not None:
             self.move(pos)
         else:
             screen = QApplication.primaryScreen().availableGeometry()
-            # 默认放到屏幕左下角
-            self.move(screen.left() + 12,
-                      screen.bottom() - self.height() - 12)
+            self.move(*self._corner_pos(screen, 0))
 
         # ---------- 信号槽连接（线程安全核心） ----------
         self.log_signal.connect(self._on_log)
+        self.status_signal.connect(self._on_status)
 
         # 事件过滤器：交互模式下拦截日志控件鼠标事件实现拖动
         self.text_edit.installEventFilter(self)
@@ -216,6 +230,36 @@ class ScreenLogOverlay(QWidget):
         """清空日志（注意：须在主线程调用，或通过信号转发）"""
         self.text_edit.clear()
 
+    def set_status_text(self, text: str) -> None:
+        """更新顶行状态文本（线程安全，内部走 Qt 信号）"""
+        self.status_signal.emit(str(text))
+
+    def cycle_corner(self, corner_index: int | None = None) -> int:
+        """按 左下→右下→右上→左上→左下 逆时针旋转遮罩角落；
+        corner_index 指定则直接跳转到该角落。返回当前角落索引(0-3)"""
+        if corner_index is not None:
+            self._corner_index = int(corner_index) % 4
+        else:
+            self._corner_index = (self._corner_index + 1) % 4
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(*self._corner_pos(screen, self._corner_index))
+        return self._corner_index
+
+    @property
+    def corner_index(self) -> int:
+        return self._corner_index
+
+    def _corner_pos(self, screen, idx: int) -> tuple:
+        """计算指定角落的窗口左上角坐标"""
+        margin = 12
+        if idx == 0:      # 左下
+            return screen.left() + margin, screen.bottom() - self.height() - margin
+        if idx == 1:      # 右下
+            return screen.right() - self.width() - margin, screen.bottom() - self.height() - margin
+        if idx == 2:      # 右上
+            return screen.right() - self.width() - margin, screen.top() + margin
+        return screen.left() + margin, screen.top() + margin   # 左上
+
     # ==================================================
     # 主线程槽函数（禁止子线程直接调用，由信号触发）
     # ==================================================
@@ -240,6 +284,10 @@ class ScreenLogOverlay(QWidget):
 
         # 自动滚动到底部
         self._scroll_to_bottom()
+
+    def _on_status(self, text: str) -> None:
+        """槽函数：主线程更新顶行状态文本"""
+        self.status_label.setText(str(text))
 
     def _scroll_to_bottom(self) -> None:
         """滚动到日志末尾（配合 setMaximumBlockCount 自动清理旧行）"""

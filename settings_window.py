@@ -677,13 +677,17 @@ class SettingsWindow:
         frame_overlay = ttk.LabelFrame(parent, text="  日志遮罩  ", style='SettingsCard.TLabelframe', padding=12)
         frame_overlay.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_overlay, text="PyQt6 透明日志叠加层（屏幕左下角，鼠标穿透不影响游戏）",
+        ttk.Label(frame_overlay, text="PyQt6 透明日志叠加层（鼠标穿透不影响游戏），顶行显示当前运行账号与时长",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         self._overlay_var = tk.BooleanVar(value=self.app.settings.get("enable_log_overlay", False))
-        ttk.Checkbutton(frame_overlay, text="启用日志遮罩（默认开启）",
+        overlay_row = ttk.Frame(frame_overlay, style='SettingsInner.TFrame')
+        overlay_row.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Checkbutton(overlay_row, text="启用日志遮罩（默认开启）",
                         variable=self._overlay_var,
-                        command=self._toggle_overlay).pack(anchor=tk.W, padx=5)
+                        command=self._toggle_overlay).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(overlay_row, text="更换角落", style='TButton',
+                   command=self._cycle_overlay_corner, width=10).pack(side=tk.LEFT)
 
         # ----- 皮肤抢购 -----
         frame_sniper = ttk.LabelFrame(parent, text="  皮肤抢购  ", style='SettingsCard.TLabelframe', padding=12)
@@ -750,6 +754,16 @@ class SettingsWindow:
             messagebox.showerror("日志遮罩", f"切换失败：{e}", parent=self.win)
         # 同步复选框状态（若 PyQt6 不可用会失败，恢复原状态）
         self._overlay_var.set(self.app.settings.get("enable_log_overlay", False))
+
+    def _cycle_overlay_corner(self):
+        """日志遮罩角落逆时针旋转一次（左下→右下→右上→左上→左下），位置持久化"""
+        try:
+            idx = self.app._cycle_overlay_corner()
+            if idx is not None:
+                corners = {0: "左下角", 1: "右下角", 2: "右上角", 3: "左上角"}
+                messagebox.showinfo("日志遮罩", f"已切换到 {corners.get(idx, '')}", parent=self.win)
+        except Exception as e:
+            messagebox.showerror("日志遮罩", f"切换角落失败：{e}", parent=self.win)
 
     def _save_jitter_settings(self):
         """保存点击随机偏移设置到 settings.json"""
