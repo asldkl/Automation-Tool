@@ -36,6 +36,11 @@ def throttled_print(message, interval=3.0):
     print(message)
 
 
+def human_click_delay(lo=0.05, hi=0.1):
+    """点击前的微量随机延时（拟人化，降低机械化特征）"""
+    time.sleep(random.uniform(lo, hi))
+
+
 def smooth_move_to(x, y, duration=0.2, use_bezier=True):
     """使用贝塞尔曲线/Smoothstep算法平滑移动鼠标到目标位置"""
     try:
@@ -278,6 +283,7 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                 y = max(margin, min(y, screen_h - margin))
             try:
                 smooth_move_to(x, y, duration=0.2)
+                human_click_delay()  # 点击前微量随机延时（拟人化）
                 pyautogui.click(clicks=clicks)
             except pyautogui.FailSafeException:
                 print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
@@ -674,6 +680,7 @@ def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
                     continue
                 try:
                     smooth_move_to(cx, cy, duration=0.2)
+                    human_click_delay()  # 点击前微量随机延时（拟人化）
                     pyautogui.click()
                 except pyautogui.FailSafeException:
                     print("⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")

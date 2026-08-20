@@ -201,6 +201,7 @@ class SkinSniper:
         # 1. 点击购买按钮
         self._log("点击购买按钮")
         utils.smooth_move_to(pos[0], pos[1], duration=0.2)
+        utils.human_click_delay()  # 点击前微量随机延时（拟人化）
         pyautogui.click()
         time.sleep(2)
 

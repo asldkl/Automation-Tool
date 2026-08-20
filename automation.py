@@ -5,6 +5,7 @@
 """
 import os
 import time
+import random
 import datetime
 import pyautogui
 
@@ -116,6 +117,9 @@ def sell_operations(settings, stop_event, set_operation):
     time.sleep(3)
 
     sell_confidence = settings.get("sell_confidence", 0.55)
+
+    # 每个账号随机化售卖物品顺序（避免每次固定顺序，降低脚本特征）
+    random.shuffle(sell_items)
 
     for item in sell_items:
         if stop_event.is_set():

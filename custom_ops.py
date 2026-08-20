@@ -347,7 +347,7 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
             x, y = _apply_jitter(x, y, jitter_max)
         print(f"  [{idx}/{total}] 坐标点击 ({x}, {y})...")
         utils.smooth_move_to(x, y)
-        time.sleep(0.05)
+        utils.human_click_delay()  # 点击前微量随机延时（拟人化）
         import pyautogui
         pyautogui.click()
         print(f"    ✅ 已点击坐标 ({x}, {y})")
