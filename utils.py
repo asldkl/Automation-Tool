@@ -55,7 +55,7 @@ def human_idle_micro_move():
         pass
 
 
-def human_pause(lo=0.4, hi=0.9):
+def human_pause(lo=0.45, hi=0.65):
     """操作间的随机'思考'停顿（拟人化），偶尔伴随一次悬停微动"""
     human_idle_micro_move()
     time.sleep(random.uniform(lo, hi))
