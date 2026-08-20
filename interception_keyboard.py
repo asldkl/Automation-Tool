@@ -8,6 +8,7 @@ import sys
 import ctypes
 import ctypes.wintypes
 import time
+import random
 
 # DLL 句柄和函数引用
 _dll = None
@@ -308,7 +309,8 @@ def _send_chars(chars, interval=0.02):
                 if _send(ctx, keyboard_device, shift_up, 1) <= 0:
                     return False
 
-            time.sleep(interval)
+            # 逐字符间隔随机化（拟人打字速度），保持基础间隔均值附近波动
+            time.sleep(interval * random.uniform(0.7, 1.5))
 
         return True
     except Exception as e:

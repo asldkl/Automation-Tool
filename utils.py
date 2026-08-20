@@ -41,20 +41,57 @@ def human_click_delay(lo=0.05, hi=0.1):
     time.sleep(random.uniform(lo, hi))
 
 
+def human_idle_micro_move():
+    """偶尔做一次 1-2px 的悬停微动（拟人手部自然微动），结束回到原位，不影响后续点击"""
+    if random.random() >= 0.15:
+        return
+    try:
+        dx = random.choice([-2, -1, 1, 2])
+        dy = random.choice([-1, 0, 1])
+        pyautogui.moveRel(dx, dy, _pause=False)
+        time.sleep(random.uniform(0.02, 0.06))
+        pyautogui.moveRel(-dx, -dy, _pause=False)
+    except Exception:
+        pass
+
+
+def human_pause(lo=0.4, hi=0.9):
+    """操作间的随机'思考'停顿（拟人化），偶尔伴随一次悬停微动"""
+    human_idle_micro_move()
+    time.sleep(random.uniform(lo, hi))
+
+
+def human_reaction_delay(lo=0.2, hi=0.8):
+    """识别到目标后的'反应时间'随机延时（拟人化，更大尺度的思考）"""
+    time.sleep(random.uniform(lo, hi))
+
+
 def smooth_move_to(x, y, duration=0.2, use_bezier=True):
-    """使用贝塞尔曲线/Smoothstep算法平滑移动鼠标到目标位置"""
+    """使用贝塞尔曲线/Smoothstep算法平滑移动鼠标到目标位置
+    移动时长随机化 + 偶尔轻微过冲回正，拟人手部动作"""
     try:
         cur_x, cur_y = pyautogui.position()
         offset_x = x - cur_x
         offset_y = y - cur_y
         if offset_x == 0 and offset_y == 0:
             return
+        # 移动时长随机化（速度自然变化）
+        duration = duration * random.uniform(0.85, 1.3)
         def move_step(dx, dy):
             pyautogui.moveRel(dx, dy, _pause=False)
             return True
         relative_mouse_move.perform_timed_relative_move(
             offset_x, offset_y, duration, move_step, use_bezier=use_bezier
         )
+        # 偶尔轻微过冲回正（拟人甩鼠标）
+        if abs(offset_x) + abs(offset_y) > 60 and random.random() < 0.12:
+            ox = max(1, int(abs(offset_x) * random.uniform(0.02, 0.05)))
+            oy = max(1, int(abs(offset_y) * random.uniform(0.02, 0.05)))
+            sx = 1 if offset_x >= 0 else -1
+            sy = 1 if offset_y >= 0 else -1
+            pyautogui.moveRel(sx * ox, sy * oy, _pause=False)
+            time.sleep(random.uniform(0.02, 0.05))
+            pyautogui.moveRel(-sx * ox, -sy * oy, _pause=False)
     except Exception:
         pyautogui.moveTo(x, y, duration=duration)
 
@@ -235,6 +272,8 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
     multiscale: True 使用多尺度边缘+灰度匹配，False 使用标准灰度匹配
     return_pos: True 返回 (success, (x,y)), False 返回 success
     """
+    # 识别前的'反应时间'随机延时（拟人化思考后再动作）
+    human_reaction_delay()
     threshold = confidence if confidence is not None else CONFIDENCE
     resolved = config.resolve_template_path(img_path)
     template = _cache_get(resolved)

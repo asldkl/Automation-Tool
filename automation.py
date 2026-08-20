@@ -23,41 +23,41 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     print(f"🏭 开始处理 {facility_name} ...")
     if not utils.find_and_click_smart(facility_img, timeout=15):
         return False
-    time.sleep(0.5)
+    utils.human_pause()
 
     if not utils.find_and_click_smart(config.MAKE, timeout=15):
         return False
-    time.sleep(0.5)
+    utils.human_pause()
 
     if not utils.find_and_click_smart(config.Collect, timeout=15):
         return False
-    time.sleep(0.5)
+    utils.human_pause()
 
     if not utils.find_and_click_smart(config.Claim_Reward, timeout=15):
         print(f"⚠️ 未找到领取奖励按钮，按 Esc 返回跳过 ({facility_name})")
         pyautogui.press("esc")
-        time.sleep(0.5)
+        utils.human_pause()
         pyautogui.press("esc")
-        time.sleep(0.5)
+        utils.human_pause()
     else:
-        time.sleep(0.5)
+        utils.human_pause()
 
     if not utils.find_and_click_smart(produce_item_img, timeout=15):
         return False
-    time.sleep(0.5)
+    utils.human_pause()
 
     if utils.find_and_click_smart(config.Auto_fill, timeout=8):
         print(f"🔧 一键补齐材料 ({facility_name})")
     else:
         print(f"ℹ️ 材料已足够，无需补齐 ({facility_name})")
-    time.sleep(0.5)
+    utils.human_pause()
 
     buy_attempts = 0
     while utils.find_and_click_smart(config.COIN_GAME, timeout=5):
         if stop_event.is_set():
             return False
         print(f"💰 购买材料 ({buy_attempts + 1}/5)")
-        time.sleep(0.5)
+        utils.human_pause()
         buy_attempts += 1
         if buy_attempts >= 5:
             print("⚠️ 购买尝试已达上限，可能价格波动频繁")
@@ -65,10 +65,10 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
 
     if not utils.find_and_click_smart(config.Produce, timeout=15):
         return False
-    time.sleep(0.5)
+    utils.human_pause()
 
     pyautogui.press("esc")
-    time.sleep(0.5)
+    utils.human_pause()
     print(f"✅ {facility_name} 处理完毕")
     if update_ui_callback:
         update_ui_callback()
@@ -150,20 +150,20 @@ def sell_operations(settings, stop_event, set_operation):
                 print(f"⚠️ 未找到物品 {item_name}，跳过")
                 sell_stats["not_found"] += 1
                 break
-            time.sleep(0.5)
+            utils.human_pause()
 
             if not utils.find_and_click_smart(config.Sell, timeout=10):
                 print(f"❌ 未找到出售按钮")
                 sell_stats["failed"] += 1
                 break
-            time.sleep(0.5)
+            utils.human_pause()
 
             if not utils.find_and_click_smart(config.List_Item, timeout=10):
                 print(f"❌ 未找到上架按钮")
                 sell_stats["failed"] += 1
                 break
             utils.smooth_move_to(20, 20)
-            time.sleep(0.5)
+            utils.human_pause()
 
             if discount_times > 0:
                 # 首次识别降价按钮并点击，鼠标停在按钮位置
@@ -238,7 +238,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     set_operation("进入大厅 / 特勤处")
     print("进入大厅...")
     pyautogui.press("Space")
-    time.sleep(0.5)
+    utils.human_pause()
     pyautogui.press("Space")
     time.sleep(0.8)
     pyautogui.press("Tab")
@@ -254,7 +254,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     else:
         print("❌ 多次重试后仍未找到特勤处图标")
         return "game_failed"
-    time.sleep(0.5)
+    utils.human_pause()
 
     selected_ops = settings.get("selected_operations", [])
     all_facilities = [
@@ -281,7 +281,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
                 all_success = False
                 break
         pyautogui.press("esc")
-        time.sleep(0.5)
+        utils.human_pause()
     if all_success:
         print("✅ 所有设施处理完成")
 
@@ -306,13 +306,13 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         if utils.find_and_click_smart(config.EMAIL_MAIL, timeout=10):
             time.sleep(1)
             if utils.find_and_click_smart(config.EMAIL_TRADE_HOUSE, timeout=10):
-                time.sleep(0.5)
+                utils.human_pause()
                 if utils.find_and_click_smart(config.EMAIL_CLAIM_ALL, timeout=10):
-                    time.sleep(0.5)
+                    utils.human_pause()
                     utils.find_and_click_smart(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
-                    time.sleep(0.5)
+                    utils.human_pause()
                 pyautogui.press("esc")
-                time.sleep(0.5)
+                utils.human_pause()
             print("✅ 邮箱货币领取流程完成")
         else:
             print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
