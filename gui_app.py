@@ -34,6 +34,19 @@ try:
 except ImportError:
     TRAY_AVAILABLE = False
 
+# 底部轮换提示（每段显示时前拼「提示：」，总长不超过30字）
+_HINT_TIPS = [
+    "双击「现有资产」查看资产记录",
+    "双击「下次运行时间」设冷却",
+    "双击「名称/备注」设账号信息",
+    "右键账号可上移下移删除暂停",
+    "右键单账号可快速进入游戏大厅",
+    "日志截图保存在目录及数据中",
+    "账号数据自动备份防崩溃丢失",
+    "冷却到期会自动运行任务",
+    "设置中可配置冷却出售邮箱等",
+]
+
 # -------------------- 有效期由服务器端统一校验 --------------------
 
 ACCOUNTS_JSON_PATH = os.path.join(config.APP_DATA_DIR, "accounts.json")
@@ -1023,14 +1036,24 @@ class App:
     def _show_account_menu(self, event):
         account_manager.show_account_menu(self, event)
 
-    def _double_click_next_run(self, event):
-        account_manager.double_click_next_run(self, event)
+    def _double_click_column(self, event):
+        account_manager.double_click_column(self, event)
 
     def _reset_selected_cooldown(self):
         account_manager.reset_selected_cooldown(self)
 
     def _start_periodic_tree_refresh(self):
         account_manager.start_periodic_tree_refresh(self)
+
+    def _rotate_hint(self):
+        """轮换底部提示文字（每次周期性刷新时切换到下一条）"""
+        if not _HINT_TIPS:
+            return
+        self._hint_index = (getattr(self, '_hint_index', 0) + 1) % len(_HINT_TIPS)
+        try:
+            self._hint_label.config(text=f"提示：{_HINT_TIPS[self._hint_index]}")
+        except Exception:
+            pass
 
     def _show_asset_history(self):
         account_manager.show_asset_history(self)
@@ -1221,13 +1244,14 @@ class App:
 
         btn_frame2 = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame2.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(btn_frame2, text="右键账号可上移/下移/删除/重置冷却；双击「下次运行时间」列可设置冷却时间",
-                  style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888').pack(side=tk.LEFT)
+        self._hint_index = 0
+        self._hint_label = ttk.Label(
+            btn_frame2, text=f"提示：{_HINT_TIPS[0] if _HINT_TIPS else ''}",
+            style='Info.TLabel', font=('Microsoft YaHei UI', 8), foreground='#888')
+        self._hint_label.pack(side=tk.LEFT)
 
         self.account_menu = tk.Menu(self.root, tearoff=0)
         self.account_menu.add_command(label="运行此账号", command=self._run_single_account)
-        self.account_menu.add_command(label="查看资产记录", command=self._show_asset_history)
-        self.account_menu.add_command(label="账号信息设置", command=self._show_account_note)
         self.account_menu.add_separator()
         self.account_menu.add_command(label="上移", command=self._move_up)
         self.account_menu.add_command(label="下移", command=self._move_down)
@@ -1237,7 +1261,7 @@ class App:
         self.account_menu.add_separator()
         self.account_menu.add_command(label="删除选中", command=self.delete_account)
         self.account_tree.bind("<Button-3>", self._show_account_menu)
-        self.account_tree.bind("<Double-1>", self._double_click_next_run)
+        self.account_tree.bind("<Double-1>", self._double_click_column)
         self.account_tree.bind("<Button-1>", self._on_tree_click)
 
         # ----- 状态信息栏 -----

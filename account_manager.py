@@ -622,19 +622,24 @@ def show_account_menu(app, event):
     app.account_menu.tk_popup(event.x_root, event.y_root)
 
 
-def double_click_next_run(app, event):
-    """双击账号列表：仅当双击「下次运行时间」列时打开自定义冷却时间"""
+def double_click_column(app, event):
+    """双击账号列表：按列分派功能
+    #2 现有资产 → 资产记录；#3 下次运行时间 → 自定义冷却；#4 名称/备注 → 账号信息设置；#1 名称列无动作"""
     region = app.account_tree.identify("region", event.x, event.y)
     if region != "cell":
         return
     column = app.account_tree.identify_column(event.x)
-    if column != "#3":  # next_run 列（name=#1, asset=#2, next_run=#3, note=#4）
-        return
     item = app.account_tree.identify_row(event.y)
     if not item or "separator" in app.account_tree.item(item, "tags"):
         return
     app.account_tree.selection_set(item)
-    custom_cooldown_time(app)
+    if column == "#2":      # 现有资产
+        show_asset_history(app)
+    elif column == "#3":    # 下次运行时间
+        custom_cooldown_time(app)
+    elif column == "#4":    # 名称/备注
+        show_account_note(app)
+    # #1 名称列双击不做动作
 
 
 def reset_selected_cooldown(app):
@@ -778,8 +783,14 @@ def toggle_account_pause(app):
 
 
 def start_periodic_tree_refresh(app):
-    """启动账号列表定时刷新（每60秒）"""
+    """启动账号列表定时刷新（每60秒），每次同时轮换底部提示"""
     refresh_account_tree(app)
+    # 轮换底部提示文字（若 App 支持）
+    try:
+        if hasattr(app, '_rotate_hint'):
+            app._rotate_hint()
+    except Exception:
+        pass
     app._tree_refresh_timer = app.root.after(60000, lambda: start_periodic_tree_refresh(app))
 
 
