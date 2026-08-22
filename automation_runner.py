@@ -235,6 +235,7 @@ def _run_single_account_main(app, img_path):
     try:
         file_name = _get_cooldown_key(img_path)
         app._current_account_name = file_name
+        app._asset_hub_value = None  # 单账号无大厅候选识别
         total = len(app.qq_account_images)
         try:
             app._set_overlay_status(1, file_name)  # 更新日志遮罩顶行
@@ -626,6 +627,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
 
 def _launch_game(app):
     """查找三角洲图标、资产识别、启动游戏、等待窗口。返回 True=成功"""
+    app._asset_hub_value = None  # 重置大厅候选资产（防跨账号残留）
     set_operation(app, "查找三角洲游戏图标")
     print("\n--- 启动三角洲行动 ---")
     if not utils.activate_window_by_title("WeGame", partial_match=True):
@@ -720,11 +722,52 @@ def _launch_game(app):
     return True
 
 
+def _hub_asset_check(app):
+    """进入特勤处前（大厅）识别一次资产，作为候选 A（与操作完成后的识别 B 对比校验）"""
+    settings = app.settings
+    if not settings.get("enable_asset_recognition", False):
+        return
+    region = settings.get("asset_region", [0, 0, 0, 0])
+    if not region or region[2] <= 0 or region[3] <= 0:
+        app._asset_hub_value = None
+        return
+    print("🔍 进入特勤处前识别资产（候选A）...")
+    time.sleep(4)  # 给一点时间用于资产识别
+    value = _recognize_asset(app, region)
+    if value:
+        app._asset_hub_value = value
+        print(f"💰 大厅识别到资产（候选A）：{value}")
+    else:
+        app._asset_hub_value = None
+        print("⚠️ 大厅资产识别失败（候选A为空）")
+
+
+def _validate_asset_pair(candidate_a, candidate_b, last_record_value):
+    """校验两次资产识别，返回最终有效值或 None
+    规则：
+      - 两者都成功：差≤3m，且与最近记录≤50m（无记录则无50m限制）→ 取后一次（B）
+      - 只成功一个：与最近记录≤50m（无记录则直接有效）"""
+    a = utils.parse_asset_value(candidate_a) if candidate_a else None
+    b = utils.parse_asset_value(candidate_b) if candidate_b else None
+    last = utils.parse_asset_value(last_record_value) if last_record_value else None
+    if a is None and b is None:
+        return None
+    if a is not None and b is not None:
+        if abs(a - b) <= 3_000_000:
+            if last is None or abs(b - last) <= 50_000_000:
+                return candidate_b   # 取后一次（操作完成后那次）
+        return None
+    # 只成功一个
+    raw = candidate_a if a is not None else candidate_b
+    val = a if a is not None else b
+    if last is None or abs(val - last) <= 50_000_000:
+        return raw
+    return None
+
+
 def _recognize_and_store_asset(app, stage=""):
-    """执行资产识别并存储结果
-    stage: 识别阶段标识（如"第一次"、"第二次"），用于日志区分
-    如果两次都成功，第二次结果会覆盖第一次（使用最新的资产数值）
-    """
+    """执行资产识别并存储结果（与大厅候选A对比校验，防误识别）
+    stage: 识别阶段标识，用于日志区分"""
     settings = app.settings
     if not settings.get("enable_asset_recognition", False):
         return
@@ -735,24 +778,41 @@ def _recognize_and_store_asset(app, stage=""):
         return
     print(f"🔍 正在识别资产区域{label}：{asset_region}")
     time.sleep(4)
-    asset_value = _recognize_asset(app, asset_region)
-    if asset_value:
-        print(f"💰 {stage}识别到资产：{asset_value}")
-        if app._current_account_name:
-            app._account_assets[app._current_account_name] = asset_value
-            print(f"💰 资产存储到：{app._current_account_name}，当前所有资产：{app._account_assets}")
-            if app._current_account_name not in app._asset_history:
-                app._asset_history[app._current_account_name] = []
-            app._asset_history[app._current_account_name].append({
-                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "value": asset_value
-            })
-            asset_db.record_asset(app._current_account_name, asset_value)
-            import account_manager
-            account_manager.save_accounts(app)
-            app.root.after(0, app._refresh_account_tree)
+    asset_value = _recognize_asset(app, asset_region)   # 这是 B（后一次）
+    # 取最近一次记录（本次存储前）
+    last_record = None
+    if app._current_account_name:
+        history = app._asset_history.get(app._current_account_name, [])
+        if history:
+            last_record = history[-1].get("value")
+    # 与大厅候选 A 对比校验
+    hub_value = getattr(app, '_asset_hub_value', None)
+    if hub_value:
+        valid = _validate_asset_pair(hub_value, asset_value, last_record)
     else:
-        print(f"ℹ️ {stage}未识别到资产数值" if stage else "ℹ️ 未识别到资产数值")
+        # 无大厅候选（单账号/大厅识别失败）：仅对本次识别做 50m 校验
+        valid = None
+        if asset_value:
+            v = utils.parse_asset_value(asset_value)
+            lv = utils.parse_asset_value(last_record) if last_record else None
+            if lv is None or (v is not None and abs(v - lv) <= 50_000_000):
+                valid = asset_value
+    if not valid:
+        print(f"⚠️ {stage}资产识别校验未通过，不存储" if stage else "⚠️ 资产识别校验未通过，不存储")
+        return
+    print(f"💰 {stage}识别到资产：{valid}")
+    if app._current_account_name:
+        app._account_assets[app._current_account_name] = valid
+        if app._current_account_name not in app._asset_history:
+            app._asset_history[app._current_account_name] = []
+        app._asset_history[app._current_account_name].append({
+            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "value": valid
+        })
+        asset_db.record_asset(app._current_account_name, valid)
+        import account_manager
+        account_manager.save_accounts(app)
+        app.root.after(0, app._refresh_account_tree)
 
 
 def _game_process_running():
@@ -1236,7 +1296,8 @@ def game_operations_wrapper(app):
     try:
         result = automation.game_operations(
             app.settings, app._stop_event, lambda text: set_operation(app, text),
-            update_ui_callback=lambda: app.root.after(0, app.update_ui, True))
+            update_ui_callback=lambda: app.root.after(0, app.update_ui, True),
+            on_hub_entered=lambda: _hub_asset_check(app))
     finally:
         utils.set_click_jitter(False)
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)

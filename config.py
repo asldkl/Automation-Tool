@@ -207,7 +207,7 @@ DEFAULT_SETTINGS = {
     "asset_ocr_confidence": 0.7,                 # 资产识别置信度
     # 游戏内点击随机偏移（拟人抖动）
     "enable_click_jitter": False,                # 是否启用游戏内点击随机偏移
-    "click_jitter_max": 5,                       # 最大偏移像素（圆内随机）
+    "click_jitter_max": 10,                      # 最大偏移像素（圆内随机）
     # 日志遮罩（PyQt6 透明叠加层）
     "enable_log_overlay": True,                  # 是否启用日志遮罩（默认开启，开启时延迟加载 PyQt6）
     "log_overlay_corner": 0,                     # 日志遮罩所在角落（0=左下 1=右下 2=右上 3=左上，逆时针）

@@ -210,9 +210,10 @@ def _ensure_game_focused():
     return False
 
 
-def game_operations(settings, stop_event, set_operation, update_ui_callback=None):
+def game_operations(settings, stop_event, set_operation, update_ui_callback=None, on_hub_entered=None):
     """
     执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
+    on_hub_entered: 进入大厅（空格Tab后、特勤处前）的回调，用于资产识别
     返回 True=成功，False=失败
     """
     print("\n--- 进入游戏操作 ---")
@@ -244,6 +245,13 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     pyautogui.press("Tab")
     time.sleep(1)
 
+    # 进入特勤处前，给一点时间做资产识别（候选A）
+    if on_hub_entered:
+        try:
+            on_hub_entered()
+        except Exception:
+            pass
+
     for retry in range(3):
         if stop_event.is_set():
             return False
@@ -268,6 +276,8 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         print("ℹ️ 未选择任何设施操作，跳过游戏内操作")
         return True
     op_names = [f[3] for f in all_facilities if f[0] in selected_ops]
+    # 4 个设施组（制造+收取等成组）执行顺序随机，降低固定顺序的脚本特征
+    random.shuffle(facilities)
     print(f"🔧 将执行：{'、'.join(op_names)}")
     all_success = True
     for fac_img, prod_img, fac_name in facilities:

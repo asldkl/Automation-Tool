@@ -253,7 +253,7 @@ class SettingsWindow:
         ttk.Label(ret_row, text="日志/备份保留：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         ttk.Spinbox(ret_row, from_=0, to=90, increment=1,
                     textvariable=self.log_retention_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(ret_row, text="天（0=不清理，默认3；启动时与任务完成后自动清理过期日志/截图/账号备份）",
+        ttk.Label(ret_row, text="天（0=不清理，默认3，自动清理过期数据）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 图像识别置信度 -----
@@ -370,14 +370,14 @@ class SettingsWindow:
         cd_row4.pack(fill=tk.X, pady=(0, 4))
         ttk.Checkbutton(cd_row4, text="定时任务兜底（冷却到期时自动启动程序）",
                        variable=self.cooldown_scheduled_task_var).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Label(cooldown_frame, text="开启后即使程序未运行，冷却到期也会通过系统定时任务自动启动程序执行",
+        ttk.Label(cooldown_frame, text="开启后程序未运行也会自动启动执行",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
         cd_row5 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
         cd_row5.pack(fill=tk.X, pady=(4, 4))
         ttk.Checkbutton(cd_row5, text="Interception 驱动失败时自动重启电脑",
                        variable=self.restart_on_interception_fail_var).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Label(cooldown_frame, text="开启后运行时如果检测到 Interception 驱动不可用，将自动重启电脑重新加载驱动",
+        ttk.Label(cooldown_frame, text="驱动不可用时自动重启电脑重新加载",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
         # ----- 开机自启动 -----
@@ -411,7 +411,7 @@ class SettingsWindow:
         frame_custom.pack(fill=tk.X, pady=(8, 0))
 
         ttk.Label(frame_custom,
-                  text="主流程完成后（游戏回到主界面）自动执行「找图→单击」步骤序列，可自行批量操作",
+                  text="主流程完成后自动执行「找图→单击」步骤",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         ttk.Button(frame_custom, text="配置自定义操作", style='Accent.TButton',
@@ -601,18 +601,25 @@ class SettingsWindow:
         ttk.Label(backup_row, text="自动备份间隔：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         ttk.Spinbox(backup_row, from_=0, to=3, increment=1,
                     textvariable=self.account_backup_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(backup_row, text="天（0=关闭；每 N 天自动备份账号+冷却+配置到「目录及数据/账号数据备份/」）",
+        ttk.Label(backup_row, text="天（0=关闭，每 N 天自动备份数据）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 设置说明 -----
         tips_frame = ttk.Frame(parent, style='SettingsInner.TFrame')
         tips_frame.pack(fill=tk.X, pady=(0, 0))
         tips_lines = (
-            "• 额外等待时间：0-120秒，机器配置较低时可增加游戏启动等待，默认0\n"
-            "• 账号数据导入导出：导出为 JSON 备份；导入会覆盖当前账号数据（导入前自动备份）"
+            "• 额外等待时间：0-120秒，可增加游戏启动等待，默认0\n"
+            "• 账号数据导入导出：导出 JSON 备份；导入会覆盖当前账号数据（导入前自动备份）"
         )
-        ttk.Label(tips_frame, text=tips_lines, style='SettingsSmall.TLabel',
-                  justify=tk.LEFT).pack(anchor='w', padx=5, pady=5)
+        tips_label = ttk.Label(tips_frame, text=tips_lines, style='SettingsSmall.TLabel', justify=tk.LEFT)
+        tips_label.pack(anchor='w', padx=5, pady=5)
+        # 说明文本跟随窗口宽度自动换行
+        def _on_tips_resize(event):
+            try:
+                tips_label.configure(wraplength=max(200, event.width - 10))
+            except tk.TclError:
+                pass
+        tips_frame.bind("<Configure>", _on_tips_resize)
 
     def _open_dev_test_window(self):
         """打开实验功能独立窗口"""
@@ -1230,7 +1237,7 @@ class SettingsWindow:
         ttk.Entry(time_row2, textvariable=self.sell_time_start_var, width=8).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(time_row2, text="结束时间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         ttk.Entry(time_row2, textvariable=self.sell_time_end_var, width=8).pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(time_row2, text="格式 HH:MM，仅在此时间段内执行售卖",
+        ttk.Label(time_row2, text="格式 HH:MM，仅在该时段执行",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 出售设置 -----
