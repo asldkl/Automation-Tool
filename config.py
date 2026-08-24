@@ -336,14 +336,12 @@ MAKE                = resource_path("picture/Crafting_Controls/Make.png")
 Produce             = resource_path("picture/Crafting_Controls/Produce.png")
 Collect             = resource_path("picture/Crafting_Controls/Collect.png")
 Auto_fill           = resource_path("picture/Crafting_Controls/Auto_fill.png")
-Claim_Reward        = resource_path("picture/Crafting_Controls/Claim_Reward.png")
 COIN_GAME           = resource_path("picture/Crafting_Controls/coin_game.png")
 
 # ==================== 邮箱货币图片 ====================
 EMAIL_MAIL              = resource_path("picture/email/mail.png")
 EMAIL_TRADE_HOUSE       = resource_path("picture/email/Trade_House.png")
 EMAIL_CLAIM_ALL         = resource_path("picture/email/Claim_All.png")
-EMAIL_RECEIVE_COMPLETED = resource_path("picture/email/Receive_Completed.png")
 
 # ==================== 一键出售图片 ====================
 Warehouse           = resource_path("picture/One_Click_Sell/Warehouse.png")
@@ -422,7 +420,6 @@ TEMPLATE_CAPTURE_LIST = [
     # ===== 制造通用按钮 =====
     ("MAKE",                "picture/Crafting_Controls/Make.png",            "制造按钮",         "在设施界面，截取「制造」按钮"),
     ("Collect",             "picture/Crafting_Controls/Collect.png",         "收取按钮",         "在制造界面，截取「收取」按钮"),
-    ("Claim_Reward",        "picture/Crafting_Controls/Claim_Reward.png",    "领取奖励按钮",     "在制造界面，截取「领取奖励」按钮"),
     ("Auto_fill",           "picture/Crafting_Controls/Auto_fill.png",       "一键补齐按钮",     "在制造界面，截取「一键补齐」按钮"),
     ("COIN_GAME",           "picture/Crafting_Controls/coin_game.png",       "游戏币购买按钮",   "在制造界面，截取游戏币购买按钮"),
     ("Produce",             "picture/Crafting_Controls/Produce.png",         "产出按钮",         "在制造界面，截取「产出」相关按钮"),
@@ -430,7 +427,6 @@ TEMPLATE_CAPTURE_LIST = [
     ("EMAIL_MAIL",             "picture/email/mail.png",              "邮箱入口",         "在游戏主界面，截取「邮箱」图标"),
     ("EMAIL_TRADE_HOUSE",      "picture/email/Trade_House.png",       "交易中心入口",     "在邮箱界面，截取「交易中心」图标"),
     ("EMAIL_CLAIM_ALL",        "picture/email/Claim_All.png",         "全部领取按钮",     "在交易中心界面，截取「全部领取」按钮"),
-    ("EMAIL_RECEIVE_COMPLETED","picture/email/Receive_Completed.png", "领取完成确认按钮", "在领取界面，截取「领取完成」按钮"),
     # ===== 一键出售 =====
     ("Warehouse",           "picture/One_Click_Sell/Warehouse.png",       "仓库入口",     "在游戏主界面，截取「仓库」图标"),
     ("Sell",                "picture/One_Click_Sell/Sell.png",            "出售按钮",     "在物品详情界面，截取「出售」按钮"),
