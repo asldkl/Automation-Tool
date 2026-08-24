@@ -33,14 +33,9 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
         return False
     utils.human_pause()
 
-    if not utils.find_and_click_smart(config.Claim_Reward, timeout=15):
-        print(f"⚠️ 未找到领取奖励按钮，按 Esc 返回跳过 ({facility_name})")
-        pyautogui.press("esc")
-        utils.human_pause()
-        pyautogui.press("esc")
-        utils.human_pause()
-    else:
-        utils.human_pause()
+    # 领取奖励：直接按空格领取（无需图片识别，对应模板第20步）
+    pyautogui.press("Space")
+    utils.human_pause()
 
     if not utils.find_and_click_smart(produce_item_img, timeout=15):
         return False
@@ -319,7 +314,9 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
                 utils.human_pause()
                 if utils.find_and_click_smart(config.EMAIL_CLAIM_ALL, timeout=10):
                     utils.human_pause()
-                    utils.find_and_click_smart(config.EMAIL_RECEIVE_COMPLETED, timeout=10)
+                    # 领取完成：直接按空格确认（对应模板第27步，无需图片识别）
+                    pyautogui.press("Space")
+                    time.sleep(0.5)
                     utils.human_pause()
                 pyautogui.press("esc")
                 utils.human_pause()

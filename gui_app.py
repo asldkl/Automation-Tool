@@ -532,9 +532,11 @@ class App:
         is_auto_start = '--auto-start' in sys.argv
         if is_auto_start:
             print("🔄 检测到开机自启动标志 (--auto-start)")
+            # 开机静默运行：不显示主窗口，驻留托盘（可从托盘恢复）
+            self._is_boot_startup = True
+            self._hide_to_tray()
             if self.settings.get("run_on_startup", False) and self.qq_account_images:
                 print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
-                self._is_boot_startup = True
                 self.root.after(2000, self.start)
             else:
                 print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
