@@ -292,9 +292,40 @@ def _open_account_info_window(app, account_key=None):
             pass_entry.config(show='*')
             toggle_btn.config(text='显示密码')
 
+    # 观察状态开关：点击进入观察状态，再次点击退出
+    saved_observe = False
+    if not is_new and account_key:
+        _ex = app._account_notes.get(account_key, {})
+        if isinstance(_ex, dict):
+            saved_observe = bool(_ex.get("observe", False))
+    observe_var = tk.BooleanVar(value=saved_observe)
+
+    def _toggle_observe():
+        observe_var.set(not observe_var.get())
+        observe_btn.config(text="退出观察" if observe_var.get() else "观察状态")
+        # 点击后立即保存观察状态，无需等待保存按钮（编辑已有账号时生效）
+        if not is_new and account_key:
+            app._account_notes.setdefault(account_key, {})["observe"] = observe_var.get()
+
+            def _save_observe():
+                try:
+                    save_accounts(app)
+                except Exception as e:
+                    print(f"⚠️ 保存账号数据失败: {e}")
+
+            import threading
+            threading.Thread(target=_save_observe, daemon=True).start()
+            try:
+                refresh_account_tree(app)
+            except Exception:
+                pass
+
     row_toggle = ttk.Frame(input_frame)
     row_toggle.pack(fill=tk.X, pady=(0, 4))
     ttk.Label(row_toggle, text="", width=10).pack(side=tk.LEFT)
+    observe_btn = ttk.Button(row_toggle, text="退出观察" if saved_observe else "观察状态",
+                             width=10, command=_toggle_observe)
+    observe_btn.pack(side=tk.LEFT, padx=(0, 6))
     toggle_btn = ttk.Button(row_toggle, text="显示密码", width=10, command=_toggle_show)
     toggle_btn.pack(side=tk.LEFT)
 
@@ -392,6 +423,7 @@ def _open_account_info_window(app, account_key=None):
             "note": note_text,
             "level": level_var.get().strip(),
             "stamina": stamina_var.get().strip(),
+            "observe": observe_var.get(),
         }
 
         # 新建账号立即在内存中标记暂停（确保 UI 刷新时显示正确颜色）
@@ -538,6 +570,9 @@ def refresh_account_tree(app):
                 note_text = name_val
             else:
                 note_text = game_val
+        # 观察状态账号在名称/备注列最前面加 ⚠ 标记
+        if isinstance(note_data, dict) and note_data.get("observe"):
+            note_text = f"⚠ {note_text}" if note_text else "⚠"
         # 计算下次运行时间（合并冷却剩余和下次运行）
         next_run_str = ""
         tag = "runnable"  # 默认可运行

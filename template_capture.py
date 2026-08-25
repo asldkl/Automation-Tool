@@ -12,40 +12,6 @@ import utils
 from PIL import Image, ImageTk
 
 
-# 全局 OCR 文本默认配置（var_name -> 默认识别文本，None 表示不可文字识别）
-GLOBAL_TEXT_DEFAULTS = {
-    "Produce_TechCenter": ("技术中心产出项", "多用途战术增高架"),
-    "Produce_ToolBench": ("工作台产出项", "5.7x28mm SS190"),
-    "Produce_ArmorStation": ("防具台产出项", "精英防弹背心"),
-    "Produce_PharmacyStation": ("制药台产出项", "体能强化剂"),
-    "DELTA_GAME_ICON": ("三角洲游戏图标", "三角洲行动"),
-    "Hazard_Operations": ("烽火地带入口", "烽火地带"),
-    "Special_Ops": ("特勤处入口", "特勤处"),
-    "Tech_Center": ("技术中心", "技术中心"),
-    "Tool_Bench": ("工作台", "工作台"),
-    "Armor_Station": ("防具台", "防具台"),
-    "Pharmacy_Station": ("制药台", "制药台"),
-    "MAKE": ("制造按钮", "制造"),
-    "Produce": ("产出按钮", "生成"),
-    "Collect": ("收取按钮", "收获"),
-    "Auto_fill": ("一键补齐按钮", "一键补齐"),
-    "COIN_GAME": ("游戏币购买按钮", None),
-    "Warehouse": ("仓库入口", "仓库"),
-    "Sell": ("出售按钮", "出售"),
-    "List_Item": ("上架按钮", "上架"),
-    "Discount": ("降价按钮", None),
-    "Confirm_Listing": ("确认上架按钮", "上架"),
-    "EMAIL_MAIL": ("邮箱入口", None),
-    "EMAIL_TRADE_HOUSE": ("交易中心入口", "交易行"),
-    "EMAIL_CLAIM_ALL": ("全部领取按钮", "全部领取"),
-    "DELTA_LAUNCH_BTN": ("启动游戏按钮", "启动"),
-    "ACCOUNT_SELECT": ("WeGame账号选择框", None),
-    "IMAGE_INPUT_FIELD": ("WeGame密码输入框", "请输入密码"),
-    "SIGN_IN": ("WeGame登录确认按钮", "登录"),
-    "LOGIN_AGAIN": ("重新登录按钮", "重新登录"),
-}
-
-
 class TemplateCaptureWizard:
     """模板截图向导主窗口"""
 
@@ -175,14 +141,14 @@ class TemplateCaptureWizard:
         # 分组定义：(标题, 起始变量名集合)
         section_headers = {
             "ACCOUNT_SELECT": "wegame登录和游戏启动",
-            "Hazard_Operations": "游戏内导航",
+            "Observe": "游戏内导航",
             "Tech_Center": "设施操作及产出项",
             "MAKE": "制造操作",
             "EMAIL_MAIL": "邮箱货币",
             "Warehouse": "一键出售",
         }
         produce_vars = {"Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"}
-        optional_vars = {"ENSURE"}
+        optional_vars = {"ENSURE", "Observe"}
         produce_order = ["Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"]
         self.rows = {}
 
@@ -264,7 +230,7 @@ class TemplateCaptureWizard:
             # 模板设置按钮
             setting_btn = ttk.Button(row, text="模板设置", width=10,
                                      command=lambda v=var_name, r=rel_path, n=name: self._open_template_setting(v, r, n))
-            setting_btn.pack(side=tk.RIGHT, padx=(30, 5))
+            setting_btn.pack(side=tk.RIGHT, padx=(90, 5))
 
             self.rows[var_name] = (status_lbl, setting_btn)
 
@@ -477,7 +443,6 @@ class TemplateCaptureWizard:
         def do_restore():
             win.destroy()
             self._restore_template(var_name, rel_path)
-            self._setup_ocr(var_name, name)
 
         def do_test():
             """测试当前模板的识别置信度"""

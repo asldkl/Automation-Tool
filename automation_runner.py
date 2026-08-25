@@ -294,17 +294,26 @@ def _run_single_account_main(app, img_path):
                         time.sleep(5)  # 等待游戏界面加载
                         automation._ensure_game_focused()
 
-                        # 进入烽火地带（与主流程一致：最多重试 5 次）
+                        # 观察账号：进入烽火地带前识别观察状态入口（可选模板）
+                        if _is_observe_account(app, file_name) and os.path.exists(config.resolve_template_path(config.Observe)):
+                            print("🔍 观察账号：识别观察状态入口...")
+                            if utils.find_and_click_smart(config.Observe, timeout=8):
+                                print("✅ 已进入观察状态入口")
+                            else:
+                                print("ℹ️ 未找到观察状态入口，跳过（不影响后续流程）")
+                            utils.human_pause()
+
+                        # 进入烽火地带（单账号运行：最多重试 3 次）
                         print("进入烽火地带...")
                         hazard_found = False
-                        for retry in range(5):
+                        for retry in range(3):
                             if app._stop_event.is_set():
                                 account_interrupted = True
                                 break
                             if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
                                 hazard_found = True
                                 break
-                            print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/5)...")
+                            print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/3)...")
                             automation._ensure_game_focused()
                             time.sleep(5)
                         if account_interrupted:
@@ -327,7 +336,7 @@ def _run_single_account_main(app, img_path):
                             print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
                             processed_accounts.append(f"{file_name} (已登录)")
                         else:
-                            print("❌ 5次重试后仍未找到烽火地带入口")
+                            print("❌ 3次重试后仍未找到烽火地带入口")
                             account_failed = True
                     else:
                         print("❌ 未检测到游戏窗口")
@@ -1083,6 +1092,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
     """运行单个账号（从冷却等待中调用）"""
     file_name = _get_cooldown_key(img_path)
     app._current_account_name = file_name
+    app._cooldown_single_run = True  # 标记为单账号运行（烽火地带识别 3 次）
     # 计算实际账号序号
     try:
         idx = app.qq_account_images.index(img_path) + 1
@@ -1123,6 +1133,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
             server_client.update_account_status(app, file_name, "failed")
             _close_game(app)
             _cleanup_account_processes(app)
+            app._cooldown_single_run = False
             return  # 单账号模式直接返回
         elif launch_result is False:
             if app._stop_event.is_set():
@@ -1147,6 +1158,7 @@ def _run_single_account(app, img_path, total, processed_accounts):
         _cleanup_account_processes(app)
 
     _process_account_result(app, file_name, account_failed, account_interrupted, processed_accounts)
+    app._cooldown_single_run = False
 
 
 def run_script_main(app):
@@ -1288,16 +1300,35 @@ def run_script_main(app):
         app.root.after(0, lambda: on_finish(app))
 
 
+def _is_observe_account(app, account_name):
+    """判断账号是否处于观察状态（观察账号在主流程/单账号运行中多执行观察步骤）"""
+    try:
+        note_data = app._account_notes.get(account_name, {})
+        if isinstance(note_data, dict):
+            return bool(note_data.get("observe", False))
+    except Exception:
+        pass
+    return False
+
+
 def game_operations_wrapper(app):
     """执行游戏内操作，返回 True=成功，False=失败（游戏内点击启用拟人随机偏移）"""
     # 根据设置启用点击随机偏移，结束后恢复
     utils.set_click_jitter(app.settings.get("enable_click_jitter", False),
                            app.settings.get("click_jitter_max", 5))
     try:
+        account_name = getattr(app, "_current_account_name", "")
+        observe_mode = _is_observe_account(app, account_name)
+        # 单账号运行（手动单账号 / 冷却到期单账号）烽火地带识别 3 次，主流程 5 次
+        single_account = (getattr(app, '_single_account_mode', False)
+                          or getattr(app, '_cooldown_single_run', False))
+        hazard_retry = 3 if single_account else 5
         result = automation.game_operations(
             app.settings, app._stop_event, lambda text: set_operation(app, text),
             update_ui_callback=lambda: app.root.after(0, app.update_ui, True),
-            on_hub_entered=lambda: _hub_asset_check(app))
+            on_hub_entered=lambda: _hub_asset_check(app),
+            observe_mode=observe_mode,
+            hazard_retry=hazard_retry)
     finally:
         utils.set_click_jitter(False)
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)
@@ -1441,21 +1472,36 @@ def get_account_next_run(app, account_name):
 
 
 def build_accounts_html(app, processed_accounts):
-    """构建已处理账号列表的 HTML（含资产和下次运行时间）"""
+    """构建已处理账号列表的 HTML 表格（账号前加备注 + 状态 + 下次运行）"""
     if not processed_accounts:
         return ""
     items = []
-    for acc in processed_accounts:
+    for idx, acc in enumerate(processed_accounts):
         # acc 格式: "xxx (成功)" 或 "xxx (失败)" 或 "xxx (冷却中)"
         # 用 rsplit 从右边分割，避免账号名中包含 ( 的情况
         account_name = acc.rsplit(" (", 1)[0] if " (" in acc else acc
-        asset = app._account_assets.get(account_name, "")
-        asset_text = f"　｜　资产：{html.escape(asset)}" if asset else ""
+        status = acc.rsplit(" (", 1)[1][:-1] if " (" in acc else ""
+        # 账号前加备注（账号信息设置中的「备注」字段）用于分辨账号
+        note = ""
+        note_data = app._account_notes.get(account_name, {})
+        if isinstance(note_data, dict) and note_data.get("game_name"):
+            note = note_data["game_name"]
+        if note:
+            account_display = f"{html.escape(note)}　{html.escape(account_name)}"
+        else:
+            account_display = html.escape(account_name)
         next_run = "未启用"
         if app.settings.get("enable_cooldown", False):
             next_run = get_account_next_run(app, account_name)
-        items.append(f"<li>{html.escape(acc)}{asset_text}　｜　下次运行：{html.escape(next_run)}</li>")
+        bg = "background:#f0f2f5;" if idx % 2 == 0 else ""
+        items.append(
+            f'<tr style="{bg}">'
+            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{account_display}</td>'
+            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(status)}</td>'
+            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(next_run)}</td>'
+            f'</tr>')
     accounts_html = "".join(items)
     return f"""
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
-<tr><td colspan="2" style="padding:8px 10px;border:1px solid #dcdde1;"><ul style="margin:0;padding-left:20px;">{accounts_html}</ul></td></tr>"""
+<tr><td colspan="3" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">账号</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">状态</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">下次运行</td></tr>
+{accounts_html}"""

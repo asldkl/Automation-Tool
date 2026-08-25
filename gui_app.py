@@ -811,8 +811,45 @@ class App:
             except Exception:
                 pass
 
+    def _find_active_sub_window(self):
+        """递归查找当前打开的子窗口（Toplevel），有则返回；用于托盘恢复子窗口而非主窗口
+        子窗口可能从主窗口直接打开，也可能从设置等子窗口嵌套打开，需递归遍历"""
+        try:
+            toplevels = []
+            def _walk(widget):
+                for w in widget.winfo_children():
+                    if isinstance(w, tk.Toplevel) and w.winfo_exists():
+                        # 排除日志窗口（持久浮动窗口，不属于"子窗口"）
+                        if not (self._log_win and w is self._log_win):
+                            toplevels.append(w)
+                    try:
+                        _walk(w)
+                    except Exception:
+                        pass
+            _walk(self.root)
+            # 从最近创建的子窗口往前找第一个未隐藏的
+            for w in reversed(toplevels):
+                try:
+                    if w.state() != 'withdrawn':
+                        return w
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
     def _do_show_window(self):
         try:
+            # 若已有子窗口打开，恢复子窗口而不是主窗口
+            sub = self._find_active_sub_window()
+            if sub is not None:
+                try:
+                    sub.deiconify()
+                    sub.lift()
+                    sub.focus_force()
+                except Exception:
+                    pass
+                return
             self.root.deiconify()
             self.root.lift()
             had_settings = False
@@ -1211,14 +1248,19 @@ class App:
 
         btn_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
         btn_frame.pack(fill=tk.X, pady=(0, 6))
+        # 添加账号靠左、资产监测靠右，全体延时+/冷却缩减- 等分中间剩下的宽度
+        btn_frame.columnconfigure(0, weight=0)
+        btn_frame.columnconfigure(1, weight=1)
+        btn_frame.columnconfigure(2, weight=1)
+        btn_frame.columnconfigure(3, weight=0)
         self.add_btn = ttk.Button(btn_frame, text="＋ 添加账号", style='Accent.TButton', command=self.add_account, width=14)
-        self.add_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.add_btn.grid(row=0, column=0, sticky='w', padx=(0, 6))
         self.clear_btn = ttk.Button(btn_frame, text="全体延时+", style='TButton', command=self.extend_all_cooldowns, width=10)
-        self.clear_btn.pack(side=tk.LEFT, padx=4)
+        self.clear_btn.grid(row=0, column=1)
         ttk.Button(btn_frame, text="冷却缩减-", style='TButton',
-                   command=self._reduce_all_cooldowns, width=10).pack(side=tk.LEFT, padx=4)
+                   command=self._reduce_all_cooldowns, width=10).grid(row=0, column=2)
         ttk.Button(btn_frame, text="资产监测", style='Accent.TButton',
-                   command=self._show_asset_monitor, width=10).pack(side=tk.LEFT, padx=4)
+                   command=self._show_asset_monitor, width=10).grid(row=0, column=3, sticky='e', padx=(4, 0))
 
         list_frame = ttk.Frame(account_frame, style='CardInner.TFrame')
         list_frame.pack(fill=tk.BOTH, expand=True)

@@ -66,6 +66,24 @@ def human_reaction_delay(lo=0.2, hi=0.8):
     time.sleep(random.uniform(lo, hi))
 
 
+def human_move_away(min_dist=300, margin=20):
+    """鼠标随机移动到距离当前位置至少 min_dist 像素的屏幕位置（拟人化）
+    用于上架后移开鼠标，避免固定在左上角的机械化特征"""
+    try:
+        cur_x, cur_y = pyautogui.position()
+        screen_w, screen_h = pyautogui.size()
+        for _ in range(40):
+            tx = random.randint(margin, max(margin + 1, screen_w - margin))
+            ty = random.randint(margin, max(margin + 1, screen_h - margin))
+            if math.hypot(tx - cur_x, ty - cur_y) >= min_dist:
+                smooth_move_to(tx, ty)
+                return
+        # 兜底：屏幕范围过小找不到远点，移动到右下角
+        smooth_move_to(screen_w - margin, screen_h - margin)
+    except Exception:
+        pass
+
+
 def smooth_move_to(x, y, duration=0.2, use_bezier=True):
     """使用贝塞尔曲线/Smoothstep算法平滑移动鼠标到目标位置
     移动时长随机化 + 偶尔轻微过冲回正，拟人手部动作"""

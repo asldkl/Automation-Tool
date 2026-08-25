@@ -157,7 +157,8 @@ def sell_operations(settings, stop_event, set_operation):
                 print(f"❌ 未找到上架按钮")
                 sell_stats["failed"] += 1
                 break
-            utils.smooth_move_to(20, 20)
+            # 鼠标随机移动到距离当前位置 300 像素以上处（避免固定在左上角的机械化特征）
+            utils.human_move_away(min_dist=300)
             utils.human_pause()
 
             if discount_times > 0:
@@ -205,27 +206,40 @@ def _ensure_game_focused():
     return False
 
 
-def game_operations(settings, stop_event, set_operation, update_ui_callback=None, on_hub_entered=None):
+def game_operations(settings, stop_event, set_operation, update_ui_callback=None, on_hub_entered=None,
+                    observe_mode=False, hazard_retry=5):
     """
     执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
     on_hub_entered: 进入大厅（空格Tab后、特勤处前）的回调，用于资产识别
+    observe_mode: 观察状态账号，在按下烽火地带前先识别并点击观察状态入口（可选模板）
+    hazard_retry: 烽火地带入口识别重试次数（单账号运行为 3，主流程为 5）
     返回 True=成功，False=失败
     """
     print("\n--- 进入游戏操作 ---")
     _ensure_game_focused()
 
+    # 观察状态账号：进入烽火地带前识别观察状态入口（可选模板，未上传/识别失败则跳过）
+    if observe_mode and os.path.exists(config.resolve_template_path(config.Observe)):
+        set_operation("观察状态入口")
+        print("🔍 观察账号：识别观察状态入口...")
+        if utils.find_and_click_smart(config.Observe, timeout=8):
+            print("✅ 已进入观察状态入口")
+        else:
+            print("ℹ️ 未找到观察状态入口，跳过（不影响后续流程）")
+        utils.human_pause()
+
     set_operation("进入烽火地带")
     print("进入烽火地带...")
-    for retry in range(5):
+    for retry in range(hazard_retry):
         if stop_event.is_set():
             return False
         if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
             break
-        print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/5)...")
+        print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/{hazard_retry})...")
         _ensure_game_focused()
         time.sleep(5)
     else:
-        print("❌ 5次重试后仍未找到烽火地带图标")
+        print(f"❌ {hazard_retry}次重试后仍未找到烽火地带图标")
         return "game_failed"
 
     time.sleep(5)

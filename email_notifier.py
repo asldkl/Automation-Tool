@@ -13,6 +13,16 @@ import utils
 import cooldown_manager
 
 
+def _get_machine_name():
+    """获取电脑名称（机器名称），用于邮件标题区分设备"""
+    try:
+        import platform
+        name = platform.node()
+        return name or "未知机器"
+    except Exception:
+        return "未知机器"
+
+
 def _get_email_config(app):
     """获取邮箱配置，返回 (smtp_code, sender, receiver) 或 None（未配置）"""
     if not app.settings.get("email_enabled", False):
@@ -35,9 +45,10 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     safe_name = html.escape(account_name)
     safe_error = html.escape(error_msg) if error_msg else "未知错误"
+    machine_name = _get_machine_name()
 
     body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
-<h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">三角洲行动自动化工具 - 账号运行失败</h2>
+<h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">{machine_name}—账号运行失败</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">账号名称</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;font-weight:bold;">{safe_name}</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
@@ -52,7 +63,7 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            f"三角洲自动化 - 账号失败通知 ({account_name})", body
+            f"{machine_name}—账号失败通知 ({account_name})", body
         )
         if success:
             print(f"📧 账号 {account_name} 失败通知邮件已发送")
@@ -72,46 +83,21 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     m, s = divmod(int(elapsed), 60)
     h, m = divmod(m, 60)
     time_str = f"{h}时{m}分{s}秒" if h > 0 else f"{m}分{s}秒"
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # 最先运行时间（本轮开始）和最后运行时间（本轮结束）
-    start_time_str = (datetime.datetime.fromtimestamp(stats["start_time"]).strftime("%Y-%m-%d %H:%M:%S")
-                      if stats.get("start_time") else "未知")
     status_color = "#27ae60" if stats["fail"] == 0 else "#e74c3c"
     status_text = "全部成功" if stats["fail"] == 0 else f"有 {stats['fail']} 个失败"
+    machine_name = _get_machine_name()
 
-    # 已选操作
-    op_names = {"tech_center": "技术中心", "tool_bench": "工作台",
-                "armor_station": "防具台", "pharmacy_station": "制药台"}
-    selected = app.settings.get("selected_operations", [])
-    ops_text = "、".join(op_names.get(op, op) for op in selected) if selected else "无"
-
-    # 一键出售统计
-    sell_section = ""
-    sell_stats = stats.get("sell_stats")
-    if sell_stats:
-        sell_section = f"""
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">一键出售</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">物品总数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{sell_stats['total']} 件</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功上架</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{sell_stats['sold']} 件</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">未找到</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e67e22' if sell_stats['not_found']>0 else '#2c3e50'};">{sell_stats['not_found']} 件</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if sell_stats['failed']>0 else '#2c3e50'};">{sell_stats['failed']} 件</td></tr>"""
-
-    # QQ号名称列表（含下次运行时间）
+    # 已处理账号列表（表格：备注前缀 + 状态 + 下次运行）
     accounts_section = app._build_accounts_html(processed_accounts)
 
     body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
-<h2 style="color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;">三角洲行动自动化工具 - 运行报告</h2>
+<h2 style="color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;">{machine_name}—运行报告</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
-<tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">基本信息</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">最先运行</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{start_time_str}</td></tr>
-<tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">最后运行</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">执行操作</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{ops_text}</td></tr>
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">账号统计</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">处理账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{stats['total']} 个</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">处理账号数</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{stats['total']} 个</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">成功</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#27ae60;">{stats['success']} 个</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:{'#e74c3c' if stats['fail']>0 else '#2c3e50'};">{stats['fail']} 个</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">耗时</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{time_str}</td></tr>
-{sell_section}
 {accounts_section}
 </table>
 <div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:{status_color}15;border:1px solid {status_color}40;">
@@ -123,7 +109,7 @@ def send_run_report_email(app, stats, elapsed, processed_accounts=None):
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            f"三角洲自动化 - 运行报告 ({status_text})", body
+            f"{machine_name}—运行报告 ({status_text})", body
         )
         if success:
             print("📧 邮件通知已发送")
@@ -159,9 +145,10 @@ def send_failure_email(app, error, processed_accounts=None):
     # 运行模式
     # QQ号名称列表（含下次运行时间）
     accounts_section = app._build_accounts_html(processed_accounts)
+    machine_name = _get_machine_name()
 
     body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
-<h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">三角洲行动自动化工具 - 运行失败通知</h2>
+<h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">{machine_name}—运行失败通知</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
 <tr><td colspan="2" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">基本信息</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">最先运行</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{start_time_str}</td></tr>
@@ -185,7 +172,7 @@ def send_failure_email(app, error, processed_accounts=None):
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            "三角洲自动化 - 运行失败通知", body
+            f"{machine_name}—运行失败通知", body
         )
         if success:
             print("📧 失败通知邮件已发送")

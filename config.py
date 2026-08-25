@@ -324,6 +324,7 @@ IMAGE_INPUT_FIELD   = resource_path("picture/wegame_login/Input.png")
 # 游戏内导航
 Hazard_Operations   = resource_path("picture/Navigation/hazard_operations.png")
 Special_Ops         = resource_path("picture/Navigation/special_ops.png")
+Observe             = resource_path("picture/Navigation/observe.png")  # 观察状态入口（可选模板，观察账号进入烽火地带前点击）
 
 # 设施控制
 Tech_Center         = resource_path("picture/Facility_Controls/tech_center.png")
@@ -404,8 +405,9 @@ TEMPLATE_CAPTURE_LIST = [
     ("LOGIN_AGAIN",         "picture/wegame_login/login_again.png",   "重新登录按钮",       "在 WeGame 登录失败后，截取「重新登录」按钮"),
     ("DELTA_GAME_ICON",     "picture/wegame_login/delta_game_icon.png", "三角洲游戏图标",     "在 WeGame 首页，截取三角洲行动的游戏图标"),
     ("DELTA_LAUNCH_BTN",    "picture/wegame_login/delta_launch_btn.png","启动游戏按钮",       "在三角洲游戏页面，截取「启动」按钮"),
-    ("ENSURE",              "picture/wegame_login/ensure.png",          "游戏确认按钮",       "在游戏启动后，截取可能出现的「确定」按钮"),
+    ("ENSURE",              "picture/wegame_login/ensure.png",          "游戏确认按钮",       "截取可能出现的「确定」按钮"),
     # ===== 游戏导航 =====
+    ("Observe",             "picture/Navigation/observe.png",        "观察状态入口",       "截取「观察状态」入口图标"),
     ("Hazard_Operations",   "picture/Navigation/hazard_operations.png","烽火地带入口",      "在游戏主菜单，截取「烽火地带」图标"),
     ("Special_Ops",         "picture/Navigation/special_ops.png",     "特勤处入口",         "在大厅界面，截取「特勤处」图标"),
     # ===== 设施及其产出项（按主流程处理顺序） =====

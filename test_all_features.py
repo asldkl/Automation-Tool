@@ -265,27 +265,26 @@ class TestHazardOperationsRetry(unittest.TestCase):
     """测试 game_operations 中烽火地带的重试次数"""
 
     def test_retry_count_in_source(self):
-        """automation.py 中烽火地带重试应为 5 次"""
+        """automation.py 中烽火地带重试参数化：主流程默认 5 次，单账号 3 次"""
         automation_path = os.path.join(os.path.dirname(__file__), "automation.py")
         with open(automation_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 查找 game_operations 函数中的重试循环
+        # 重试循环使用参数化 range(hazard_retry)
         import re
-        # 匹配 "for retry in range(N)" 紧跟在 "进入烽火地带" 之后的模式
-        pattern = r'进入烽火地带.*?for retry in range\((\d+)\)'
+        pattern = r'进入烽火地带.*?for retry in range\(hazard_retry\)'
         match = re.search(pattern, content, re.DOTALL)
-        self.assertIsNotNone(match, "未找到烽火地带重试循环")
-        retry_count = int(match.group(1))
-        self.assertEqual(retry_count, 5, f"烽火地带重试次数应为5，实际为{retry_count}")
+        self.assertIsNotNone(match, "未找到烽火地带参数化重试循环")
+        # 函数签名默认重试次数应为 5（主流程），单账号运行为 3
+        self.assertIn("hazard_retry=5", content, "game_operations 默认重试应为 5 次")
 
     def test_error_message_matches_retry_count(self):
-        """错误消息中的重试次数应与 range() 一致"""
+        """错误消息中的重试次数应与 range() 一致（参数化）"""
         automation_path = os.path.join(os.path.dirname(__file__), "automation.py")
         with open(automation_path, "r", encoding="utf-8") as f:
             content = f.read()
-        # 检查 else 分支中的消息
-        self.assertIn("5次重试后仍未找到烽火地带图标", content)
+        # 检查 else 分支中的消息（参数化）
+        self.assertIn("{hazard_retry}次重试后仍未找到烽火地带图标", content)
 
 
 # ==================== Test 5: game_launch_wait 位置和日志 ====================
@@ -329,9 +328,9 @@ class TestEmailNotification(unittest.TestCase):
         with open(notifier_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 检查 send_account_failure_email 函数中主题包含 account_name
+        # 检查 send_account_failure_email 函数中主题包含机器名称和账号名
         import re
-        pattern = r'三角洲自动化 - 账号失败通知 \(.*?\)'
+        pattern = r'—账号失败通知 \(.*?\)'
         matches = re.findall(pattern, content)
         self.assertGreater(len(matches), 0, "未找到包含账号名的邮件主题模板")
 

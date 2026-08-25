@@ -253,7 +253,7 @@ class SettingsWindow:
         ttk.Label(ret_row, text="日志/备份保留：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         ttk.Spinbox(ret_row, from_=0, to=90, increment=1,
                     textvariable=self.log_retention_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(ret_row, text="天（0=不清理，默认3，自动清理过期数据）",
+        ttk.Label(ret_row, text="天（0=不清理，自动清理过期数据）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 图像识别置信度 -----
@@ -291,9 +291,9 @@ class SettingsWindow:
             res_text += f"  ⚠️ 模板分辨率：{stored_res}（不匹配）"
         elif stored_res:
             res_text += "  ✅ 与模板一致"
-        ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(res_frame, text="上传模板图片", style='Accent.TButton',
-                   command=self._open_capture_wizard_nav, width=14).pack(side=tk.RIGHT)
+                   command=self._open_capture_wizard_nav, width=14).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(res_frame, text=res_text, style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
 
         # ----- 资产识别设置 -----
         asset_frame = ttk.LabelFrame(parent, text="  资产识别  ", style='SettingsCard.TLabelframe', padding=12)
