@@ -230,7 +230,7 @@ class TemplateCaptureWizard:
             # 模板设置按钮
             setting_btn = ttk.Button(row, text="模板设置", width=10,
                                      command=lambda v=var_name, r=rel_path, n=name: self._open_template_setting(v, r, n))
-            setting_btn.pack(side=tk.RIGHT, padx=(90, 5))
+            setting_btn.pack(side=tk.RIGHT, padx=(30, 5))
 
             self.rows[var_name] = (status_lbl, setting_btn)
 

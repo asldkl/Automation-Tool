@@ -294,14 +294,28 @@ def _run_single_account_main(app, img_path):
                         time.sleep(5)  # 等待游戏界面加载
                         automation._ensure_game_focused()
 
-                        # 观察账号：进入烽火地带前识别观察状态入口（可选模板）
+                        # 观察账号：进入烽火地带前识别观察状态入口（可选模板，最多3次重试，失败间隔4秒；仍失败则跳过）
                         if _is_observe_account(app, file_name) and os.path.exists(config.resolve_template_path(config.Observe)):
                             print("🔍 观察账号：识别观察状态入口...")
-                            if utils.find_and_click_smart(config.Observe, timeout=8):
+                            observe_found = False
+                            observe_interrupted = False
+                            for retry in range(3):
+                                if app._stop_event.is_set():
+                                    observe_interrupted = True
+                                    break
+                                if utils.find_and_click_smart(config.Observe, timeout=8):
+                                    observe_found = True
+                                    break
+                                print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/3)...")
+                                time.sleep(4)
+                            if observe_interrupted:
+                                account_interrupted = True
+                            elif observe_found:
                                 print("✅ 已进入观察状态入口")
                             else:
-                                print("ℹ️ 未找到观察状态入口，跳过（不影响后续流程）")
-                            utils.human_pause()
+                                print("ℹ️ 3次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
+                            if not observe_interrupted:
+                                utils.human_pause()
 
                         # 进入烽火地带（单账号运行：最多重试 3 次）
                         print("进入烽火地带...")
