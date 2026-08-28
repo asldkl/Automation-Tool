@@ -223,18 +223,18 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         set_operation("观察状态入口")
         print("🔍 观察账号：识别观察状态入口...")
         observe_found = False
-        for retry in range(3):
+        for retry in range(5):
             if stop_event.is_set():
                 return False
             if utils.find_and_click_smart(config.Observe, timeout=8):
                 observe_found = True
                 break
-            print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/3)...")
+            print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/5)...")
             time.sleep(4)
         if observe_found:
             print("✅ 已进入观察状态入口")
         else:
-            print("ℹ️ 3次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
+            print("ℹ️ 5次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
         utils.human_pause()
 
     set_operation("进入烽火地带")

@@ -87,7 +87,8 @@ def auto_backup_account_data(app, force=False):
 
 
 def cleanup_old_data(app):
-    """自动清理过期的日志/截图日期文件夹和账号数据备份，保留最近 log_retention_days 天（0=不清理）"""
+    """自动清理过期的日志/截图日期文件夹和账号数据备份
+    日志/截图按 log_retention_days（默认3天）；账号数据备份按 account_backup_retention_days（默认3天，独立控制）"""
     import datetime
     import re
     import shutil
@@ -120,26 +121,29 @@ def cleanup_old_data(app):
             shutil.rmtree(path, ignore_errors=True)
             removed += 1
 
-    # 2. 清理账号数据备份（账号数据备份/xxx.YYYYMMDD_HHMM.bak）
-    backup_dir = os.path.join(base_dir, "账号数据备份")
-    if os.path.isdir(backup_dir):
-        for fn in os.listdir(backup_dir):
-            m = re.search(r'(\d{8})_(\d{4})', fn)
-            if not m:
-                continue
-            try:
-                file_date = datetime.datetime.strptime(m.group(1), "%Y%m%d").date()
-            except ValueError:
-                continue
-            if file_date < cutoff:
+    # 2. 清理账号数据备份（账号数据备份/xxx.YYYYMMDD_HHMM.bak，独立保留天数，默认3天）
+    backup_days = app.settings.get("account_backup_retention_days", 3)
+    if backup_days > 0:
+        backup_cutoff = now - datetime.timedelta(days=backup_days)
+        backup_dir = os.path.join(base_dir, "账号数据备份")
+        if os.path.isdir(backup_dir):
+            for fn in os.listdir(backup_dir):
+                m = re.search(r'(\d{8})_(\d{4})', fn)
+                if not m:
+                    continue
                 try:
-                    os.remove(os.path.join(backup_dir, fn))
-                    removed += 1
-                except Exception:
-                    pass
+                    file_date = datetime.datetime.strptime(m.group(1), "%Y%m%d").date()
+                except ValueError:
+                    continue
+                if file_date < backup_cutoff:
+                    try:
+                        os.remove(os.path.join(backup_dir, fn))
+                        removed += 1
+                    except Exception:
+                        pass
 
     if removed:
-        print(f"已清理过期日志/备份 {removed} 项（保留最近 {days} 天）")
+        print(f"已清理过期日志/备份 {removed} 项（日志保留 {days} 天，账号备份保留 {backup_days if backup_days > 0 else days} 天）")
 
 
 

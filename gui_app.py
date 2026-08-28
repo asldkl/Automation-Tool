@@ -12,6 +12,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
+import pyautogui
 import config
 import utils
 import cooldown_manager
@@ -62,6 +63,9 @@ _qt_manual_hide = False      # 用户主动隐藏遮罩（屏幕取点/框选截
 _ov_status_index = None      # 当前账号序号（None=未运行）
 _ov_status_account = None    # 当前账号名
 _ov_ticker_id = None         # 运行时长刷新定时器（root.after id）
+_ov_mouse_ticker_id = None   # 鼠标坐标刷新定时器（root.after id）
+_ov_mouse_root = None        # 鼠标坐标定时器所属 root（取消时用）
+_last_mouse_pos = None       # 上次记录的鼠标坐标（仅在移动时泵送 Qt）
 
 
 def _classify_log_level(message):
@@ -177,6 +181,7 @@ def enable_log_overlay(root, corner_index=0):
         _qt_overlay.info("💡 日志遮罩：默认开启，关闭请在 托盘菜单「日志遮罩」操作")
         _schedule_qt_pump(root)
         _start_qt_watchdog(root)
+        _start_mouse_ticker(root)
         print("📊 日志遮罩已开启（透明日志层；关闭：托盘菜单「日志遮罩」）")
     except Exception as e:
         _qt_overlay = None
@@ -186,6 +191,7 @@ def enable_log_overlay(root, corner_index=0):
 def disable_log_overlay():
     """关闭日志遮罩（销毁组件释放 PyQt6 内存）"""
     global _qt_overlay
+    _stop_mouse_ticker()
     if _qt_overlay is not None:
         try:
             _qt_overlay._allow_close = True  # 程序主动关闭，放行 closeEvent
@@ -301,6 +307,58 @@ def _stop_overlay_ticker(app):
             _qt_overlay.set_status_text("未运行")
         except Exception:
             pass
+
+
+def _start_mouse_ticker(root):
+    """启动遮罩实时鼠标坐标刷新（约120ms；仅鼠标移动时才泵送 Qt，降低对 Tk 拖拽的干扰）
+    方便直接在遮罩上看屏幕坐标"""
+    global _ov_mouse_ticker_id, _ov_mouse_root, _last_mouse_pos
+    _ov_mouse_root = root
+    _last_mouse_pos = None
+
+    def _tick():
+        global _ov_mouse_ticker_id, _last_mouse_pos
+        if _qt_overlay is None:
+            _ov_mouse_ticker_id = None
+            return
+        try:
+            x, y = pyautogui.position()
+            pos = (x, y)
+            if pos != _last_mouse_pos:
+                _last_mouse_pos = pos
+                try:
+                    _qt_overlay.set_mouse_text(f"🖱️ ({x}, {y})")
+                    # 左键按下（正在拖拽窗口/遮罩）时不泵送 Qt，避免遮罩 UpdateLayeredWindow
+                    # 重绘干扰 Tk 窗口拖拽导致回弹；松开后才刷新
+                    dragging = False
+                    try:
+                        import win32api
+                        dragging = bool(win32api.GetAsyncKeyState(0x01) & 0x8000)
+                    except Exception:
+                        pass
+                    if not dragging and _qt_app is not None:
+                        _qt_app.processEvents()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            _ov_mouse_ticker_id = root.after(120, _tick)
+        except Exception:
+            _ov_mouse_ticker_id = None
+
+    _tick()
+
+
+def _stop_mouse_ticker():
+    """停止鼠标坐标刷新定时器"""
+    global _ov_mouse_ticker_id, _ov_mouse_root
+    if _ov_mouse_ticker_id and _ov_mouse_root is not None:
+        try:
+            _ov_mouse_root.after_cancel(_ov_mouse_ticker_id)
+        except Exception:
+            pass
+    _ov_mouse_ticker_id = None
 
 
 class RedirectText:
@@ -935,6 +993,7 @@ class App:
 
     def _quit_all(self):
         self._shutdown = True
+        _stop_mouse_ticker()
         # 保存窗口大小和位置（最小化/托盘状态时先恢复再保存）
         try:
             if self.root.state() == 'iconic' or self.root.state() == 'withdrawn':

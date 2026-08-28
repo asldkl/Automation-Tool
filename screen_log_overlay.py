@@ -79,6 +79,8 @@ class ScreenLogOverlay(QWidget):
     log_signal = pyqtSignal(int, str)
     # 顶行状态文本通道（线程安全）
     status_signal = pyqtSignal(str)
+    # 实时鼠标坐标文本通道（线程安全，供校准滑块区域用）
+    mouse_signal = pyqtSignal(str)
 
     def __init__(self, max_lines: int = 500,
                  pos: QPoint | None = None,
@@ -153,6 +155,19 @@ class ScreenLogOverlay(QWidget):
             }
         """)
         layout.addWidget(self.status_label)
+        # 实时鼠标坐标行（方便直接在遮罩上看屏幕坐标）
+        self.mouse_label = QLabel("🖱️ (0, 0)", self)
+        self.mouse_label.setStyleSheet("""
+            QLabel {
+                color: #7ED3F5;
+                font-family: Consolas;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 0px 4px;
+                background: transparent;
+            }
+        """)
+        layout.addWidget(self.mouse_label)
         layout.addWidget(self.text_edit)
         self.setLayout(layout)
 
@@ -168,6 +183,7 @@ class ScreenLogOverlay(QWidget):
         # ---------- 信号槽连接（线程安全核心） ----------
         self.log_signal.connect(self._on_log)
         self.status_signal.connect(self._on_status)
+        self.mouse_signal.connect(self._on_mouse)
 
         # 事件过滤器：交互模式下拦截日志控件鼠标事件实现拖动
         self.text_edit.installEventFilter(self)
@@ -234,6 +250,10 @@ class ScreenLogOverlay(QWidget):
         """更新顶行状态文本（线程安全，内部走 Qt 信号）"""
         self.status_signal.emit(str(text))
 
+    def set_mouse_text(self, text: str) -> None:
+        """更新实时鼠标坐标文本（线程安全，内部走 Qt 信号）"""
+        self.mouse_signal.emit(str(text))
+
     def cycle_corner(self, corner_index: int | None = None) -> int:
         """按 左下→右下→右上→左上→左下 逆时针旋转遮罩角落；
         corner_index 指定则直接跳转到该角落。返回当前角落索引(0-3)"""
@@ -288,6 +308,10 @@ class ScreenLogOverlay(QWidget):
     def _on_status(self, text: str) -> None:
         """槽函数：主线程更新顶行状态文本"""
         self.status_label.setText(str(text))
+
+    def _on_mouse(self, text: str) -> None:
+        """槽函数：主线程更新实时鼠标坐标文本"""
+        self.mouse_label.setText(str(text))
 
     def _scroll_to_bottom(self) -> None:
         """滚动到日志末尾（配合 setMaximumBlockCount 自动清理旧行）"""

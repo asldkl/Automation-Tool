@@ -141,7 +141,8 @@ DEFAULT_SETTINGS = {
     "log_save_path": "",              # 目录及数据（日志/截图/账号备份）根目录，若为空则仅显示在界面
     "account_backup_days": 0,         # 账号数据自动备份间隔（天，0=关闭，1-3=每N天备份一次）
     "account_backup_last": "",        # 上次账号数据自动备份时间（YYYY-MM-DD HH:MM:SS）
-    "log_retention_days": 3,          # 日志/截图/账号备份保留天数（0=不清理，默认3）
+    "account_backup_retention_days": 3,  # 账号数据备份保留天数（0=不清理，默认3，定期自动清理过期备份）
+    "log_retention_days": 3,          # 日志/截图保留天数（0=不清理，默认3）
     "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
     # 自动关机
     "auto_shutdown_enabled": False,   # 是否启用自动关机
@@ -168,6 +169,10 @@ DEFAULT_SETTINGS = {
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
+    # 账号运行智能调度（分组运行：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）
+    "smart_schedule_enabled": False,      # 启用智能调度（分组运行）
+    "smart_group_size": 3,                # 每组账号数
+    "smart_group_interval": 5,            # 组间隔（分钟）
     "window_geometry": "",                   # 主窗口大小（自动保存，位置始终屏幕居中）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置

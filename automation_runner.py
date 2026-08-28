@@ -299,21 +299,21 @@ def _run_single_account_main(app, img_path):
                             print("🔍 观察账号：识别观察状态入口...")
                             observe_found = False
                             observe_interrupted = False
-                            for retry in range(3):
+                            for retry in range(5):
                                 if app._stop_event.is_set():
                                     observe_interrupted = True
                                     break
                                 if utils.find_and_click_smart(config.Observe, timeout=8):
                                     observe_found = True
                                     break
-                                print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/3)...")
+                                print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/5)...")
                                 time.sleep(4)
                             if observe_interrupted:
                                 account_interrupted = True
                             elif observe_found:
                                 print("✅ 已进入观察状态入口")
                             else:
-                                print("ℹ️ 3次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
+                                print("ℹ️ 5次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
                             if not observe_interrupted:
                                 utils.human_pause()
 
@@ -1196,6 +1196,29 @@ def run_script_main(app):
         if app.settings.get("enable_cooldown", False):
             _wait_and_run_nearby_cooldowns(app, processed_accounts)
 
+        # 账号运行智能调度（分组运行）：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证
+        smart_enabled = app.settings.get("smart_schedule_enabled", False)
+        smart_group_size = max(1, int(app.settings.get("smart_group_size", 3)))
+        smart_interval = max(0, int(app.settings.get("smart_group_interval", 5)))
+        group_processed = 0
+
+        def _group_wait():
+            """每跑完 N 个账号，若还有后续账号则等待组间隔分钟"""
+            nonlocal group_processed
+            group_processed += 1
+            if (smart_enabled and smart_interval > 0
+                    and group_processed >= smart_group_size
+                    and i < total - 1 and not app._stop_event.is_set()):
+                group_processed = 0
+                set_operation(app, f"组间等待 {smart_interval} 分钟")
+                print(f"⏳ 智能调度：已完成一组 {smart_group_size} 个账号，等待 {smart_interval} 分钟后再跑下一组（避免频繁切换账号触发滑块验证）")
+                wait_sec = smart_interval * 60
+                waited = 0
+                while waited < wait_sec and not app._stop_event.is_set():
+                    chunk = min(5, wait_sec - waited)
+                    time.sleep(chunk)
+                    waited += chunk
+
         for i, img_path in enumerate(app.qq_account_images):
             if app._stop_event.is_set():
                 break
@@ -1267,6 +1290,7 @@ def run_script_main(app):
                     server_client.update_account_status(app, file_name, "failed")
                     _close_game(app)
                     _cleanup_account_processes(app)
+                    _group_wait()  # 智能调度：计入本组并可能触发组间等待
                     continue  # 继续下一个账号
                 elif launch_result is False or launch_result == "interrupted":
                     if app._stop_event.is_set() or launch_result == "interrupted":
@@ -1293,6 +1317,7 @@ def run_script_main(app):
             # 记录结果
             _process_account_result(app, file_name, account_failed, account_interrupted,
                                     processed_accounts)
+            _group_wait()  # 智能调度：计入本组并可能触发组间等待
 
             if account_interrupted:
                 break

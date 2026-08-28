@@ -73,6 +73,10 @@ class SettingsWindow:
 
         # 冷却管理变量
         self.cooldown_hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
+        # 账号运行智能调度（分组运行）
+        self.smart_schedule_enable_var = tk.BooleanVar(value=app.settings.get("smart_schedule_enabled", False))
+        self.smart_group_size_var = tk.IntVar(value=int(app.settings.get("smart_group_size", 3)))
+        self.smart_group_interval_var = tk.IntVar(value=int(app.settings.get("smart_group_interval", 5)))
 
         # 自动关机变量
         self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
@@ -81,6 +85,8 @@ class SettingsWindow:
 
         # 账号数据自动备份间隔（天，0=关闭）
         self.account_backup_days_var = tk.IntVar(value=app.settings.get("account_backup_days", 0))
+        # 账号数据备份保留天数（定期自动清理，默认3天）
+        self.account_backup_retention_days_var = tk.IntVar(value=app.settings.get("account_backup_retention_days", 3))
 
         # 日志/备份保留天数（0=不清理，默认3）
         self.log_retention_days_var = tk.IntVar(value=app.settings.get("log_retention_days", 3))
@@ -380,6 +386,27 @@ class SettingsWindow:
         ttk.Label(cooldown_frame, text="驱动不可用时自动重启电脑重新加载",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
+        # ----- 账号运行智能调度（分组运行） -----
+        smart_frame = ttk.LabelFrame(parent, text="  账号运行智能调度（分组运行）  ", style='SettingsCard.TLabelframe', padding=10)
+        smart_frame.pack(fill=tk.X, pady=(0, 8))
+
+        smart_row1 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
+        smart_row1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(smart_row1, text="启用智能调度（每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）",
+                        variable=self.smart_schedule_enable_var).pack(side=tk.LEFT, padx=5, pady=5)
+
+        smart_row2 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
+        smart_row2.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(smart_row2, text="每组账号数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(5, 4))
+        ttk.Spinbox(smart_row2, from_=1, to=20, increment=1,
+                    textvariable=self.smart_group_size_var, width=6).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(smart_row2, text="组间隔(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(smart_row2, from_=1, to=120, increment=1,
+                    textvariable=self.smart_group_interval_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(smart_row2, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
+        ttk.Label(smart_frame, text="建议每组间隔 5 分钟（间隔太短仍可能触发滑块验证）",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
         # ----- 开机自启动 -----
         autostart_frame = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=10)
         autostart_frame.pack(fill=tk.X, pady=(8, 8))
@@ -602,6 +629,15 @@ class SettingsWindow:
         ttk.Spinbox(backup_row, from_=0, to=3, increment=1,
                     textvariable=self.account_backup_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(backup_row, text="天（0=关闭，每 N 天自动备份数据）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        # 备份保留天数（定期自动清理过期备份）
+        retention_row = ttk.Frame(frame_acct, style='SettingsInner.TFrame')
+        retention_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(retention_row, text="备份保留：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(retention_row, from_=0, to=30, increment=1,
+                    textvariable=self.account_backup_retention_days_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(retention_row, text="天（定期自动清理过期备份，默认3，0=不清理）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 设置说明 -----
@@ -1724,6 +1760,8 @@ class SettingsWindow:
 
         # 账号数据自动备份间隔（天，0=关闭）
         fresh["account_backup_days"] = self.account_backup_days_var.get()
+        # 账号数据备份保留天数（定期自动清理）
+        fresh["account_backup_retention_days"] = max(0, self.account_backup_retention_days_var.get())
 
         # 日志/备份保留天数（0=不清理）
         fresh["log_retention_days"] = self.log_retention_days_var.get()
@@ -1765,6 +1803,10 @@ class SettingsWindow:
 
         # 冷却管理设置
         fresh["cooldown_hours"] = self.cooldown_hours_var.get()
+        # 账号运行智能调度（分组运行）
+        fresh["smart_schedule_enabled"] = self.smart_schedule_enable_var.get()
+        fresh["smart_group_size"] = max(1, self.smart_group_size_var.get())
+        fresh["smart_group_interval"] = max(1, self.smart_group_interval_var.get())
 
         # 滚动量
         fresh["scroll_amount"] = self.scroll_amount_var.get()
