@@ -388,6 +388,14 @@ class SettingsWindow:
         ttk.Label(cooldown_frame, text="驱动不可用时自动重启电脑重新加载",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
+        cd_row6 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
+        cd_row6.pack(fill=tk.X, padx=5, pady=(4, 0))
+        ttk.Label(cd_row6, text="冷却检测等待(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(cd_row6, from_=1, to=60, increment=1,
+                    textvariable=self.cooldown_wait_minutes_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(cd_row6, text="分钟（默认10；智能调度时至少15）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
         # ----- 账号运行智能调度（分组运行） -----
         smart_frame = ttk.LabelFrame(parent, text="  账号运行智能调度（分组运行）  ", style='SettingsCard.TLabelframe', padding=10)
         smart_frame.pack(fill=tk.X, pady=(0, 8))
@@ -408,14 +416,6 @@ class SettingsWindow:
         ttk.Label(smart_row2, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
         ttk.Label(smart_frame, text="建议组间隔 2-5 分钟；账号多时增大每组账号数可减少等待",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
-
-        smart_row3 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
-        smart_row3.pack(fill=tk.X, padx=5, pady=(4, 0))
-        ttk.Label(smart_row3, text="冷却检测等待(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Spinbox(smart_row3, from_=1, to=60, increment=1,
-                    textvariable=self.cooldown_wait_minutes_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(smart_row3, text="分钟（默认10；智能调度时至少15）",
-                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 开机自启动 -----
         autostart_frame = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=10)

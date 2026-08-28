@@ -323,6 +323,10 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         pyautogui.press("esc")
         time.sleep(1)
         _, sell_stats = sell_operations(settings, stop_event, set_operation)
+        # 出售完成：关闭仓库回到主界面（若接下来走邮箱流程，其开头会再 esc，无需重复）
+        if not settings.get("enable_email_currency", False):
+            pyautogui.press("esc")
+            time.sleep(0.8)
 
     # --- 邮箱货币领取（出售完成后） ---
     if settings.get("enable_email_currency", False):
@@ -341,8 +345,11 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
                     pyautogui.press("Space")
                     time.sleep(0.5)
                     utils.human_pause()
-                pyautogui.press("esc")
+                pyautogui.press("esc")  # 退出交易中心 → 回到邮箱界面
                 utils.human_pause()
+            # 退出邮箱界面 → 回到主界面（确保自定义操作/二次资产识别在主界面执行）
+            pyautogui.press("esc")
+            time.sleep(0.8)
             print("✅ 邮箱货币领取流程完成")
         else:
             print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
