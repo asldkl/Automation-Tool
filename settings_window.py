@@ -77,6 +77,8 @@ class SettingsWindow:
         self.smart_schedule_enable_var = tk.BooleanVar(value=app.settings.get("smart_schedule_enabled", False))
         self.smart_group_size_var = tk.IntVar(value=int(app.settings.get("smart_group_size", 3)))
         self.smart_group_interval_var = tk.IntVar(value=int(app.settings.get("smart_group_interval", 5)))
+        # 冷却检测等待窗口（分钟，默认10；开启智能调度时至少15）
+        self.cooldown_wait_minutes_var = tk.IntVar(value=int(app.settings.get("cooldown_wait_minutes", 10)))
 
         # 自动关机变量
         self.shutdown_enable_var = tk.BooleanVar(value=app.settings.get("auto_shutdown_enabled", False))
@@ -392,7 +394,7 @@ class SettingsWindow:
 
         smart_row1 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
         smart_row1.pack(fill=tk.X, pady=(0, 4))
-        ttk.Checkbutton(smart_row1, text="启用智能调度（每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）",
+        ttk.Checkbutton(smart_row1, text="启用智能调度（分组运行，组间等待避免频繁切换）",
                         variable=self.smart_schedule_enable_var).pack(side=tk.LEFT, padx=5, pady=5)
 
         smart_row2 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
@@ -404,8 +406,16 @@ class SettingsWindow:
         ttk.Spinbox(smart_row2, from_=1, to=120, increment=1,
                     textvariable=self.smart_group_interval_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(smart_row2, text="分钟", style='Settings.TLabel').pack(side=tk.LEFT)
-        ttk.Label(smart_frame, text="建议每组间隔 5 分钟（间隔太短仍可能触发滑块验证）",
+        ttk.Label(smart_frame, text="建议组间隔 2-5 分钟；账号多时增大每组账号数可减少等待",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
+        smart_row3 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
+        smart_row3.pack(fill=tk.X, padx=5, pady=(4, 0))
+        ttk.Label(smart_row3, text="冷却检测等待(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(smart_row3, from_=1, to=60, increment=1,
+                    textvariable=self.cooldown_wait_minutes_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(smart_row3, text="分钟（默认10；智能调度时至少15）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
         # ----- 开机自启动 -----
         autostart_frame = ttk.LabelFrame(parent, text="  开机自启动  ", style='SettingsCard.TLabelframe', padding=10)
@@ -1807,6 +1817,8 @@ class SettingsWindow:
         fresh["smart_schedule_enabled"] = self.smart_schedule_enable_var.get()
         fresh["smart_group_size"] = max(1, self.smart_group_size_var.get())
         fresh["smart_group_interval"] = max(1, self.smart_group_interval_var.get())
+        # 冷却检测等待窗口（分钟）
+        fresh["cooldown_wait_minutes"] = max(1, self.cooldown_wait_minutes_var.get())
 
         # 滚动量
         fresh["scroll_amount"] = self.scroll_amount_var.get()

@@ -173,6 +173,7 @@ DEFAULT_SETTINGS = {
     "smart_schedule_enabled": False,      # 启用智能调度（分组运行）
     "smart_group_size": 3,                # 每组账号数
     "smart_group_interval": 5,            # 组间隔（分钟）
+    "cooldown_wait_minutes": 10,          # 冷却检测等待窗口（分钟）：主流程后等待 N 分钟内到期的账号再跑；开启智能调度时至少 15 分钟
     "window_geometry": "",                   # 主窗口大小（自动保存，位置始终屏幕居中）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
