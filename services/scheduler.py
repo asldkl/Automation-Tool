@@ -8,10 +8,9 @@ All former ``self.xxx`` references are replaced with ``app.xxx``.
 import os
 import datetime
 
-import utils
-import cooldown_manager
-import cooldown_watcher
-
+from config_utils import utils
+from data import cooldown_manager
+from data import cooldown_watcher
 
 def set_next_wake_timer(app):
     """计算下一个冷却到期时间，提前5分钟设置唤醒定时器"""

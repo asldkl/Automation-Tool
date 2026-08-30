@@ -9,8 +9,7 @@ import threading
 import urllib.request
 import json
 
-import machine_fingerprint
-
+from config_utils import machine_fingerprint
 
 def validate_with_server(app):
     """
@@ -90,7 +89,7 @@ def heartbeat_loop(app):
 
 def send_heartbeat(app, server_url, client_key, machine_id):
     """发送一次心跳到服务器，处理远程指令"""
-    import cooldown_manager
+    from data import cooldown_manager
     accounts = []
     for img_path in app.qq_account_images:
         cd_key = cooldown_manager.normalize_key(img_path)
@@ -118,7 +117,7 @@ def send_heartbeat(app, server_url, client_key, machine_id):
         action = cmd.get("action")
         if action == "run" and not app.running:
             print("📡 收到远程执行指令，正在启动任务...")
-            import utils
+            from config_utils import utils
             utils.prevent_sleep()
             app.root.after(0, app.start)
 

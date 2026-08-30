@@ -31,9 +31,8 @@ import time
 import json
 import threading
 
-import config
-import utils
-
+from config_utils import config
+from config_utils import utils
 CUSTOM_OPS_DIR = os.path.join(config.APP_DATA_DIR, "custom_ops")
 CUSTOM_OPS_IMAGES = os.path.join(CUSTOM_OPS_DIR, "images")
 CUSTOM_OPS_JSON = os.path.join(CUSTOM_OPS_DIR, "ops.json")

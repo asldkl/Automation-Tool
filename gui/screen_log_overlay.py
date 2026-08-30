@@ -18,7 +18,7 @@
     python screen_log_overlay.py
 
 嵌入项目：
-    from screen_log_overlay import ScreenLogOverlay, LogLevel
+    from gui.screen_log_overlay import ScreenLogOverlay, LogLevel
     overlay = ScreenLogOverlay(max_lines=500)
     overlay.show()
     overlay.add_log(LogLevel.INFO, "自动化任务启动")
@@ -133,9 +133,9 @@ class ScreenLogOverlay(QWidget):
                 background-color: {bg};
                 color: #ffffff;
                 border: none;
-                padding: 4px;
+                padding: 2px;
                 font-family: Consolas;                 /* 等宽字体 */
-                font-size: 12px;
+                font-size: 10px;
                 font-weight: bold;                     /* 加粗 */
             }}
         """)
@@ -143,14 +143,15 @@ class ScreenLogOverlay(QWidget):
         # 布局：顶部固定状态行 + 日志区
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.status_label = QLabel("未运行", self)
         self.status_label.setStyleSheet("""
             QLabel {
                 color: #ffd54a;
                 font-family: Consolas;
-                font-size: 12px;
+                font-size: 10px;
                 font-weight: bold;
-                padding: 2px 4px;
+                padding: 0px 2px;
                 background: transparent;
             }
         """)
@@ -161,9 +162,9 @@ class ScreenLogOverlay(QWidget):
             QLabel {
                 color: #7ED3F5;
                 font-family: Consolas;
-                font-size: 12px;
+                font-size: 10px;
                 font-weight: bold;
-                padding: 0px 4px;
+                padding: 0px 2px;
                 background: transparent;
             }
         """)

@@ -6,8 +6,8 @@ import os
 import sqlite3
 import datetime
 
-import config
-from utils import parse_asset_value, format_asset_num
+from config_utils import config
+from config_utils.utils import parse_asset_value, format_asset_num
 
 DB_PATH = os.path.join(config.APP_DATA_DIR, "assets.db")
 

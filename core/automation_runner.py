@@ -12,20 +12,19 @@ import tkinter as tk
 from tkinter import messagebox
 import pyautogui
 
-import config
-import utils
-import automation
-import cooldown_manager
-import machine_fingerprint
-import email_notifier
-import account_manager
-import cooldown_watcher
-import server_client
-import scheduler
-import asset_db
-import driver_keyboard
-import custom_ops
-
+from config_utils import config
+from config_utils import utils
+from core import automation
+from data import cooldown_manager
+from config_utils import machine_fingerprint
+from services import email_notifier
+from data import account_manager
+from data import cooldown_watcher
+from services import server_client
+from services import scheduler
+from data import asset_db
+from drivers import driver_keyboard
+from core import custom_ops
 # 三角洲行动窗口标题关键词
 DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "Delta"]
 
@@ -833,7 +832,7 @@ def _recognize_and_store_asset(app, stage=""):
             "value": valid
         })
         asset_db.record_asset(app._current_account_name, valid)
-        import account_manager
+        from data import account_manager
         account_manager.save_accounts(app)
         app.root.after(0, app._refresh_account_tree)
 
@@ -921,7 +920,7 @@ def _cleanup_account_processes(app):
 def _ocr_capture_screen_text():
     """OCR 识别当前屏幕文字并返回格式化文本（账号出错时调用，用于错误诊断）"""
     try:
-        import utils as _u
+        from config_utils import utils as _u
         import re
         results = _u.ocr_recognize(region=None)
         if not results:
@@ -990,7 +989,7 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
 
 def _wait_and_run_nearby_cooldowns(app, processed_accounts):
     """检查冷却列表：先运行已到期账号，再等待 N 分钟内到期的账号
-    等待窗口 = cooldown_wait_minutes（默认10分钟）；开启智能调度时至少 15 分钟（避免漏跑即将到期的账号）"""
+    等待窗口 = cooldown_wait_minutes（默认10分钟）；开启分组运行且<10 时自动 15 分钟（避免漏跑即将到期的账号）"""
     # 第一步：检查是否有已到期的账号，直接运行
     all_cooldowns = cooldown_manager.get_all_cooldowns()
     now = datetime.datetime.now()
@@ -1029,7 +1028,7 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
                 print(f"\n🔔 账号 {name} 冷却已到期，开始执行...")
                 _run_single_account(app, img_path, len(app.qq_account_images), processed_accounts)
 
-    # 第二步：检查 N 分钟内到期的账号，等待执行（N = cooldown_wait_minutes，开启智能调度时至少 15）
+    # 第二步：检查 N 分钟内到期的账号，等待执行（N = cooldown_wait_minutes，开启分组运行且<10 时自动 15）
     # _cooldown_wait_done 控制是否执行等待：
     #   False = 首次调用（主循环前），只运行已到期账号，不等待
     #   True  = 第二次调用（主循环后），执行等待
@@ -1042,10 +1041,10 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
         app._cooldown_wait_done = True
         return  # 首次调用，只运行已到期账号，不等待
     app._cooldown_wait_done = "done"
-    # 冷却检测等待窗口（分钟）：用户可配置，默认10；开启智能调度时至少 15（避免漏跑即将到期的账号导致提前关机）
+    # 冷却检测等待窗口（分钟）：用户可配置，默认10；开启分组运行时若设置<10 自动变 15，大于保持不变
     wait_window_minutes = int(app.settings.get("cooldown_wait_minutes", 10))
-    if app.settings.get("smart_schedule_enabled", False):
-        wait_window_minutes = max(wait_window_minutes, 15)
+    if app.settings.get("smart_schedule_enabled", False) and wait_window_minutes < 10:
+        wait_window_minutes = 15
     wait_window_seconds = wait_window_minutes * 60
     while not app._stop_event.is_set():
         all_cooldowns = cooldown_manager.get_all_cooldowns()
@@ -1064,7 +1063,8 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
             try:
                 next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
                 remaining = (next_run - now).total_seconds()
-                if 0 < remaining <= wait_window_seconds:
+                # 包含已冷却完成的账号（remaining<=0）：它们应立刻执行，而不是等待冷却中的账号
+                if remaining <= wait_window_seconds:
                     nearby.append((remaining, name))
             except Exception:
                 continue
@@ -1073,14 +1073,20 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
             break
 
         nearby.sort(key=lambda x: x[0])
-        wait_seconds = int(nearby[0][0])
         names = [n for _, n in nearby]
-        print(f"⏳ 检测到 {len(names)} 个账号将在 {wait_window_minutes} 分钟内冷却结束：{', '.join(names)}")
-        print(f"⏳ 等待 {wait_seconds} 秒后执行...")
-        set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
+        # 已冷却完成的账号立即执行；其余等待最早到期的
+        runnable_now = [n for r, n in nearby if r <= 0]
+        wait_seconds = max(0, int(nearby[0][0]))
+        if wait_seconds > 0:
+            print(f"⏳ 检测到 {len(names)} 个账号将在 {wait_window_minutes} 分钟内冷却结束：{', '.join(names)}")
+            print(f"⏳ 等待 {wait_seconds} 秒后执行...")
+            set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
+        else:
+            print(f"🔔 检测到 {len(runnable_now)} 个账号已冷却完成，立即执行：{', '.join(runnable_now)}")
+            set_operation(app, "执行已冷却账号")
 
         waited = 0
-        while waited < wait_seconds and not app._stop_event.is_set():
+        while wait_seconds > 0 and waited < wait_seconds and not app._stop_event.is_set():
             chunk = min(5, wait_seconds - waited)
             time.sleep(chunk)
             waited += chunk
@@ -1202,43 +1208,42 @@ def run_script_main(app):
         if app.settings.get("enable_cooldown", False):
             _wait_and_run_nearby_cooldowns(app, processed_accounts)
 
-        # 账号运行智能调度（分组运行）：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证
+        # 账号运行分组：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证
         smart_enabled = app.settings.get("smart_schedule_enabled", False)
         smart_group_size = max(1, int(app.settings.get("smart_group_size", 3)))
         smart_interval = max(0, int(app.settings.get("smart_group_interval", 5)))
-        # 预计算本轮实际会处理的账号数（未暂停、未冷却），用于智能跳过"为最后零头账号"的等待
-        runnable_total = 0
-        for _img in app.qq_account_images:
-            _name = _get_cooldown_key(_img)
-            if cooldown_manager.is_account_paused(_name):
-                continue
-            if app.settings.get("enable_cooldown", False) and cooldown_manager.is_cooling_down(_name)[0]:
-                continue
-            runnable_total += 1
-
         group_processed = 0
-        total_processed = 0  # 本轮累计已处理账号数（跨组累计，用于算剩余）
 
         def _group_wait():
-            """每跑完 N 个账号，只要还有就绪账号剩余就等待组间隔分钟（保证最后一批不超过一组，
-            避免跳过等待导致最后连续跑太多账号触发滑块验证）"""
-            nonlocal group_processed, total_processed
+            """每跑完 N 个账号，若后续还有就绪账号则等待组间隔分钟
+            动态统计当前位置之后的就绪账号（含本次运行中新就绪的），避免用开跑前快照导致组间等待漏触发"""
+            nonlocal group_processed
             group_processed += 1
-            total_processed += 1
-            remaining_runnable = runnable_total - total_processed
+            remaining_runnable = 0
+            for j in range(i + 1, total):
+                nm = _get_cooldown_key(app.qq_account_images[j])
+                if cooldown_manager.is_account_paused(nm):
+                    continue
+                if app.settings.get("enable_cooldown", False) and cooldown_manager.is_cooling_down(nm)[0]:
+                    continue
+                remaining_runnable += 1
             if (smart_enabled and smart_interval > 0
                     and group_processed >= smart_group_size
                     and remaining_runnable >= 1
                     and not app._stop_event.is_set()):
                 group_processed = 0
                 set_operation(app, f"组间等待 {smart_interval} 分钟")
-                print(f"⏳ 智能调度：已完成一组 {smart_group_size} 个账号，剩余 {remaining_runnable} 个，等待 {smart_interval} 分钟后再跑下一组（避免频繁切换账号触发滑块验证）")
+                print(f"⏳ 分组运行：已完成一组 {smart_group_size} 个账号，后续还有 {remaining_runnable} 个就绪，等待 {smart_interval} 分钟后再跑下一组（避免频繁切换账号触发滑块验证）")
                 wait_sec = smart_interval * 60
                 waited = 0
                 while waited < wait_sec and not app._stop_event.is_set():
                     chunk = min(5, wait_sec - waited)
                     time.sleep(chunk)
                     waited += chunk
+                    # 主页操作栏显示组间等待倒计时
+                    remaining_sec = wait_sec - waited
+                    if remaining_sec > 0 and not app._stop_event.is_set():
+                        set_operation(app, f"组间等待 {remaining_sec // 60}分{remaining_sec % 60:02d}秒")
 
         for i, img_path in enumerate(app.qq_account_images):
             if app._stop_event.is_set():
@@ -1311,7 +1316,7 @@ def run_script_main(app):
                     server_client.update_account_status(app, file_name, "failed")
                     _close_game(app)
                     _cleanup_account_processes(app)
-                    _group_wait()  # 智能调度：计入本组并可能触发组间等待
+                    _group_wait()  # 分组运行：计入本组并可能触发组间等待
                     continue  # 继续下一个账号
                 elif launch_result is False or launch_result == "interrupted":
                     if app._stop_event.is_set() or launch_result == "interrupted":
@@ -1338,7 +1343,7 @@ def run_script_main(app):
             # 记录结果
             _process_account_result(app, file_name, account_failed, account_interrupted,
                                     processed_accounts)
-            _group_wait()  # 智能调度：计入本组并可能触发组间等待
+            _group_wait()  # 分组运行：计入本组并可能触发组间等待
 
             if account_interrupted:
                 break
@@ -1401,7 +1406,7 @@ def game_operations_wrapper(app):
                 app._account_assets[app._current_account_name] = extra["asset"]
                 # 写入 SQLite 持久化记录
                 asset_db.record_asset(app._current_account_name, extra["asset"])
-                import account_manager
+                from data import account_manager
                 account_manager.save_accounts(app)
                 app.root.after(0, app._refresh_account_tree)
         return success

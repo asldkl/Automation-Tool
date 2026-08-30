@@ -7,8 +7,8 @@ import time
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import config
-import utils
+from config_utils import config
+from config_utils import utils
 from PIL import Image, ImageTk
 
 
@@ -824,7 +824,7 @@ class TemplateCaptureWizard:
 def utils_clear_cache():
     """清除 utils 中的模板缓存，使新上传的图片生效"""
     try:
-        import utils
+        from config_utils import utils
         utils.clear_template_cache()
     except Exception:
         pass

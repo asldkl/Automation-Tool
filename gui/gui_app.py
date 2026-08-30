@@ -13,20 +13,18 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
 import pyautogui
-import config
-import utils
-import cooldown_manager
-import machine_fingerprint
-from settings_window import SettingsWindow
+from config_utils import config
+from config_utils import utils
+from data import cooldown_manager
+from config_utils import machine_fingerprint
+from gui.settings_window import SettingsWindow
 
 # 拆分模块
-import email_notifier
-import account_manager
-import scheduler as sched
-import cooldown_watcher
-import server_client
-import automation_runner
-
+from services import email_notifier
+from data import account_manager
+from services import scheduler as sched
+from services import server_client
+from core import automation_runner
 # 尝试导入托盘所需库
 try:
     import pystray
@@ -165,7 +163,7 @@ def enable_log_overlay(root, corner_index=0):
         return
     try:
         from PyQt6.QtWidgets import QApplication
-        from screen_log_overlay import ScreenLogOverlay
+        from gui.screen_log_overlay import ScreenLogOverlay
 
         _qt_app = QApplication.instance()
         if _qt_app is None:
@@ -238,6 +236,10 @@ def show_log_overlay():
                 _qt_app.processEvents()
         except Exception:
             pass
+
+
+# 注册遮罩自动隐藏钩子：找图/OCR 识别期间自动隐藏遮罩，避免遮挡按键/干扰截图匹配
+utils.set_overlay_hooks(hide_log_overlay, show_log_overlay)
 
 
 def _overlay_status_text(app):
@@ -1200,7 +1202,7 @@ class App:
 
     def _run_single_account(self):
         """右键菜单：单独运行选中的账号"""
-        import automation_runner
+        from core import automation_runner
         sel = self.account_tree.selection()
         if not sel:
             return
@@ -1562,7 +1564,7 @@ def main():
     config.CONFIDENCE = config.APP_SETTINGS["confidence"]
 
     # 预加载 OCR 引擎（后台线程，不阻塞启动）
-    import utils
+    from config_utils import utils
     threading.Thread(target=utils.init_ocr_engine, daemon=True).start()
 
     root = tk.Tk()
@@ -1650,7 +1652,7 @@ def _check_resolution_on_startup(root):
         icon='warning'
     )
     if result is True:
-        from template_capture import TemplateCaptureWizard
+        from gui.template_capture import TemplateCaptureWizard
         TemplateCaptureWizard(root, current_res)
     elif result is False:
         config.save_template_resolution(current_res)

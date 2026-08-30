@@ -169,11 +169,11 @@ DEFAULT_SETTINGS = {
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
-    # 账号运行智能调度（分组运行：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）
-    "smart_schedule_enabled": False,      # 启用智能调度（分组运行）
+    # 账号运行分组（每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）
+    "smart_schedule_enabled": False,      # 启用分组运行
     "smart_group_size": 3,                # 每组账号数
     "smart_group_interval": 5,            # 组间隔（分钟）
-    "cooldown_wait_minutes": 10,          # 冷却检测等待窗口（分钟）：主流程后等待 N 分钟内到期的账号再跑；开启智能调度时至少 15 分钟
+    "cooldown_wait_minutes": 10,          # 冷却检测等待窗口（分钟）：主流程后等待 N 分钟内到期的账号再跑；开启分组运行且设置<10 时自动为 15
     "window_geometry": "",                   # 主窗口大小（自动保存，位置始终屏幕居中）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置

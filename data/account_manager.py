@@ -7,11 +7,10 @@ import json
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-import config
-import utils
-import cooldown_manager
-import asset_db
-
+from config_utils import config
+from config_utils import utils
+from data import cooldown_manager
+from data import asset_db
 APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "DeltaAutoTool")
 ACCOUNTS_JSON_PATH = os.path.join(APP_DATA_DIR, "accounts.json")
 ACCOUNTS_JSON_BACKUP = ACCOUNTS_JSON_PATH + ".bak"
@@ -59,7 +58,7 @@ def auto_backup_account_data(app, force=False):
         return False
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    import cooldown_manager
+    from data import cooldown_manager
     src_files = [
         ("accounts.json", ACCOUNTS_JSON_PATH),
         ("cooldown.json", cooldown_manager.COOLDOWN_JSON_PATH),
@@ -464,7 +463,7 @@ def _open_account_info_window(app, account_key=None):
 
 
 def delete_account(app):
-    import cooldown_manager
+    from data import cooldown_manager
     sel = app.account_tree.selection()
     if sel:
         if "separator" in app.account_tree.item(sel[0], "tags"):
@@ -532,7 +531,7 @@ def _tree_idx_to_account_idx(app, tree_item):
 
 def refresh_account_tree(app):
     """刷新账号列表（Treeview），更新冷却和资产信息"""
-    import cooldown_manager
+    from data import cooldown_manager
     # 保存当前选中账号名称
     selected_name = None
     sel = app.account_tree.selection()
@@ -643,7 +642,7 @@ def show_account_menu(app, event):
         return
     app.account_tree.selection_set(item)
     # 动态更新"暂停账号"/"恢复账号"菜单标签
-    import cooldown_manager
+    from data import cooldown_manager
     idx = _tree_idx_to_account_idx(app, item)
     if idx < len(app.qq_account_images):
         name = _account_key_from_path(app.qq_account_images[idx])
@@ -683,7 +682,7 @@ def double_click_column(app, event):
 
 def reset_selected_cooldown(app):
     """重置选中账号的冷却"""
-    import cooldown_manager
+    from data import cooldown_manager
     sel = app.account_tree.selection()
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
@@ -707,7 +706,7 @@ def reset_selected_cooldown(app):
 
 def custom_cooldown_time(app):
     """自定义选中账号的冷却时间（两个数字输入框，H/M 为固定单位文本）"""
-    import cooldown_manager
+    from data import cooldown_manager
     sel = app.account_tree.selection()
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)
@@ -783,7 +782,7 @@ def custom_cooldown_time(app):
 
 def reset_all_cooldowns(app):
     """一键重置所有账号冷却"""
-    import cooldown_manager
+    from data import cooldown_manager
     if not app.qq_account_images:
         messagebox.showinfo("提示", "账号列表为空。", parent=app.root)
         return
@@ -795,7 +794,7 @@ def reset_all_cooldowns(app):
 
 def toggle_account_pause(app):
     """暂停或恢复选中账号（暂停后运行时跳过该账号）"""
-    import cooldown_manager
+    from data import cooldown_manager
     sel = app.account_tree.selection()
     if not sel:
         messagebox.showwarning("提示", "请先选中一个账号", parent=app.root)

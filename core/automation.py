@@ -9,9 +9,8 @@ import random
 import datetime
 import pyautogui
 
-import config
-import utils
-
+from config_utils import config
+from config_utils import utils
 
 def handle_facility(facility_img, produce_item_img, facility_name, stop_event, set_operation, update_ui_callback=None):
     """

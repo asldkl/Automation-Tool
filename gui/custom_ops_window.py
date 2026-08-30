@@ -13,10 +13,9 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-import config
-import utils
-import custom_ops
-
+from config_utils import config
+from config_utils import utils
+from core import custom_ops
 # 步骤类型：key → 中文名
 STEP_TYPES = {
     "image": "找图点击",
@@ -423,7 +422,7 @@ class CustomOpsWindow:
     def _capture_region_and(self, callback, dlg=None):
         """隐藏窗口（及可选编辑框）→ 全屏框选截图 → 用 region 回调处理 → 恢复"""
         try:
-            import gui_app
+            from gui import gui_app
             gui_app.hide_log_overlay()   # 临时隐藏日志遮罩，避免挡住框选
         except Exception:
             pass
@@ -508,7 +507,7 @@ class CustomOpsWindow:
         except Exception:
             pass
         try:
-            import gui_app
+            from gui import gui_app
             gui_app.show_log_overlay()   # 恢复日志遮罩
         except Exception:
             pass
@@ -983,7 +982,7 @@ class CustomOpsWindow:
     def _pick_point(self, x_var, y_var, dlg):
         """屏幕取点：隐藏窗口 → 点击屏幕一点 → 记录坐标到 x_var/y_var"""
         try:
-            import gui_app
+            from gui import gui_app
             gui_app.hide_log_overlay()   # 临时隐藏日志遮罩，避免挡住点击
         except Exception:
             pass
@@ -1047,7 +1046,7 @@ class CustomOpsWindow:
         except Exception:
             pass
         try:
-            import gui_app
+            from gui import gui_app
             gui_app.show_log_overlay()   # 恢复日志遮罩
         except Exception:
             pass

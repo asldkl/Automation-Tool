@@ -11,8 +11,8 @@ from tkinter import ttk, filedialog, messagebox
 import ast
 import re
 import winreg
-import config
-import utils
+from config_utils import config
+from config_utils import utils
 from PIL import Image, ImageTk
 
 
@@ -73,11 +73,11 @@ class SettingsWindow:
 
         # 冷却管理变量
         self.cooldown_hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
-        # 账号运行智能调度（分组运行）
+        # 账号运行分组
         self.smart_schedule_enable_var = tk.BooleanVar(value=app.settings.get("smart_schedule_enabled", False))
         self.smart_group_size_var = tk.IntVar(value=int(app.settings.get("smart_group_size", 3)))
         self.smart_group_interval_var = tk.IntVar(value=int(app.settings.get("smart_group_interval", 5)))
-        # 冷却检测等待窗口（分钟，默认10；开启智能调度时至少15）
+        # 冷却检测等待窗口（分钟，默认10；开启分组运行且<10时自动15）
         self.cooldown_wait_minutes_var = tk.IntVar(value=int(app.settings.get("cooldown_wait_minutes", 10)))
 
         # 自动关机变量
@@ -393,17 +393,18 @@ class SettingsWindow:
         ttk.Label(cd_row6, text="冷却检测等待(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         ttk.Spinbox(cd_row6, from_=1, to=60, increment=1,
                     textvariable=self.cooldown_wait_minutes_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(cd_row6, text="分钟（默认10；智能调度时至少15）",
+        ttk.Label(cd_row6, text="分钟（默认10；分组运行时<10自动15）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
-        # ----- 账号运行智能调度（分组运行） -----
-        smart_frame = ttk.LabelFrame(parent, text="  账号运行智能调度（分组运行）  ", style='SettingsCard.TLabelframe', padding=10)
+        # ----- 账号运行分组（组间等待避免频繁切换账号触发滑块验证） -----
+        smart_frame = ttk.LabelFrame(parent, text="  账号运行分组  ", style='SettingsCard.TLabelframe', padding=10)
         smart_frame.pack(fill=tk.X, pady=(0, 8))
 
         smart_row1 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
         smart_row1.pack(fill=tk.X, pady=(0, 4))
-        ttk.Checkbutton(smart_row1, text="启用智能调度（分组运行，组间等待避免频繁切换）",
-                        variable=self.smart_schedule_enable_var).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Checkbutton(smart_row1, text="启用分组运行（组间等待避免频繁切换）",
+                        variable=self.smart_schedule_enable_var,
+                        command=self._on_group_run_toggle).pack(side=tk.LEFT, padx=5, pady=5)
 
         smart_row2 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
         smart_row2.pack(fill=tk.X, pady=(0, 4))
@@ -535,7 +536,7 @@ class SettingsWindow:
         self.email_test_label.config(text="正在发送...", foreground="#f39c12")
 
         def _send():
-            import utils
+            from config_utils import utils
             success, msg = utils.send_email_notification(
                 code, sender, receiver,
                 "三角洲自动化工具 - 测试邮件",
@@ -569,7 +570,7 @@ class SettingsWindow:
         # 异步加载指纹（避免阻塞 UI）
         def _load_fingerprint():
             try:
-                import machine_fingerprint
+                from config_utils import machine_fingerprint
                 info = machine_fingerprint.get_machine_info()
                 self.win.after(0, self._fingerprint_var.set, info["machine_id"])
             except Exception:
@@ -779,7 +780,7 @@ class SettingsWindow:
     def _run_close_game_test(self):
         """后台执行关闭游戏测试"""
         try:
-            import automation_runner
+            from core import automation_runner
             automation_runner._close_game(self.app)
             print("✅ 测试关闭游戏流程执行完成")
         except Exception as e:
@@ -789,7 +790,7 @@ class SettingsWindow:
         """打开自定义操作配置窗口（隐藏设置窗口，返回时恢复）"""
         def _open():
             try:
-                from custom_ops_window import CustomOpsWindow
+                from gui.custom_ops_window import CustomOpsWindow
                 CustomOpsWindow(self.win, self.app)
             except Exception as e:
                 try:
@@ -834,7 +835,7 @@ class SettingsWindow:
     def _export_accounts(self):
         """导出账号数据到用户选择的文件"""
         import shutil
-        import account_manager
+        from data import account_manager
         src = account_manager.ACCOUNTS_JSON_PATH
         if not os.path.exists(src):
             messagebox.showwarning("提示", "当前没有账号数据文件", parent=self.win)
@@ -855,7 +856,7 @@ class SettingsWindow:
     def _import_accounts(self):
         """从用户选择的文件导入账号数据（覆盖当前数据）"""
         import json
-        import account_manager
+        from data import account_manager
         src = filedialog.askopenfilename(
             parent=self.win, title="导入账号数据",
             filetypes=[("账号数据文件", "*.json *.bak"), ("JSON 文件", "*.json"), ("所有文件", "*.*")])
@@ -942,7 +943,7 @@ class SettingsWindow:
 
         def sniper_start():
             if sniper_ref[0] is None:
-                from skin_sniper import SkinSniper
+                from services.skin_sniper import SkinSniper
                 sniper_ref[0] = SkinSniper()
             s = sniper_ref[0]
             try:
@@ -1021,7 +1022,7 @@ class SettingsWindow:
             import threading
             def _run():
                 try:
-                    from skin_sniper import SkinSniper
+                    from services.skin_sniper import SkinSniper
                     s = SkinSniper()
                     s.search_region = tuple(region)
                     # 使用用户设置的 buy_template 路径
@@ -1057,7 +1058,7 @@ class SettingsWindow:
             import threading
             def _run():
                 try:
-                    from skin_sniper import SkinSniper
+                    from services.skin_sniper import SkinSniper
                     s = SkinSniper()
                     s.balance_region = tuple(region)
                     val = s._read_balance()
@@ -1123,7 +1124,7 @@ class SettingsWindow:
         _orig_start = sniper_start
         def _start_with_paths():
             if sniper_ref[0] is None:
-                from skin_sniper import SkinSniper
+                from services.skin_sniper import SkinSniper
                 sniper_ref[0] = SkinSniper()
             s = sniper_ref[0]
             # 同步图片路径
@@ -1149,7 +1150,7 @@ class SettingsWindow:
     def _test_ola_status(self):
         """测试 Interception 驱动键盘状态"""
         try:
-            import interception_keyboard
+            from drivers import interception_keyboard
             inter_ok = interception_keyboard.is_available()
             if inter_ok:
                 self._dev_kb_status.config(
@@ -1170,7 +1171,7 @@ class SettingsWindow:
         import threading
         def _run_test():
             try:
-                import interception_keyboard
+                from drivers import interception_keyboard
                 import pyautogui
                 # 提示用户将焦点放到目标窗口
                 self.win.after(0, lambda: self._dev_kb_status.config(
@@ -1187,7 +1188,7 @@ class SettingsWindow:
 
     def _test_interception_input(self):
         """测试 Interception 驱动级键盘输入"""
-        import interception_keyboard
+        from drivers import interception_keyboard
         if not interception_keyboard.is_available():
             self._dev_kb_status.config(
                 text="✗ Interception 不可用，请安装 Interception 驱动并确保驱动正常运行",
@@ -1682,7 +1683,7 @@ class SettingsWindow:
 
     def _open_capture_wizard(self):
         """打开模板截图向导"""
-        from template_capture import TemplateCaptureWizard
+        from gui.template_capture import TemplateCaptureWizard
         current_res = config.get_resolution_key()
         wizard = TemplateCaptureWizard(self.win, current_res, app=self.app)
         wizard.win.protocol("WM_DELETE_WINDOW", lambda: utils.nav_pop(wizard.win))
@@ -1731,6 +1732,12 @@ class SettingsWindow:
                     pass
         finally:
             winreg.CloseKey(key)
+
+    def _on_group_run_toggle(self):
+        """勾选/取消「分组运行」：勾选后若冷却检测等待 <10 自动改为 15（勾选框即时反馈）"""
+        if self.smart_schedule_enable_var.get():
+            if self.cooldown_wait_minutes_var.get() < 10:
+                self.cooldown_wait_minutes_var.set(15)
 
     def _save(self):
         # 从磁盘加载最新设置，避免覆盖其他模块（如模板向导）保存的 OCR 配置
@@ -1813,7 +1820,7 @@ class SettingsWindow:
 
         # 冷却管理设置
         fresh["cooldown_hours"] = self.cooldown_hours_var.get()
-        # 账号运行智能调度（分组运行）
+        # 账号运行分组
         fresh["smart_schedule_enabled"] = self.smart_schedule_enable_var.get()
         fresh["smart_group_size"] = max(1, self.smart_group_size_var.get())
         fresh["smart_group_interval"] = max(1, self.smart_group_interval_var.get())

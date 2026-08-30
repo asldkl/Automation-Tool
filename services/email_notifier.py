@@ -9,9 +9,8 @@ import html
 import threading
 import time
 
-import utils
-import cooldown_manager
-
+from config_utils import utils
+from data import cooldown_manager
 
 def _get_machine_name():
     """获取电脑名称（机器名称），用于邮件标题区分设备"""

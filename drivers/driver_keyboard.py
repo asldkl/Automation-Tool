@@ -19,7 +19,7 @@ def _get_ib():
 def is_available():
     """检查是否有可用的键盘驱动（IbSimulator 始终可用）"""
     try:
-        import interception_keyboard
+        from drivers import interception_keyboard
         if interception_keyboard.is_available():
             return True
     except Exception:
@@ -30,7 +30,7 @@ def is_available():
 def get_backend():
     """返回当前使用的后端名称"""
     try:
-        import interception_keyboard
+        from drivers import interception_keyboard
         if interception_keyboard.is_available():
             return "Interception"
     except Exception:
@@ -41,7 +41,7 @@ def get_backend():
 def send_string(text, interval=0.02):
     """发送字符串，优先用 Interception，不可用时降级到 IbSimulator"""
     try:
-        import interception_keyboard
+        from drivers import interception_keyboard
         if interception_keyboard.is_available():
             return interception_keyboard.send_string(text, interval=interval)
     except Exception:

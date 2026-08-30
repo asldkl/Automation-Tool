@@ -29,7 +29,7 @@ class TestCooldownManagerCache(unittest.TestCase):
     """测试 cooldown_manager 的内存缓存机制"""
 
     def setUp(self):
-        import cooldown_manager as cm
+        from data import cooldown_manager as cm
         self.cm = cm
         self._orig_path = cm.COOLDOWN_JSON_PATH
         cm.COOLDOWN_JSON_PATH = os.path.join(TEST_DIR, "cd_cache.json")
@@ -111,7 +111,7 @@ class TestAssetDB(unittest.TestCase):
     """测试 asset_db 的单例连接和数据操作"""
 
     def setUp(self):
-        import asset_db
+        from data import asset_db
         self.db = asset_db
         self._orig_path = asset_db.DB_PATH
         asset_db.DB_PATH = os.path.join(TEST_DIR, "test_assets.db")
@@ -180,17 +180,17 @@ class TestConfigSettings(unittest.TestCase):
     """测试配置管理"""
 
     def setUp(self):
-        import config
+        from config_utils import config
         self._orig_path = config.SETTINGS_JSON_PATH
         config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_config.json")
 
     def tearDown(self):
-        import config
+        from config_utils import config
         config.SETTINGS_JSON_PATH = self._orig_path
 
     def test_load_defaults_when_no_file(self):
         """无文件时应返回默认设置"""
-        from config import load_settings, SETTINGS_JSON_PATH, DEFAULT_SETTINGS
+        from config_utils.config import load_settings, SETTINGS_JSON_PATH, DEFAULT_SETTINGS
         if os.path.exists(SETTINGS_JSON_PATH):
             os.remove(SETTINGS_JSON_PATH)
         settings = load_settings()
@@ -199,7 +199,7 @@ class TestConfigSettings(unittest.TestCase):
 
     def test_save_load_roundtrip(self):
         """保存后加载应一致"""
-        from config import save_settings, load_settings
+        from config_utils.config import save_settings, load_settings
         settings = {"confidence": 0.85, "auto_start": True, "smtp_code": "test_code"}
         save_settings(settings)
         loaded = load_settings()
@@ -209,20 +209,20 @@ class TestConfigSettings(unittest.TestCase):
 
     def test_resource_path(self):
         """resource_path 应返回有效路径"""
-        from config import resource_path
+        from config_utils.config import resource_path
         path = resource_path("picture")
         self.assertTrue(os.path.isabs(path))
 
     def test_get_screen_resolution(self):
         """获取屏幕分辨率"""
-        from config import get_screen_resolution
+        from config_utils.config import get_screen_resolution
         w, h = get_screen_resolution()
         self.assertGreater(w, 0)
         self.assertGreater(h, 0)
 
     def test_sell_items_meta(self):
         """售卖物品元数据读写（自动同步目录图片）"""
-        from config import load_sell_items_meta, save_sell_items_meta, SELL_ITEMS_DIR
+        from config_utils.config import load_sell_items_meta, save_sell_items_meta, SELL_ITEMS_DIR
         os.makedirs(SELL_ITEMS_DIR, exist_ok=True)
         # 创建临时测试图片
         test_file = os.path.join(SELL_ITEMS_DIR, "_test_meta_sync.png")
@@ -246,7 +246,7 @@ class TestUtilsFunctions(unittest.TestCase):
 
     def test_parse_asset_value(self):
         """资产字符串解析"""
-        from utils import parse_asset_value
+        from config_utils.utils import parse_asset_value
         self.assertEqual(parse_asset_value("1.2M"), 1200000)
         self.assertEqual(parse_asset_value("3.5K"), 3500)
         self.assertEqual(parse_asset_value("2B"), 2000000000)
@@ -257,7 +257,7 @@ class TestUtilsFunctions(unittest.TestCase):
 
     def test_format_asset_num(self):
         """资产数值格式化"""
-        from utils import format_asset_num
+        from config_utils.utils import format_asset_num
         self.assertEqual(format_asset_num(1200000), "1.20M")
         self.assertEqual(format_asset_num(3500), "3.5K")
         self.assertEqual(format_asset_num(1500000000), "1.50B")
@@ -266,7 +266,7 @@ class TestUtilsFunctions(unittest.TestCase):
 
     def test_parse_format_roundtrip(self):
         """解析和格式化的往返一致性"""
-        from utils import parse_asset_value, format_asset_num
+        from config_utils.utils import parse_asset_value, format_asset_num
         for val in [1000, 1000000, 1234567, 999]:
             formatted = format_asset_num(val)
             parsed = parse_asset_value(formatted)
@@ -275,7 +275,7 @@ class TestUtilsFunctions(unittest.TestCase):
 
     def test_set_window_icon_no_crash(self):
         """set_window_icon 在无窗口环境下不应崩溃"""
-        from utils import set_window_icon
+        from config_utils.utils import set_window_icon
         # 传入 mock 对象，确保不会抛异常
         mock_win = MagicMock()
         mock_win.iconphoto = MagicMock()
@@ -292,7 +292,7 @@ class TestEmailNotifier(unittest.TestCase):
 
     def test_get_email_config_enabled(self):
         """邮箱配置正确时应返回元组"""
-        from email_notifier import _get_email_config
+        from services.email_notifier import _get_email_config
         app = MagicMock()
         app.settings = {
             "email_enabled": True,
@@ -306,21 +306,21 @@ class TestEmailNotifier(unittest.TestCase):
 
     def test_get_email_config_disabled(self):
         """邮箱未启用时应返回 None"""
-        from email_notifier import _get_email_config
+        from services.email_notifier import _get_email_config
         app = MagicMock()
         app.settings = {"email_enabled": False}
         self.assertIsNone(_get_email_config(app))
 
     def test_get_email_config_missing_fields(self):
         """邮箱配置不完整时应返回 None"""
-        from email_notifier import _get_email_config
+        from services.email_notifier import _get_email_config
         app = MagicMock()
         app.settings = {"email_enabled": True, "smtp_code": "", "sender_email": "a@b.com", "receiver_email": "c@d.com"}
         self.assertIsNone(_get_email_config(app))
 
     def test_send_functions_no_crash_when_disabled(self):
         """邮箱禁用时发送函数不应崩溃"""
-        from email_notifier import send_account_failure_email, send_run_report_email, send_failure_email
+        from services.email_notifier import send_account_failure_email, send_run_report_email, send_failure_email
         app = MagicMock()
         app.settings = {"email_enabled": False}
         # 这些都应直接返回，不抛异常
@@ -335,8 +335,8 @@ class TestAssetValueParsing(unittest.TestCase):
 
     def test_utils_and_account_manager_consistent(self):
         """utils.parse_asset_value 和 account_manager._parse_asset_value 应一致"""
-        from utils import parse_asset_value
-        import account_manager
+        from config_utils.utils import parse_asset_value
+        from data import account_manager
         for val in ["1.2M", "3.5K", "2B", "100", "invalid", ""]:
             self.assertEqual(parse_asset_value(val), account_manager._parse_asset_value(val))
 

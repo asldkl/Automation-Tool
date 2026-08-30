@@ -20,7 +20,7 @@ ORIGINAL_SETTINGS_PATH = None
 def setUpModule():
     """模块级初始化：备份并隔离设置文件"""
     global ORIGINAL_SETTINGS_PATH
-    import config
+    from config_utils import config
     ORIGINAL_SETTINGS_PATH = config.SETTINGS_JSON_PATH
     # 使用临时目录避免污染真实配置
     config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_settings.json")
@@ -29,7 +29,7 @@ def setUpModule():
 
 def tearDownModule():
     """模块级清理"""
-    import config
+    from config_utils import config
     config.SETTINGS_JSON_PATH = ORIGINAL_SETTINGS_PATH
     shutil.rmtree(TEST_DIR, ignore_errors=True)
 
@@ -40,13 +40,13 @@ class TestConfigNewOption(unittest.TestCase):
 
     def test_default_value_exists(self):
         """DEFAULT_SETTINGS 应包含 cooldown_run_immediately"""
-        from config import DEFAULT_SETTINGS
+        from config_utils.config import DEFAULT_SETTINGS
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
         self.assertFalse(DEFAULT_SETTINGS["cooldown_run_immediately"])
 
     def test_load_settings_includes_new_option(self):
         """load_settings 应返回包含新选项的字典"""
-        from config import load_settings, SETTINGS_JSON_PATH
+        from config_utils.config import load_settings, SETTINGS_JSON_PATH
         # 清空设置文件以测试默认值
         if os.path.exists(SETTINGS_JSON_PATH):
             os.remove(SETTINGS_JSON_PATH)
@@ -56,7 +56,7 @@ class TestConfigNewOption(unittest.TestCase):
 
     def test_save_and_load_preserves_value(self):
         """保存后重新加载应保留 cooldown_run_immediately 的值"""
-        from config import save_settings, load_settings, SETTINGS_JSON_PATH
+        from config_utils.config import save_settings, load_settings, SETTINGS_JSON_PATH
         settings = dict(load_settings())
         settings["cooldown_run_immediately"] = True
         save_settings(settings)
@@ -65,7 +65,7 @@ class TestConfigNewOption(unittest.TestCase):
 
     def test_all_default_keys_present(self):
         """load_settings 返回的字典应包含所有 DEFAULT_SETTINGS 的键"""
-        from config import load_settings, DEFAULT_SETTINGS
+        from config_utils.config import load_settings, DEFAULT_SETTINGS
         if os.path.exists(load_settings.__code__.co_filename):
             pass  # just checking import works
         settings = load_settings()
@@ -78,7 +78,7 @@ class TestCooldownManager(unittest.TestCase):
     """测试 cooldown_manager.py 所有功能"""
 
     def setUp(self):
-        import cooldown_manager
+        from data import cooldown_manager
         self.cm = cooldown_manager
         # 使用临时文件
         self._orig_path = cooldown_manager.COOLDOWN_JSON_PATH
@@ -266,7 +266,7 @@ class TestHazardOperationsRetry(unittest.TestCase):
 
     def test_retry_count_in_source(self):
         """automation.py 中烽火地带重试参数化：主流程默认 5 次，单账号 3 次"""
-        automation_path = os.path.join(os.path.dirname(__file__), "automation.py")
+        automation_path = os.path.join(os.path.dirname(__file__), "core", "automation.py")
         with open(automation_path, "r", encoding="utf-8") as f:
             content = f.read()
 
@@ -280,7 +280,7 @@ class TestHazardOperationsRetry(unittest.TestCase):
 
     def test_error_message_matches_retry_count(self):
         """错误消息中的重试次数应与 range() 一致（参数化）"""
-        automation_path = os.path.join(os.path.dirname(__file__), "automation.py")
+        automation_path = os.path.join(os.path.dirname(__file__), "core", "automation.py")
         with open(automation_path, "r", encoding="utf-8") as f:
             content = f.read()
         # 检查 else 分支中的消息（参数化）
@@ -293,14 +293,14 @@ class TestGameLaunchWait(unittest.TestCase):
 
     def test_log_message_format(self):
         """日志消息应为指定格式"""
-        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        runner_path = os.path.join(os.path.dirname(__file__), "core", "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("游戏已启动，额外等待", content)
 
     def test_wait_after_game_window_before_hazard(self):
         """game_launch_wait 应在游戏窗口检测后、烽火地带识别前"""
-        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        runner_path = os.path.join(os.path.dirname(__file__), "core", "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
 
@@ -324,7 +324,7 @@ class TestEmailNotification(unittest.TestCase):
 
     def test_email_subject_contains_account_name(self):
         """邮件主题应包含失败的账号名"""
-        notifier_path = os.path.join(os.path.dirname(__file__), "email_notifier.py")
+        notifier_path = os.path.join(os.path.dirname(__file__), "services", "email_notifier.py")
         with open(notifier_path, "r", encoding="utf-8") as f:
             content = f.read()
 
@@ -336,7 +336,7 @@ class TestEmailNotification(unittest.TestCase):
 
     def test_failure_email_body_contains_account_name(self):
         """邮件正文应包含失败的账号名"""
-        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        runner_path = os.path.join(os.path.dirname(__file__), "core", "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
 
@@ -424,17 +424,17 @@ class TestSettingsSaveIntegrity(unittest.TestCase):
     """测试设置保存和加载的完整性"""
 
     def setUp(self):
-        import config
+        from config_utils import config
         self._orig_path = config.SETTINGS_JSON_PATH
         config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_save_integrity.json")
 
     def tearDown(self):
-        import config
+        from config_utils import config
         config.SETTINGS_JSON_PATH = self._orig_path
 
     def test_save_preserves_all_cooldown_settings(self):
         """保存应保留所有冷却相关设置"""
-        from config import save_settings, load_settings, DEFAULT_SETTINGS
+        from config_utils.config import save_settings, load_settings, DEFAULT_SETTINGS
         settings = dict(DEFAULT_SETTINGS)
         settings["enable_cooldown"] = True
         settings["cooldown_hours"] = 12
@@ -448,7 +448,7 @@ class TestSettingsSaveIntegrity(unittest.TestCase):
 
     def test_save_preserves_all_auto_settings(self):
         """保存应保留所有自动任务设置"""
-        from config import save_settings, load_settings, DEFAULT_SETTINGS
+        from config_utils.config import save_settings, load_settings, DEFAULT_SETTINGS
         settings = dict(DEFAULT_SETTINGS)
         settings["cooldown_run_immediately"] = True
         settings["cooldown_scheduled_task_enabled"] = True
@@ -468,12 +468,12 @@ class TestCodeConsistency(unittest.TestCase):
     """检查代码中各处引用的一致性"""
 
     def test_config_default_has_cooldown_run_immediately(self):
-        from config import DEFAULT_SETTINGS
+        from config_utils.config import DEFAULT_SETTINGS
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
         """gui_app.py 中版本号应为 v1.3.6"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
+        gui_app_path = os.path.join(os.path.dirname(__file__), "gui", "gui_app.py")
         with open(gui_app_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("v1.3.6", content)
@@ -494,14 +494,14 @@ class TestCodeConsistency(unittest.TestCase):
 
     def test_settings_window_saves_cooldown_run_immediately(self):
         """settings_window.py 的 _save 方法应保存 cooldown_run_immediately"""
-        sw_path = os.path.join(os.path.dirname(__file__), "settings_window.py")
+        sw_path = os.path.join(os.path.dirname(__file__), "gui", "settings_window.py")
         with open(sw_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn('"cooldown_run_immediately"', content)
 
     def test_gui_app_has_wegame_login(self):
         """automation_runner.py 应包含 WeGame 直接登录逻辑"""
-        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        runner_path = os.path.join(os.path.dirname(__file__), "core", "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_login_account", content)
@@ -515,7 +515,7 @@ class TestBugFixes(unittest.TestCase):
 
     def test_bug2_check_uses_cooldown_run_immediately(self):
         """Bug2: check_any_account_ready 应检查 cooldown_run_immediately"""
-        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        watcher_path = os.path.join(os.path.dirname(__file__), "data", "cooldown_watcher.py")
         with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
         method_start = content.find("def check_any_account_ready(app):")
@@ -525,26 +525,26 @@ class TestBugFixes(unittest.TestCase):
 
     def test_bug3_user_stopped_flag_exists(self):
         """Bug3: 应有 _user_stopped_cooldown 标志"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
+        gui_path = os.path.join(os.path.dirname(__file__), "gui", "gui_app.py")
         with open(gui_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_user_stopped_cooldown", content)
         # stop_run 中应设置该标志
-        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        runner_path = os.path.join(os.path.dirname(__file__), "core", "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             runner_content = f.read()
         self.assertIn("_user_stopped_cooldown", runner_content)
 
     def test_bug3_watcher_respects_user_stop(self):
         """Bug3: 冷却监听应尊重用户停止标志"""
-        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        watcher_path = os.path.join(os.path.dirname(__file__), "data", "cooldown_watcher.py")
         with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_user_stopped_cooldown", content)
 
     def test_bug5_restart_cooldown_watcher_exists(self):
         """Bug5: 应有 restart_cooldown_watcher 函数"""
-        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        watcher_path = os.path.join(os.path.dirname(__file__), "data", "cooldown_watcher.py")
         with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("def restart_cooldown_watcher(app):", content)
@@ -552,19 +552,19 @@ class TestBugFixes(unittest.TestCase):
 
     def test_bug6_ignore_cooldown_flag(self):
         """Bug6: 应有 _ignore_cooldown_this_run 标志"""
-        gui_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
+        gui_path = os.path.join(os.path.dirname(__file__), "gui", "gui_app.py")
         with open(gui_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("_ignore_cooldown_this_run", content)
         # automation_runner 中 on_finish 应重置该标志
-        runner_path = os.path.join(os.path.dirname(__file__), "automation_runner.py")
+        runner_path = os.path.join(os.path.dirname(__file__), "core", "automation_runner.py")
         with open(runner_path, "r", encoding="utf-8") as f:
             runner_content = f.read()
         self.assertIn("_ignore_cooldown_this_run = False", runner_content)
 
     def test_bug7_is_removed(self):
         """Bug7: 已移除首次自动添加冷却功能（现由新建账号自动暂停代替）"""
-        watcher_path = os.path.join(os.path.dirname(__file__), "cooldown_watcher.py")
+        watcher_path = os.path.join(os.path.dirname(__file__), "data", "cooldown_watcher.py")
         with open(watcher_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertNotIn("首次启用", content)

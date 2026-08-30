@@ -14,8 +14,7 @@ import threading
 import os
 import random
 import pyautogui
-import utils
-
+from config_utils import utils
 
 class SkinSniper:
     """皮肤抢购控制器"""
@@ -93,7 +92,7 @@ class SkinSniper:
         if not self.search_region or self.search_region[2] <= 0 or self.search_region[3] <= 0:
             return None
 
-        import config as cfg
+        from config_utils import config as cfg
         threshold = cfg.load_settings().get("confidence", 0.7)
         template = utils._imread_unicode(self.buy_template)
         if template is None:

@@ -51,10 +51,10 @@ if __name__ == "__main__":
         # 初始化数据目录
         import pyautogui
         pyautogui.FAILSAFE = False
-        import config
+        from config_utils import config
         config.ensure_app_data_dir()
 
-        from gui_app import main
+        from gui.gui_app import main
         main()
     except Exception:
         error_log = os.path.join(config.APP_DATA_DIR, "error.log")

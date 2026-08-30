@@ -8,9 +8,8 @@ import datetime
 import threading
 import traceback
 
-import utils
-import cooldown_manager
-
+from config_utils import utils
+from data import cooldown_manager
 
 def start_cooldown_watcher(app):
     """启动冷却到期监听线程（cooldown_run_immediately 模式）"""

@@ -8,9 +8,8 @@ import time
 import glob
 import datetime
 import threading
-import config
-import utils
-
+from config_utils import config
+from config_utils import utils
 COOLDOWN_JSON_PATH = os.path.join(config.APP_DATA_DIR, "cooldown.json")
 COOLDOWN_JSON_BACKUP = COOLDOWN_JSON_PATH + ".bak"
 
