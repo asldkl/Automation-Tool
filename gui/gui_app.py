@@ -16,6 +16,7 @@ import pyautogui
 from config_utils import config
 from config_utils import utils
 from data import cooldown_manager
+from data import cooldown_watcher
 from config_utils import machine_fingerprint
 from gui.settings_window import SettingsWindow
 
