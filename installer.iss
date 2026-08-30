@@ -46,16 +46,16 @@ Name: "install_driver"; Description: "安装 Interception 键盘驱动（WeGame 
 Name: "{group}\三角洲行动自动化工具"; Filename: "{app}\三角洲自动工具.exe"
 Name: "{group}\卸载三角洲行动自动化工具"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\三角洲行动自动化工具"; Filename: "{app}\三角洲自动工具.exe"; Tasks: desktopicon
-Name: "{userstartup}\三角洲行动自动化工具"; Filename: "{app}\三角洲自动工具.exe"; Tasks: startupicon
+Name: "{commonstartup}\三角洲行动自动化工具"; Filename: "{app}\三角洲自动工具.exe"; Tasks: startupicon
 
 [Run]
 Filename: "{app}\三角洲自动工具.exe"; Description: "启动程序"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "sc.exe"; Parameters: "stop keyboard"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "delete keyboard"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "stop interception"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "delete interception"; Flags: runhidden
+Filename: "sc.exe"; Parameters: "stop keyboard"; Flags: runhidden; RunOnceId: "StopKeyboardDriver"
+Filename: "sc.exe"; Parameters: "delete keyboard"; Flags: runhidden; RunOnceId: "DeleteKeyboardDriver"
+Filename: "sc.exe"; Parameters: "stop interception"; Flags: runhidden; RunOnceId: "StopInterceptionDriver"
+Filename: "sc.exe"; Parameters: "delete interception"; Flags: runhidden; RunOnceId: "DeleteInterceptionDriver"
 
 [UninstallDelete]
 Type: files; Name: "{app}\interception.sys"
@@ -89,7 +89,7 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    if IsTaskSelected('install_driver') and (not IsInterceptionInstalled) then
+    if WizardIsTaskSelected('install_driver') and (not IsInterceptionInstalled) then
     begin
       if Exec(ExpandConstant('{app}\install_interception.bat'), '',
               '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
