@@ -73,11 +73,11 @@ class SettingsWindow:
 
         # 冷却管理变量
         self.cooldown_hours_var = tk.IntVar(value=app.settings.get("cooldown_hours", 8))
-        # 账号运行智能调度（分组运行）
+        # 账号运行分组
         self.smart_schedule_enable_var = tk.BooleanVar(value=app.settings.get("smart_schedule_enabled", False))
         self.smart_group_size_var = tk.IntVar(value=int(app.settings.get("smart_group_size", 3)))
         self.smart_group_interval_var = tk.IntVar(value=int(app.settings.get("smart_group_interval", 5)))
-        # 冷却检测等待窗口（分钟，默认10；开启智能调度时至少15）
+        # 冷却检测等待窗口（分钟，默认10；开启分组运行且<10时自动15）
         self.cooldown_wait_minutes_var = tk.IntVar(value=int(app.settings.get("cooldown_wait_minutes", 10)))
 
         # 自动关机变量
@@ -393,17 +393,18 @@ class SettingsWindow:
         ttk.Label(cd_row6, text="冷却检测等待(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         ttk.Spinbox(cd_row6, from_=1, to=60, increment=1,
                     textvariable=self.cooldown_wait_minutes_var, width=6).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(cd_row6, text="分钟（默认10；智能调度时至少15）",
+        ttk.Label(cd_row6, text="分钟（默认10；分组运行时<10自动15）",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
-        # ----- 账号运行智能调度（分组运行） -----
-        smart_frame = ttk.LabelFrame(parent, text="  账号运行智能调度（分组运行）  ", style='SettingsCard.TLabelframe', padding=10)
+        # ----- 账号运行分组 -----
+        smart_frame = ttk.LabelFrame(parent, text="  账号运行分组  ", style='SettingsCard.TLabelframe', padding=10)
         smart_frame.pack(fill=tk.X, pady=(0, 8))
 
         smart_row1 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
         smart_row1.pack(fill=tk.X, pady=(0, 4))
-        ttk.Checkbutton(smart_row1, text="启用智能调度（分组运行，组间等待避免频繁切换）",
-                        variable=self.smart_schedule_enable_var).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Checkbutton(smart_row1, text="启用分组运行（组间等待避免频繁切换）",
+                        variable=self.smart_schedule_enable_var,
+                        command=self._on_group_run_toggle).pack(side=tk.LEFT, padx=5, pady=5)
 
         smart_row2 = ttk.Frame(smart_frame, style='SettingsInner.TFrame')
         smart_row2.pack(fill=tk.X, pady=(0, 4))
@@ -1732,6 +1733,12 @@ class SettingsWindow:
         finally:
             winreg.CloseKey(key)
 
+    def _on_group_run_toggle(self):
+        """勾选/取消「分组运行」：勾选后若冷却检测等待 <10 自动改为 15（勾选框即时反馈）"""
+        if self.smart_schedule_enable_var.get():
+            if self.cooldown_wait_minutes_var.get() < 10:
+                self.cooldown_wait_minutes_var.set(15)
+
     def _save(self):
         # 从磁盘加载最新设置，避免覆盖其他模块（如模板向导）保存的 OCR 配置
         fresh = config.load_settings()
@@ -1813,7 +1820,7 @@ class SettingsWindow:
 
         # 冷却管理设置
         fresh["cooldown_hours"] = self.cooldown_hours_var.get()
-        # 账号运行智能调度（分组运行）
+        # 账号运行分组
         fresh["smart_schedule_enabled"] = self.smart_schedule_enable_var.get()
         fresh["smart_group_size"] = max(1, self.smart_group_size_var.get())
         fresh["smart_group_interval"] = max(1, self.smart_group_interval_var.get())

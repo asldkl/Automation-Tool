@@ -8,6 +8,30 @@ import traceback
 import ctypes
 
 
+def _set_dpi_awareness():
+    """启动时设置 DPI 感知为 PER_MONITOR_AWARE_V2（与 PyQt6 默认一致）
+    避免 Qt 初始化时 SetProcessDpiAwarenessContext 拒绝访问。
+    注意：不能回退到旧 API SetProcessDPIAware（SYSTEM 级），否则会与 Qt 的 PER_MONITOR_AWARE_V2 冲突"""
+    try:
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        if hasattr(user32, 'SetProcessDpiAwarenessContext'):
+            # 设置参数类型为 HANDLE（64 位下 8 字节），避免 ctypes 默认按 int 截断
+            user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+            user32.SetProcessDpiAwarenessContext.restype = wintypes.BOOL
+            # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+            ok = user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+            if ok:
+                return True
+        # 已被设置为 PER_MONITOR_AWARE_V2（如 Qt 已设）或调用失败时，保持现状不降级
+        return True
+    except Exception:
+        return False
+
+
+_set_dpi_awareness()
+
+
 def ensure_single_instance():
     """
     确保只运行一个程序实例。

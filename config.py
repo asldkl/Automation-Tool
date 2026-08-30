@@ -169,11 +169,11 @@ DEFAULT_SETTINGS = {
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
-    # 账号运行智能调度（分组运行：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）
-    "smart_schedule_enabled": False,      # 启用智能调度（分组运行）
+    # 账号运行分组（分组运行：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）
+    "smart_schedule_enabled": False,      # 启用分组运行
     "smart_group_size": 3,                # 每组账号数
     "smart_group_interval": 5,            # 组间隔（分钟）
-    "cooldown_wait_minutes": 10,          # 冷却检测等待窗口（分钟）：主流程后等待 N 分钟内到期的账号再跑；开启智能调度时至少 15 分钟
+    "cooldown_wait_minutes": 10,          # 冷却检测等待窗口（分钟）：主流程后等待 N 分钟内到期的账号再跑；开启分组运行且<10 时自动 15 分钟
     "window_geometry": "",                   # 主窗口大小（自动保存，位置始终屏幕居中）
     "settings_window_geometry": "",          # 设置窗口大小和位置
     "template_capture_geometry": "",         # 模板上传向导窗口大小和位置
@@ -374,11 +374,12 @@ WAIT_TIME = 0.5
 
 # ==================== 分辨率检测 ====================
 def get_screen_resolution():
-    """获取当前屏幕分辨率，返回 (width, height)"""
+    """获取当前屏幕分辨率，返回 (width, height)
+    注：DPI 感知由 main.py 启动时统一设置（PER_MONITOR_AWARE_V2），此处不再重复设置
+    避免与 PyQt6 的 DPI 设置冲突（重复调用会导致 Qt 报 SetProcessDpiAwarenessContext 拒绝访问）"""
     try:
         import ctypes
         user32 = ctypes.windll.user32
-        user32.SetProcessDPIAware()
         return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
     except Exception:
         return (0, 0)

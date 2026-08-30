@@ -57,6 +57,7 @@ ACCOUNTS_JSON_PATH = os.path.join(config.APP_DATA_DIR, "accounts.json")
 # 默认开启、延迟加载：仅在开启时初始化 PyQt6，关闭时销毁释放内存
 _qt_overlay = None           # ScreenLogOverlay 实例
 _qt_app = None               # QApplication 实例（防止被 GC）
+_app_root = None             # Tk 根窗口（App 初始化时赋值，用于 worker 线程转发遮罩操作）
 _qt_pump_scheduled = False   # Qt 事件泵送是否已排队（合并重复请求）
 _qt_manual_hide = False      # 用户主动隐藏遮罩（屏幕取点/框选截图时临时隐藏，看门狗不恢复）
 # 遮罩顶行状态（正在运行第x个账号 / 运行时长）
@@ -215,29 +216,51 @@ def toggle_log_overlay(root, corner_index=0):
 def hide_log_overlay():
     """临时隐藏日志遮罩（不销毁，保留日志内容）
     用于屏幕取点/框选截图：置顶遮罩会挡住点击，取点前隐藏、取完恢复"""
-    global _qt_manual_hide
-    _qt_manual_hide = True
-    if _qt_overlay is not None:
-        try:
-            _qt_overlay.hide()
-            # 立即处理 Qt 事件，确保隐藏立刻生效（否则遮罩还在、挡住点击）
-            if _qt_app is not None:
-                _qt_app.processEvents()
-        except Exception:
-            pass
+    _set_overlay_visible(False)
 
 
 def show_log_overlay():
     """恢复显示日志遮罩（与 hide_log_overlay 成对使用）"""
-    global _qt_manual_hide
-    _qt_manual_hide = False
-    if _qt_overlay is not None:
+    _set_overlay_visible(True)
+
+
+def _set_overlay_visible(visible):
+    """线程安全地显示/隐藏遮罩：
+    - 主线程调用直接操作 Qt；
+    - worker 线程（找图/OCR 识别等）通过 root.after 转发到主线程执行并等待完成，
+      避免从工作线程直接调用 Qt（processEvents 非线程安全，与主线程并发会卡死）"""
+    global _qt_manual_hide, _app_root
+    _qt_manual_hide = not visible
+    if _qt_overlay is None:
+        return
+
+    def _do():
         try:
-            _qt_overlay.show()
+            if visible:
+                _qt_overlay.show()
+            else:
+                _qt_overlay.hide()
             if _qt_app is not None:
                 _qt_app.processEvents()
         except Exception:
             pass
+
+    if threading.current_thread() is threading.main_thread():
+        _do()
+        return
+    # worker 线程：转发到主线程并等待（避免 Qt 跨线程调用卡死）
+    if _app_root is None:
+        return
+    wait = threading.Event()
+    try:
+        _app_root.after(0, lambda: (_do(), wait.set()))
+        wait.wait(timeout=3)
+    except Exception:
+        pass
+
+
+# 注册遮罩自动隐藏钩子：找图/OCR 识别期间自动隐藏遮罩，避免遮挡按键/干扰截图匹配
+utils.set_overlay_hooks(hide_log_overlay, show_log_overlay)
 
 
 def _overlay_status_text(app):
@@ -438,6 +461,8 @@ class RedirectText:
 
 class App:
     def __init__(self, root):
+        global _app_root
+        _app_root = root  # 供 worker 线程转发遮罩显示/隐藏
         self.root = root
         self.root.title("三角洲行动自动化工具")
         self.root.resizable(True, True)
