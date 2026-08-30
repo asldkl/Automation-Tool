@@ -120,9 +120,22 @@ def start_app(exe_path, app_name, wait_time=5):
         return False
     try:
         work_dir = os.path.dirname(exe_path)
-        # CREATE_NO_WINDOW：即使被启动的是控制台程序也不弹 cmd 窗口
-        subprocess.Popen(exe_path, cwd=work_dir,
-                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        try:
+            # CREATE_NO_WINDOW：即使被启动的是控制台程序也不弹 cmd 窗口
+            subprocess.Popen(exe_path, cwd=work_dir,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except OSError as e:
+            if getattr(e, 'winerror', None) == 740:
+                # 目标需要管理员权限（当前进程未提权）：用 ShellExecute runas 提升（非管理员弹 UAC）
+                print(f"⚠️ {app_name} 需要管理员权限，尝试以管理员身份启动（非管理员会弹 UAC 确认）...")
+                import ctypes
+                # ShellExecuteW(None, "runas", file, params, dir, show)  返回值 >32 表示成功
+                res = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, None, work_dir, 1)
+                if res <= 32:
+                    print(f"❌ 以管理员身份启动 {app_name} 失败（ShellExecute 返回 {res}）")
+                    return False
+            else:
+                raise
         print(f"✅ 已启动：{app_name}")
         time.sleep(wait_time)
         return True

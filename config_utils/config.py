@@ -374,11 +374,12 @@ WAIT_TIME = 0.5
 
 # ==================== 分辨率检测 ====================
 def get_screen_resolution():
-    """获取当前屏幕分辨率，返回 (width, height)"""
+    """获取当前屏幕分辨率，返回 (width, height)
+    注：DPI 感知由 main.py 启动时统一设置（PER_MONITOR_AWARE_V2），此处不再重复设置
+    避免与 PyQt6 的 DPI 设置冲突（重复调用会导致 Qt 报 SetProcessDpiAwarenessContext 拒绝访问）"""
     try:
         import ctypes
         user32 = ctypes.windll.user32
-        user32.SetProcessDPIAware()
         return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
     except Exception:
         return (0, 0)
