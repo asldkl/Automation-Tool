@@ -294,35 +294,6 @@ def set_click_jitter(enabled, max_px=5):
     _click_jitter_enabled = bool(enabled)
     _click_jitter_max = max(0, int(max_px))
 
-
-# ==================== 日志遮罩自动隐藏钩子（识别时隐藏遮罩，避免遮挡/干扰截图匹配） ====================
-_overlay_hide_fn = None
-_overlay_show_fn = None
-
-
-def set_overlay_hooks(hide_fn, show_fn):
-    """注册日志遮罩隐藏/显示回调（由 gui_app 调用，避免循环导入）"""
-    global _overlay_hide_fn, _overlay_show_fn
-    _overlay_hide_fn = hide_fn
-    _overlay_show_fn = show_fn
-
-
-def _hide_overlay_before_screen():
-    if _overlay_hide_fn:
-        try:
-            _overlay_hide_fn()
-        except Exception:
-            pass
-
-
-def _show_overlay_after_screen():
-    if _overlay_show_fn:
-        try:
-            _overlay_show_fn()
-        except Exception:
-            pass
-
-
 def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0,
                          multiscale=False, return_pos=False):
@@ -330,73 +301,68 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
     统一的图像识别+点击函数。
     multiscale: True 使用多尺度边缘+灰度匹配，False 使用标准灰度匹配
     return_pos: True 返回 (success, (x,y)), False 返回 success
-    识别期间隐藏日志遮罩（避免遮罩文字遮挡按键/干扰截图匹配），结束后恢复
     """
-    _hide_overlay_before_screen()
-    try:
-        # 识别前的'反应时间'随机延时（拟人化思考后再动作）
-        human_reaction_delay()
-        threshold = confidence if confidence is not None else CONFIDENCE
-        resolved = config.resolve_template_path(img_path)
-        template = _cache_get(resolved)
+    # 识别前的'反应时间'随机延时（拟人化思考后再动作）
+    human_reaction_delay()
+    threshold = confidence if confidence is not None else CONFIDENCE
+    resolved = config.resolve_template_path(img_path)
+    template = _cache_get(resolved)
+    if template is None:
+        template = _imread_unicode(resolved)
         if template is None:
-            template = _imread_unicode(resolved)
-            if template is None:
-                print(f"❌ 图片文件不存在或无法读取：{resolved}")
-                return (False, None) if return_pos else False
-            _cache_put(resolved, template)
+            print(f"❌ 图片文件不存在或无法读取：{resolved}")
+            return (False, None) if return_pos else False
+        _cache_put(resolved, template)
 
-        start = time.time()
-        while time.time() - start < timeout:
-            gray = _screenshot_gray(region)
-            if gray is None:
-                time.sleep(0.5)
+    start = time.time()
+    while time.time() - start < timeout:
+        gray = _screenshot_gray(region)
+        if gray is None:
+            time.sleep(0.5)
+            continue
+
+        if multiscale:
+            matched, max_val, max_loc, (h, w) = _match_template_multiscale(
+                gray, template, threshold)
+        else:
+            matched, max_val, max_loc, (h, w) = _match_template(
+                gray, template, threshold)
+
+        if matched:
+            x = max_loc[0] + w // 2 + (region[0] if region else 0) + x_offset
+            y = max_loc[1] + h // 2 + (region[1] if region else 0) + y_offset
+
+            screen_w, screen_h = pyautogui.size()
+            margin = 10
+            if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
+                print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
+                time.sleep(0.3)
                 continue
 
-            if multiscale:
-                matched, max_val, max_loc, (h, w) = _match_template_multiscale(
-                    gray, template, threshold)
-            else:
-                matched, max_val, max_loc, (h, w) = _match_template(
-                    gray, template, threshold)
-
-            if matched:
-                x = max_loc[0] + w // 2 + (region[0] if region else 0) + x_offset
-                y = max_loc[1] + h // 2 + (region[1] if region else 0) + y_offset
-
-                screen_w, screen_h = pyautogui.size()
-                margin = 10
-                if x < margin or y < margin or x > screen_w - margin or y > screen_h - margin:
-                    print(f"⚠️ 忽略可疑坐标 ({x}, {y})，继续寻找...")
-                    time.sleep(0.3)
-                    continue
-
-                if multiscale and max_val >= threshold:
-                    print(f"🔍 复合匹配成功：置信度 {max_val:.3f}")
-                # 拟人抖动：启用时对点击坐标加圆内随机偏移（≤max_px）
-                if _click_jitter_enabled and _click_jitter_max > 0:
-                    angle = random.uniform(0, 2 * math.pi)
-                    dist = random.uniform(0, _click_jitter_max)
-                    x += int(dist * math.cos(angle))
-                    y += int(dist * math.sin(angle))
-                    # 限制在屏幕范围内，避免偏移到边缘外
-                    x = max(margin, min(x, screen_w - margin))
-                    y = max(margin, min(y, screen_h - margin))
-                try:
-                    smooth_move_to(x, y, duration=0.2)
-                    human_click_delay()  # 点击前微量随机延时（拟人化）
-                    pyautogui.click(clicks=clicks)
-                except pyautogui.FailSafeException:
-                    print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
-                    time.sleep(0.5)
-                    continue
-                time.sleep(WAIT_TIME)
-                return (True, (x, y)) if return_pos else True
-            time.sleep(0.3)
-        print(f"⏳ 超时未找到：{img_path}")
-        return (False, None) if return_pos else False
-    finally:
-        _show_overlay_after_screen()
+            if multiscale and max_val >= threshold:
+                print(f"🔍 复合匹配成功：置信度 {max_val:.3f}")
+            # 拟人抖动：启用时对点击坐标加圆内随机偏移（≤max_px）
+            if _click_jitter_enabled and _click_jitter_max > 0:
+                angle = random.uniform(0, 2 * math.pi)
+                dist = random.uniform(0, _click_jitter_max)
+                x += int(dist * math.cos(angle))
+                y += int(dist * math.sin(angle))
+                # 限制在屏幕范围内，避免偏移到边缘外
+                x = max(margin, min(x, screen_w - margin))
+                y = max(margin, min(y, screen_h - margin))
+            try:
+                smooth_move_to(x, y, duration=0.2)
+                human_click_delay()  # 点击前微量随机延时（拟人化）
+                pyautogui.click(clicks=clicks)
+            except pyautogui.FailSafeException:
+                print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
+                time.sleep(0.5)
+                continue
+            time.sleep(WAIT_TIME)
+            return (True, (x, y)) if return_pos else True
+        time.sleep(0.3)
+    print(f"⏳ 超时未找到：{img_path}")
+    return (False, None) if return_pos else False
 
 
 def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1, x_offset=0, y_offset=0):
@@ -723,40 +689,33 @@ def ocr_recognize(region=None):
     if engine is None:
         return []
 
-    _hide_overlay_before_screen()
-    try:
-        if region:
-            x, y, w, h = region
-            screenshot = pyautogui.screenshot(region=(x, y, w, h))
-        else:
-            screenshot = pyautogui.screenshot()
+    if region:
+        x, y, w, h = region
+        screenshot = pyautogui.screenshot(region=(x, y, w, h))
+    else:
+        screenshot = pyautogui.screenshot()
 
-        img_np = np.array(screenshot)
-        screenshot.close()
+    img_np = np.array(screenshot)
+    screenshot.close()
 
-        result, _ = engine(img_np)
-        if result is None:
-            return []
-
-        # result 格式: [[box, text, confidence], ...]
-        parsed = []
-        for item in result:
-            box, text, conf = item
-            # box 是四个角点坐标 [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-            xs = [p[0] for p in box]
-            ys = [p[1] for p in box]
-            bbox = (min(xs), min(ys), max(xs), max(ys))
-            if region:
-                # 转换为屏幕绝对坐标
-                bbox = (bbox[0] + region[0], bbox[1] + region[1],
-                        bbox[2] + region[0], bbox[3] + region[1])
-            parsed.append((text, float(conf) if conf is not None else 0.0, bbox))
-        return parsed
-    except Exception as e:
-        print(f"⚠️ OCR 识别出错：{e}")
+    result, _ = engine(img_np)
+    if result is None:
         return []
-    finally:
-        _show_overlay_after_screen()
+
+    # result 格式: [[box, text, confidence], ...]
+    parsed = []
+    for item in result:
+        box, text, conf = item
+        # box 是四个角点坐标 [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+        if region:
+            # 转换为屏幕绝对坐标
+            bbox = (bbox[0] + region[0], bbox[1] + region[1],
+                    bbox[2] + region[0], bbox[3] + region[1])
+        parsed.append((text, float(conf) if conf is not None else 0.0, bbox))
+    return parsed
 
 
 def _click_pos_valid(cx, cy):

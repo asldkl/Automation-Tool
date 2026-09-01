@@ -36,7 +36,8 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel,
+                             QPlainTextEdit, QVBoxLayout, QWidget)
 
 
 # ==================== 日志级别枚举 ====================
@@ -133,42 +134,47 @@ class ScreenLogOverlay(QWidget):
                 background-color: {bg};
                 color: #ffffff;
                 border: none;
-                padding: 2px;
+                padding: 4px;
                 font-family: Consolas;                 /* 等宽字体 */
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: bold;                     /* 加粗 */
             }}
         """)
 
-        # 布局：顶部固定状态行 + 日志区
+        # 布局：顶部状态行（左侧状态 + 右侧实时鼠标坐标，同一行）+ 日志区
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(4)
         self.status_label = QLabel("未运行", self)
         self.status_label.setStyleSheet("""
             QLabel {
                 color: #ffd54a;
                 font-family: Consolas;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: bold;
-                padding: 0px 2px;
+                padding: 2px 4px;
                 background: transparent;
             }
         """)
-        layout.addWidget(self.status_label)
-        # 实时鼠标坐标行（方便直接在遮罩上看屏幕坐标）
+        top_row.addWidget(self.status_label)
+        top_row.addStretch()
+        # 实时鼠标坐标（放第一行末尾，不独占一行，方便直接在遮罩上看屏幕坐标）
         self.mouse_label = QLabel("🖱️ (0, 0)", self)
         self.mouse_label.setStyleSheet("""
             QLabel {
                 color: #7ED3F5;
                 font-family: Consolas;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: bold;
-                padding: 0px 2px;
+                padding: 2px 4px;
                 background: transparent;
             }
         """)
-        layout.addWidget(self.mouse_label)
+        top_row.addWidget(self.mouse_label)
+        layout.addLayout(top_row)
         layout.addWidget(self.text_edit)
         self.setLayout(layout)
 

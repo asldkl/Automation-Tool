@@ -259,14 +259,15 @@ def _set_overlay_visible(visible):
         pass
 
 
-# 注册遮罩自动隐藏钩子：找图/OCR 识别期间自动隐藏遮罩，避免遮挡按键/干扰截图匹配
-utils.set_overlay_hooks(hide_log_overlay, show_log_overlay)
-
 
 def _overlay_status_text(app):
     """生成遮罩顶行文本（正在运行第x个账号 / 运行时长）"""
     if _qt_overlay is None:
         return None
+    # 组间等待期间：顶行临时显示「组间等待 X分XX秒」倒计时（优先于账号状态）
+    override = getattr(app, "_overlay_override_text", None)
+    if override:
+        return override
     if _ov_status_index is None or not app.running:
         return "未运行"
     duration = 0

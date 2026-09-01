@@ -80,15 +80,27 @@ class TestCooldownManager(unittest.TestCase):
     def setUp(self):
         import cooldown_manager
         self.cm = cooldown_manager
-        # 使用临时文件
+        # 使用临时文件（同时覆盖 .bak 路径，防止 _save_data 污染真实备份）
         self._orig_path = cooldown_manager.COOLDOWN_JSON_PATH
+        self._orig_backup = cooldown_manager.COOLDOWN_JSON_BACKUP
         cooldown_manager.COOLDOWN_JSON_PATH = os.path.join(TEST_DIR, "test_cooldown.json")
-        # 清空
-        if os.path.exists(cooldown_manager.COOLDOWN_JSON_PATH):
-            os.remove(cooldown_manager.COOLDOWN_JSON_PATH)
+        cooldown_manager.COOLDOWN_JSON_BACKUP = cooldown_manager.COOLDOWN_JSON_PATH + ".bak"
+        # 重置模块级缓存，避免读到真实/上次测试残留
+        cooldown_manager._cache = None
+        cooldown_manager._cache_mtime = 0.0
+        cooldown_manager._load_corrupt = False
+        # 清空临时文件
+        for _p in (cooldown_manager.COOLDOWN_JSON_PATH,
+                   cooldown_manager.COOLDOWN_JSON_BACKUP):
+            if os.path.exists(_p):
+                os.remove(_p)
 
     def tearDown(self):
         self.cm.COOLDOWN_JSON_PATH = self._orig_path
+        self.cm.COOLDOWN_JSON_BACKUP = self._orig_backup
+        self.cm._cache = None
+        self.cm._cache_mtime = 0.0
+        self.cm._load_corrupt = False
 
     def test_new_account_not_cooling(self):
         """新账号不应处于冷却状态"""

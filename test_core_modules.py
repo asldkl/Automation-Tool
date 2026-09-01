@@ -32,15 +32,19 @@ class TestCooldownManagerCache(unittest.TestCase):
         import cooldown_manager as cm
         self.cm = cm
         self._orig_path = cm.COOLDOWN_JSON_PATH
+        self._orig_backup = cm.COOLDOWN_JSON_BACKUP
         cm.COOLDOWN_JSON_PATH = os.path.join(TEST_DIR, "cd_cache.json")
+        cm.COOLDOWN_JSON_BACKUP = cm.COOLDOWN_JSON_PATH + ".bak"
         cm._cache = None
         cm._cache_mtime = 0.0
         cm._load_corrupt = False
-        if os.path.exists(cm.COOLDOWN_JSON_PATH):
-            os.remove(cm.COOLDOWN_JSON_PATH)
+        for _p in (cm.COOLDOWN_JSON_PATH, cm.COOLDOWN_JSON_BACKUP):
+            if os.path.exists(_p):
+                os.remove(_p)
 
     def tearDown(self):
         self.cm.COOLDOWN_JSON_PATH = self._orig_path
+        self.cm.COOLDOWN_JSON_BACKUP = self._orig_backup
         self.cm._cache = None
         self.cm._cache_mtime = 0.0
         self.cm._load_corrupt = False

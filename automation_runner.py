@@ -1206,43 +1206,51 @@ def run_script_main(app):
         smart_enabled = app.settings.get("smart_schedule_enabled", False)
         smart_group_size = max(1, int(app.settings.get("smart_group_size", 3)))
         smart_interval = max(0, int(app.settings.get("smart_group_interval", 5)))
-        # 预计算本轮实际会处理的账号数（未暂停、未冷却），用于智能跳过"为最后零头账号"的等待
-        runnable_total = 0
-        for _img in app.qq_account_images:
-            _name = _get_cooldown_key(_img)
-            if cooldown_manager.is_account_paused(_name):
-                continue
-            if app.settings.get("enable_cooldown", False) and cooldown_manager.is_cooling_down(_name)[0]:
-                continue
-            runnable_total += 1
-
         group_processed = 0
-        total_processed = 0  # 本轮累计已处理账号数（跨组累计，用于算剩余）
 
         def _group_wait():
-            """每跑完 N 个账号，只要还有就绪账号剩余就等待组间隔分钟（保证最后一批不超过一组，
-            避免跳过等待导致最后连续跑太多账号触发滑块验证）"""
-            nonlocal group_processed, total_processed
+            """每跑完 N 个账号，若后续还有就绪账号则等待组间隔分钟
+            动态统计当前位置之后的就绪账号（含本次运行中新就绪的），避免用开跑前快照导致组间等待漏触发"""
+            nonlocal group_processed
             group_processed += 1
-            total_processed += 1
-            remaining_runnable = runnable_total - total_processed
+            remaining_runnable = 0
+            for j in range(i + 1, total):
+                nm = _get_cooldown_key(app.qq_account_images[j])
+                if cooldown_manager.is_account_paused(nm):
+                    continue
+                if app.settings.get("enable_cooldown", False) and cooldown_manager.is_cooling_down(nm)[0]:
+                    continue
+                remaining_runnable += 1
             if (smart_enabled and smart_interval > 0
                     and group_processed >= smart_group_size
                     and remaining_runnable >= 1
                     and not app._stop_event.is_set()):
                 group_processed = 0
                 set_operation(app, f"组间等待 {smart_interval} 分钟")
-                print(f"⏳ 分组运行：已完成一组 {smart_group_size} 个账号，剩余 {remaining_runnable} 个，等待 {smart_interval} 分钟后再跑下一组（避免频繁切换账号触发滑块验证）")
+                try:
+                    app._overlay_override_text = f"组间等待 {smart_interval} 分钟"
+                except Exception:
+                    pass
+                print(f"⏳ 分组运行：已完成一组 {smart_group_size} 个账号，后续还有 {remaining_runnable} 个就绪，等待 {smart_interval} 分钟后再跑下一组（避免频繁切换账号触发滑块验证）")
                 wait_sec = smart_interval * 60
                 waited = 0
                 while waited < wait_sec and not app._stop_event.is_set():
                     chunk = min(5, wait_sec - waited)
                     time.sleep(chunk)
                     waited += chunk
-                    # 主页操作栏显示组间等待倒计时
+                    # 主页操作栏 + 日志遮罩顶行显示组间等待倒计时
                     remaining_sec = wait_sec - waited
                     if remaining_sec > 0 and not app._stop_event.is_set():
                         set_operation(app, f"组间等待 {remaining_sec // 60}分{remaining_sec % 60:02d}秒")
+                        try:
+                            app._overlay_override_text = f"组间等待 {remaining_sec // 60}分{remaining_sec % 60:02d}秒"
+                        except Exception:
+                            pass
+                # 组间等待结束（含被中断），恢复遮罩顶行账号状态
+                try:
+                    app._overlay_override_text = None
+                except Exception:
+                    pass
 
         for i, img_path in enumerate(app.qq_account_images):
             if app._stop_event.is_set():
@@ -1535,8 +1543,22 @@ def get_account_next_run(app, account_name):
     return next_time or "已冷却"
 
 
+def _email_next_run_display(next_run):
+    """邮件「下次运行」列：完整时间戳去掉年份和秒，显示 08-31 15:00；其他文本原样显示"""
+    if not next_run:
+        return "已冷却"
+    # 仅对时间戳格式（YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD HH:MM）去年份
+    if len(next_run) >= 10 and next_run[4] == "-" and next_run[7] == "-":
+        try:
+            dt = datetime.datetime.fromisoformat(next_run)
+            return dt.strftime("%m-%d %H:%M")
+        except Exception:
+            pass
+    return next_run
+
+
 def build_accounts_html(app, processed_accounts):
-    """构建已处理账号列表的 HTML 表格（账号前加备注 + 状态 + 下次运行）"""
+    """构建已处理账号列表的 HTML 表格（账号前加备注 + 状态 + 资产 + 下次运行）"""
     if not processed_accounts:
         return ""
     items = []
@@ -1554,18 +1576,31 @@ def build_accounts_html(app, processed_accounts):
             account_display = f"{html.escape(note)}　{html.escape(account_name)}"
         else:
             account_display = html.escape(account_name)
+        # 资产列（与主页列表一致：统一 M 格式，如 78.39M；无资产显示 0）
+        asset = app._account_assets.get(account_name, "0")
+        if asset and asset != "0":
+            try:
+                asset_num = utils.parse_asset_value(asset)
+                if asset_num > 0:
+                    asset = utils.format_asset_num(asset_num)
+            except Exception:
+                pass
+        asset_display = html.escape(str(asset))
+        # 下次运行列（去掉年份，如 08-31 15:00）
         next_run = "未启用"
         if app.settings.get("enable_cooldown", False):
             next_run = get_account_next_run(app, account_name)
+        next_run_display = html.escape(_email_next_run_display(next_run))
         bg = "background:#f0f2f5;" if idx % 2 == 0 else ""
         items.append(
             f'<tr style="{bg}">'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{account_display}</td>'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(status)}</td>'
-            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(next_run)}</td>'
+            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{asset_display}</td>'
+            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{next_run_display}</td>'
             f'</tr>')
     accounts_html = "".join(items)
     return f"""
-<tr><td colspan="3" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">账号</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">状态</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">下次运行</td></tr>
+<tr><td colspan="4" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">账号</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">状态</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">资产</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">下次运行</td></tr>
 {accounts_html}"""
