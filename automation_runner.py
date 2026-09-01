@@ -1064,7 +1064,8 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
             try:
                 next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
                 remaining = (next_run - now).total_seconds()
-                if 0 < remaining <= wait_window_seconds:
+                # 包含已冷却完成的账号（remaining<=0）：它们应立刻执行，而不是等待冷却中的账号
+                if remaining <= wait_window_seconds:
                     nearby.append((remaining, name))
             except Exception:
                 continue
@@ -1073,14 +1074,20 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
             break
 
         nearby.sort(key=lambda x: x[0])
-        wait_seconds = int(nearby[0][0])
         names = [n for _, n in nearby]
-        print(f"⏳ 检测到 {len(names)} 个账号将在 {wait_window_minutes} 分钟内冷却结束：{', '.join(names)}")
-        print(f"⏳ 等待 {wait_seconds} 秒后执行...")
-        set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
+        # 已冷却完成的账号立即执行；其余等待最早到期的
+        runnable_now = [n for r, n in nearby if r <= 0]
+        wait_seconds = max(0, int(nearby[0][0]))
+        if wait_seconds > 0:
+            print(f"⏳ 检测到 {len(names)} 个账号将在 {wait_window_minutes} 分钟内冷却结束：{', '.join(names)}")
+            print(f"⏳ 等待 {wait_seconds} 秒后执行...")
+            set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
+        else:
+            print(f"🔔 检测到 {len(runnable_now)} 个账号已冷却完成，立即执行：{', '.join(runnable_now)}")
+            set_operation(app, "执行已冷却账号")
 
         waited = 0
-        while waited < wait_seconds and not app._stop_event.is_set():
+        while wait_seconds > 0 and waited < wait_seconds and not app._stop_event.is_set():
             chunk = min(5, wait_seconds - waited)
             time.sleep(chunk)
             waited += chunk
