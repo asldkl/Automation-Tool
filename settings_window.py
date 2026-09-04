@@ -754,35 +754,49 @@ class SettingsWindow:
         ttk.Button(sniper_btn_frame, text="打开皮肤抢购", style='Accent.TButton',
                    command=lambda: self._open_sniper_window(getattr(self, '_dev_win', None)), width=14).pack(side=tk.LEFT)
 
-        # ----- 图片识别点击（用户上传图片） -----
-        frame_click = ttk.LabelFrame(parent, text="  图片识别点击  ", style='SettingsCard.TLabelframe', padding=12)
+        # ----- 图标识别点击（用模板上传的图片） -----
+        frame_click = ttk.LabelFrame(parent, text="  图标识别点击  ", style='SettingsCard.TLabelframe', padding=12)
         frame_click.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_click, text="选择一张图片，在当前屏幕识别并点击其中心；用于测试自己截取的模板/图片能否被正确识别点击",
+        ttk.Label(frame_click, text="下拉选模板上传向导里的一个模板，在当前屏幕识别并点击其中心；\n"
+                                   "用于验证自己截取的模板是否正确（已上传自定义图片优先，未上传用内置）。",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
-        click_btn_frame = ttk.Frame(frame_click, style='SettingsInner.TFrame')
-        click_btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(click_btn_frame, text="选择图片并识别点击", style='Accent.TButton',
-                   command=self._pick_and_click_image, width=18).pack(side=tk.LEFT)
+        click_row = ttk.Frame(frame_click, style='SettingsInner.TFrame')
+        click_row.pack(fill=tk.X, padx=5, pady=5)
+        self._dev_click_combo = ttk.Combobox(click_row, state='readonly', width=28)
+        self._dev_click_combo.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(click_row, text="识别点击", style='Accent.TButton',
+                   command=self._click_selected_template, width=10).pack(side=tk.LEFT)
         self._dev_click_status = ttk.Label(frame_click, text="", style='SettingsSmall.TLabel')
         self._dev_click_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
+        # 模板下拉：来自 config.TEMPLATE_CAPTURE_LIST（带向导序号）
+        self._dev_click_items = []   # [(显示名, rel_path)]
+        try:
+            _seq = 0
+            for _var, _rel, _name, _hint in config.TEMPLATE_CAPTURE_LIST:
+                _seq += 1
+                self._dev_click_items.append((f"{_seq}. {_name}", _rel))
+            if self._dev_click_items:
+                self._dev_click_combo['values'] = [it[0] for it in self._dev_click_items]
+                self._dev_click_combo.current(0)
+        except Exception:
+            pass
 
-    def _pick_and_click_image(self):
-        """选择一张用户上传的图片，在当前屏幕识别并点击其中心（后台执行，避免卡界面）"""
-        import os
+    def _click_selected_template(self):
+        """对下拉选中的模板（已上传自定义图优先）做识别点击（后台执行，避免卡界面）"""
         import threading
-        from tkinter import filedialog, messagebox
-        path = filedialog.askopenfilename(
-            parent=self.win, title="选择要识别点击的图片",
-            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")])
-        if not path:
+        from tkinter import messagebox
+        sel = self._dev_click_combo.current() if hasattr(self, '_dev_click_combo') else -1
+        items = getattr(self, '_dev_click_items', [])
+        if sel < 0 or sel >= len(items):
+            messagebox.showinfo("提示", "请先在下方选择一个模板", parent=self.win)
             return
         if getattr(self, '_dev_click_thread', None) and self._dev_click_thread.is_alive():
             messagebox.showinfo("提示", "上一次识别点击仍在执行，请稍候", parent=self.win)
             return
+        display, rel_path = items[sel]
         conf = float(self.app.settings.get("confidence", 0.7) or 0.7)
         status = self._dev_click_status
-        basename = os.path.basename(path)
 
         def _set_text(text):
             try:
@@ -790,13 +804,13 @@ class SettingsWindow:
             except Exception:
                 pass
 
-        _set_text(f"正在识别点击：{basename}（置信度 {conf}）...")
+        _set_text(f"正在识别点击：{display}（置信度 {conf}）...")
         def _worker():
             try:
                 import utils
-                ok = utils.find_and_click(path, timeout=12, confidence=conf)
-                _set_text(f"✅ 已识别并点击：{basename}" if ok
-                          else f"❌ 未找到：{basename}（可降低置信度或换清晰截图）")
+                ok = utils.find_and_click(rel_path, timeout=12, confidence=conf)
+                _set_text(f"✅ 已识别并点击：{display}" if ok
+                          else f"❌ 未找到：{display}（可降低置信度或重截该模板）")
             except Exception as e:
                 _set_text(f"❌ 识别点击异常：{e}")
         self._dev_click_thread = threading.Thread(target=_worker, daemon=True)
