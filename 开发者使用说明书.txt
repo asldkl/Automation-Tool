@@ -676,6 +676,20 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
+6.08.22 (2026-09-02)
+----------------------------------------
+
+- 新增「模板插入步骤」功能：给任一模板（按 var_name，如 Hazard_Operations 烽火地带入口）配置一段自定义步骤，在自动化"识别点击该模板"的点击前 / 点击后执行
+  - 数据存储：settings.json["template_insert_steps"][var_name] = {"timing":"before"|"after","steps":[custom_ops步骤]}；空 steps 即删除
+  - 执行引擎复用 custom_ops._run_batch_steps（支持 jump/condition；上下文仅需 .settings，用 SimpleNamespace 兜底）
+  - 入口：模板上传向导 → 模板设置窗口（恢复默认 与 测试 之间新增「插入步骤」按钮）→ CustomOpsWindow 单列模式（无工作流/频率，顶部「点击前/点击后」下拉）
+  - CustomOpsWindow 单列模式：self.batches 合成单批、保存经 save_handler 回调不写全局 ops.json、_on_close 不 nav_pop 直接销毁并恢复父窗 grab
+  - 红勾：向导每行状态区对配置了插入步骤的模板显示红色 ✔（默认行状态标签由 ttk.Label 改为 tk.Label 以支持染色）
+  - 执行挂载点：automation_runner 登录（ACCOUNT_SELECT/密码输入框/SIGN_IN，before 在每次尝试点击前、after 在成功点击后，失败=该次登录尝试失败继续重试）、_launch_game（游戏图标/启动按钮/确定 可选）、手动单账号内联、game_operations（烽火地带/特勤处为门禁失败返 game_failed→1天冷却；Observe/Auto_fill 可选失败跳过；邮箱三连/一键出售失败结束该段账号继续）
+  - automation.py 不 import 新模块：game_operations/handle_facility/sell_operations 增 run_insert 回调参数（runner 用 _make_run_insert(app) 注入），automation 内 _hook/_click 助手统一处理 before/after 与失败
+  - 修复：settings 浅拷贝下直接改嵌套 dict 会污染 DEFAULT_SETTINGS（save 前 dict() 拷贝）
+
+----------------------------------------
 6.08.22 (2026-09-01)
 ----------------------------------------
 
