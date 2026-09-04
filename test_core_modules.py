@@ -345,6 +345,59 @@ class TestAssetValueParsing(unittest.TestCase):
             self.assertEqual(parse_asset_value(val), account_manager._parse_asset_value(val))
 
 
+# ==================== 公告（每天一次 / 永久 / 一键配置） ====================
+class TestAnnouncements(unittest.TestCase):
+    """测试公告的展示判定与一键配置写入（不弹真实窗口）"""
+
+    def setUp(self):
+        import config
+        self._orig_path = config.SETTINGS_JSON_PATH
+        self._orig_cache = config._settings_cache
+        config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_announce.json")
+        if os.path.exists(config.SETTINGS_JSON_PATH):
+            os.remove(config.SETTINGS_JSON_PATH)
+        config._settings_cache = None
+        config._settings_cache_mtime = 0
+
+    def tearDown(self):
+        import config
+        config.SETTINGS_JSON_PATH = self._orig_path
+        config._settings_cache = self._orig_cache
+        config._settings_cache_mtime = 0
+
+    def test_daily_and_forever(self):
+        """今天未弹→应显示；关闭(今天)→当天不再显示；永久→永远不显示"""
+        import announcements
+        # 从未弹过 → 应显示
+        self.assertTrue(announcements.should_show())
+        # 关闭(仅今天)
+        announcements._save(done_forever=False)
+        self.assertFalse(announcements.should_show())
+        # 永久关闭
+        announcements._save(done_forever=True)
+        self.assertFalse(announcements.should_show())
+        # 即便把日期清掉（模拟第二天）永久仍不显示
+        import config
+        s = config.load_settings()
+        s["announcement_last_date"] = ""
+        config.save_settings(s)
+        self.assertFalse(announcements.should_show())
+
+    def test_quick_config_writes_template9_after_steps(self):
+        """一键配置应把 空格+OCR开启新赛季 写入第9模板(Hazard_Operations)点击后插入步骤"""
+        import announcements
+        import template_insert_steps as tis
+        ok = tis.save(announcements.QUICK_CONFIG_TEMPLATE, "after",
+                      announcements.QUICK_CONFIG_STEPS)
+        self.assertTrue(ok)
+        cfg = tis.get(announcements.QUICK_CONFIG_TEMPLATE)
+        self.assertEqual(cfg["timing"], "after")
+        types = [st.get("type") for st in cfg["steps"]]
+        self.assertEqual(types, ["keyboard", "ocr"])
+        self.assertEqual(cfg["steps"][0]["keys"], "space")
+        self.assertEqual(cfg["steps"][1]["text"], "开启新赛季")
+
+
 # ==================== 模板插入步骤 ====================
 class TestTemplateInsertSteps(unittest.TestCase):
     """测试 template_insert_steps 的配置读写与执行判定（不真实按键/截图）"""

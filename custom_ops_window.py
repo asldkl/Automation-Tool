@@ -753,10 +753,11 @@ class CustomOpsWindow:
                 ttk.Label(fr, text="内容", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
                 ttk.Entry(fr, textvariable=keys_var, width=20).pack(side=tk.LEFT)
                 ttk.Label(fr, text="方式", width=6).pack(side=tk.LEFT, padx=(8, 0))
-                ttk.Combobox(fr, textvariable=key_mode_var, values=['key', 'text'],
-                             state='readonly', width=6).pack(side=tk.LEFT)
-                # 常用按键快捷填入（仅 key 方式）
-                pk = ttk.Frame(fields); pk.pack(fill=tk.X, pady=(0, 3))
+                km_combo = ttk.Combobox(fr, textvariable=key_mode_var, values=['key', 'text'],
+                                        state='readonly', width=6)
+                km_combo.pack(side=tk.LEFT)
+                # 常用按键快捷填入（仅 key 方式显示；text 方式隐藏）
+                pk = ttk.Frame(fields)
                 ttk.Label(pk, text="常用按键", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
                 for _p_txt, _p_key in [("空格", "space"), ("Tab", "tab"),
                                        ("回车", "enter"), ("Esc", "esc"),
@@ -765,8 +766,22 @@ class CustomOpsWindow:
                     ttk.Button(pk, text=_p_txt, width=4,
                                command=lambda _k=_p_key: _preset_key(_k)).pack(
                         side=tk.LEFT, padx=(0, 2))
-                ttk.Label(fields, text="key=按键/组合键（如 Enter、ctrl+a），可点「常用按键」直接填入；text=输入文本",
-                          foreground='#7f8c8d').pack(anchor='w')
+                _kb_hint = ttk.Label(fields, text="key=按键/组合键（如 Enter、ctrl+a），可点「常用按键」直接填入；text=输入文本",
+                                     foreground='#7f8c8d')
+                _kb_hint.pack(anchor='w')
+
+                def _sync_preset_keys(_e=None):
+                    """key 方式显示常用按键，text 方式隐藏"""
+                    try:
+                        if key_mode_var.get() == "key":
+                            pk.pack(before=_kb_hint, fill=tk.X, pady=(0, 3))
+                        else:
+                            pk.pack_forget()
+                    except Exception:
+                        pass
+
+                km_combo.bind('<<ComboboxSelected>>', _sync_preset_keys)
+                _sync_preset_keys()
             elif t == "multi_image":
                 ml = tk.Listbox(fields, height=4)
                 ml.pack(fill=tk.X)

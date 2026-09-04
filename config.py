@@ -195,6 +195,9 @@ DEFAULT_SETTINGS = {
     "template_upload_status": {},     # var_name -> "pending" | "done"
     # 模板插入步骤（某模板被识别点击前/后执行的自定义步骤）
     "template_insert_steps": {},      # var_name -> {"timing":"before"|"after", "steps":[custom_ops步骤]}
+    # 公告（每天提醒一次 / 永久不再提示）
+    "announcement_last_date": "",     # 最近一次弹公告的日期（YYYY-MM-DD），同一天不重复
+    "announcements_forever": [],      # 已永久关闭的公告 id 列表
     # 运行完成后关机
     "post_run_shutdown_delay": 0,     # 运行完成后延迟关机（0-5分钟，0=不关机）
     # 服务器配置（可通过 ~/.delta_auto_settings.json 覆盖）

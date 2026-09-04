@@ -1635,7 +1635,13 @@ def main():
         root.geometry(f"{saved_w}x{saved_h}")
         _center_window(root, saved_w, saved_h)
         _check_resolution_on_startup(root)
-        App(root)
+        app = App(root)
+        # 赛季公告（每天提醒一次 / 永久不再提示 / 一键配置）——界面就绪后弹出，自动化运行中则本次跳过
+        try:
+            import announcements
+            root.after(3000, lambda: announcements.maybe_show(root, app))
+        except Exception:
+            pass
         root.after(50, lambda: (root.lift(), root.focus_force()))
         root.after(50, lambda: root.attributes('-topmost', True))
         root.after(200, lambda: root.attributes('-topmost', False))
