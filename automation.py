@@ -62,7 +62,9 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
         return False
     utils.human_pause()
 
-    # 领取奖励：直接按空格领取（无需图片识别，对应模板第20步）
+    # 领取奖励：直接按两次空格领取（无需图片识别，对应模板第20步）
+    pyautogui.press("Space")
+    time.sleep(0.3)
     pyautogui.press("Space")
     utils.human_pause()
 
@@ -416,20 +418,21 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
                 _claim = _click(run_insert, "EMAIL_CLAIM_ALL", config.EMAIL_CLAIM_ALL, 10)
                 if _claim is True:
                     utils.human_pause()
-                    # 领取完成：直接按空格确认（对应模板第27步，无需图片识别）
+                    # 领取完成：直接按两次空格确认（对应模板第27步，无需图片识别）
+                    pyautogui.press("Space")
+                    time.sleep(0.3)
                     pyautogui.press("Space")
                     time.sleep(0.5)
                     utils.human_pause()
                     print("✅ 邮箱货币领取流程完成")
                 elif _claim == "nofind":
-                    print("ℹ️ 未找到全部领取按钮，退出交易中心")
+                    print("ℹ️ 未找到全部领取按钮")
                 else:
-                    print("ℹ️ 全部领取 插入步骤失败，退出交易中心")
-                pyautogui.press("esc")  # 退出交易中心 → 回到邮箱界面
+                    print("ℹ️ 全部领取 插入步骤失败")
                 utils.human_pause()
             elif _trade == "insert":
-                print("ℹ️ 交易中心入口 插入步骤失败，退出邮箱")
-            # 退出邮箱界面 → 回到主界面（确保自定义操作/二次资产识别在主界面执行）
+                print("ℹ️ 交易中心入口 插入步骤失败")
+            # 收尾：只按一次 esc 回到主界面（领取用两下空格确认，无需再逐层退出）
             pyautogui.press("esc")
             time.sleep(0.8)
 

@@ -687,13 +687,15 @@ def _login_account(app, account_name, i, total, processed_accounts):
         print("✅ 已点击登录确认按钮")
 
         # 轮询检查登录结果（最多 8 秒，每 2 秒检查一次）
+        # 注意：这里只是「探测是否出现」，必须用只识别不点击的判断，
+        # 否则会把三角洲图标当按钮提前点击一次，之后 _launch_game 又会点一次（造成点 2 次）
         login_ok = False
         for _ in range(4):
             time.sleep(2)
-            if utils.find_and_click_smart(config.LOGIN_AGAIN, timeout=2):
+            if utils.find_image_on_screen(config.LOGIN_AGAIN, timeout=2):
                 print(f"⚠️ 检测到重新登录按钮，登录失败，重试...")
                 break
-            if utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=2):
+            if utils.find_image_on_screen(config.DELTA_GAME_ICON, timeout=2):
                 login_ok = True
                 break
         else:

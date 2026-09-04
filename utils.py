@@ -294,6 +294,45 @@ def set_click_jitter(enabled, max_px=5):
     _click_jitter_enabled = bool(enabled)
     _click_jitter_max = max(0, int(max_px))
 
+def _template_cn(img_path):
+    """把模板图片路径映射为中文步骤名（来自 config.TEMPLATE_CAPTURE_LIST）；未知返回 None"""
+    try:
+        import config as _cfg
+        base = os.path.basename(str(img_path)).lower()
+        for _v, _rel, _name, _hint in _cfg.TEMPLATE_CAPTURE_LIST:
+            if os.path.basename(_rel).lower() == base:
+                return _name
+    except Exception:
+        pass
+    return None
+
+
+def find_image_on_screen(img_path, timeout=2, confidence=None, region=None):
+    """只探测屏幕上是否存在目标图片（不点击）。返回 bool。
+    用于登录结果轮询等“仅判断是否出现、不应误点”的场景（避免把图标当按钮提前点击）"""
+    import config as _cfg
+    threshold = confidence if confidence is not None else CONFIDENCE
+    resolved = _cfg.resolve_template_path(img_path)
+    template = _cache_get(resolved)
+    if template is None:
+        template = _imread_unicode(resolved)
+        if template is None:
+            return False
+        _cache_put(resolved, template)
+    start = time.time()
+    while time.time() - start < timeout:
+        gray = _screenshot_gray(region)
+        if gray is not None:
+            try:
+                matched, _val, _loc, _hw = _match_template(gray, template, threshold)
+                if matched:
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.2)
+    return False
+
+
 def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0,
                          multiscale=False, return_pos=False):
@@ -358,10 +397,15 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                 print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
                 time.sleep(0.5)
                 continue
+            # 点击日志：显示中文步骤名 + 坐标（如「启动游戏按钮（123，123）」）
+            _cn = _template_cn(resolved)
+            _label = _cn if _cn else os.path.splitext(os.path.basename(str(img_path)))[0]
+            print(f"✅ 点击 {_label}（{x},{y}）")
             time.sleep(WAIT_TIME)
             return (True, (x, y)) if return_pos else True
         time.sleep(0.3)
-    print(f"⏳ 超时未找到：{img_path}")
+    _cn = _template_cn(img_path)
+    print(f"⏳ 超时未找到：{_cn if _cn else img_path}")
     return (False, None) if return_pos else False
 
 
