@@ -695,6 +695,11 @@ class CustomOpsWindow:
         text_var = tk.StringVar(value=op.get("text", ""))
         keys_var = tk.StringVar(value=op.get("keys", ""))
         key_mode_var = tk.StringVar(value=op.get("key_mode", "key"))
+
+        def _preset_key(_key):
+            """点「常用按键」直接填入该键并切到 key（按键）方式"""
+            keys_var.set(_key)
+            key_mode_var.set("key")
         x1_var = tk.StringVar(value=str(op.get("x1", 0)))
         y1_var = tk.StringVar(value=str(op.get("y1", 0)))
         x2_var = tk.StringVar(value=str(op.get("x2", 0)))
@@ -750,7 +755,17 @@ class CustomOpsWindow:
                 ttk.Label(fr, text="方式", width=6).pack(side=tk.LEFT, padx=(8, 0))
                 ttk.Combobox(fr, textvariable=key_mode_var, values=['key', 'text'],
                              state='readonly', width=6).pack(side=tk.LEFT)
-                ttk.Label(fields, text="key=按键/组合键（如 Enter、ctrl+a）；text=输入文本",
+                # 常用按键快捷填入（仅 key 方式）
+                pk = ttk.Frame(fields); pk.pack(fill=tk.X, pady=(0, 3))
+                ttk.Label(pk, text="常用按键", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+                for _p_txt, _p_key in [("空格", "space"), ("Tab", "tab"),
+                                       ("回车", "enter"), ("Esc", "esc"),
+                                       ("↑", "up"), ("↓", "down"),
+                                       ("←", "left"), ("→", "right")]:
+                    ttk.Button(pk, text=_p_txt, width=4,
+                               command=lambda _k=_p_key: _preset_key(_k)).pack(
+                        side=tk.LEFT, padx=(0, 2))
+                ttk.Label(fields, text="key=按键/组合键（如 Enter、ctrl+a），可点「常用按键」直接填入；text=输入文本",
                           foreground='#7f8c8d').pack(anchor='w')
             elif t == "multi_image":
                 ml = tk.Listbox(fields, height=4)
