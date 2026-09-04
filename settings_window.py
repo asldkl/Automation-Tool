@@ -799,8 +799,15 @@ class SettingsWindow:
         status = self._dev_click_status
 
         def _set_text(text):
+            def _apply():
+                # 窗口可能已被关闭：控件销毁后再 config 会报 invalid command，需先确认存在
+                try:
+                    if status.winfo_exists():
+                        status.config(text=text)
+                except Exception:
+                    pass
             try:
-                status.after(0, lambda: status.config(text=text))
+                status.after(0, _apply)
             except Exception:
                 pass
 
