@@ -2,14 +2,19 @@
 """
 模板「插入步骤」模块
 
-给某个模板（var_name，如 "Hazard_Operations" 烽火地带入口）配置一段自定义步骤，
-在自动化"识别点击该模板图片"的点击前 / 点击后执行；执行完自然继续后续流程。
+给某个模板（var_name，如 "Hazard_Operations" 烽火地带入口 / "Special_Ops" 特勤处入口）
+配置一段自定义步骤，在自动化"识别点击该模板图片"的点击前 / 点击后执行；执行完自然继续后续流程。
 
 数据存储：
-    settings.json["template_insert_steps"] = {
+    独立文件 %APPDATA%\\DeltaAutoTool\\template_insert_steps.json
+    {
         "Hazard_Operations": {"timing": "before"|"after", "steps": [custom_ops 步骤, ...]},
         ...
     }
+    —— 特意不用 settings.json：运行过程中多处会用"启动时的 settings 快照"整份覆盖写回，
+      会把运行中途新配的插入步骤清掉；独立文件可避免被覆盖。
+    旧版本写入 settings.json 的配置会在首次读取时自动迁移到本文件。
+
     步骤格式与图片目录复用 custom_ops（图片存 custom_ops/images/）。
     某模板 steps 为空时 save 即删除该项 → 向导红勾消失、运行时不执行。
 
@@ -22,22 +27,70 @@
     run_for_account 返回 False 仅表示「该模板插入步骤执行失败」，
     调用处（登录/启动/game_operations 等）应把它当作该模板识别点击失败处理。
 """
+import os
+import json
 import threading
 import types
 
 import config
 import custom_ops
 
-SETTINGS_KEY = "template_insert_steps"
+SETTINGS_KEY = "template_insert_steps"          # 旧版 settings 键（仅用于迁移）
+INSERT_STEPS_JSON = os.path.join(config.APP_DATA_DIR, "template_insert_steps.json")
 # 运行时 stop_event 缺省时的兜底（永不置位）
 _DUMMY_EVENT = threading.Event()
 
+_lock = threading.Lock()
+_cache = None        # dict | None（None=尚未加载）
+
+
+def _read_file():
+    """读取文件；文件不存在返回 None，存在但解析失败返回 {}"""
+    try:
+        with open(INSERT_STEPS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return {}
+
+
+def _write_file(data):
+    """原子写文件（.tmp + os.replace）"""
+    try:
+        config.ensure_app_data_dir()
+        tmp = INSERT_STEPS_JSON + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, INSERT_STEPS_JSON)
+    except Exception as e:
+        print(f"⚠️ 模板插入步骤保存失败：{e}")
+
+
+def _migrate_from_settings():
+    """旧版配置在 settings.json[template_insert_steps]，搬到独立文件"""
+    try:
+        s = config.load_settings()
+        old = s.get(SETTINGS_KEY)
+        if isinstance(old, dict) and old:
+            _write_file(dict(old))
+            return dict(old)
+    except Exception:
+        pass
+    return {}
+
 
 def load_map():
-    """读取全部插入步骤配置 {var_name: {"timing":.., "steps":[..]}}"""
-    s = config.load_settings()
-    m = s.get(SETTINGS_KEY) or {}
-    return m if isinstance(m, dict) else {}
+    """读取全部插入步骤配置 {var_name: {"timing":.., "steps":[..]}}（带内存缓存）"""
+    global _cache
+    with _lock:
+        if _cache is None:
+            data = _read_file()
+            if data is None:
+                data = _migrate_from_settings()
+            _cache = data
+        return dict(_cache)
 
 
 def get(var_name):
@@ -57,19 +110,23 @@ def has_steps(var_name):
 
 
 def save(var_name, timing, steps):
-    """保存某模板插入步骤；steps 为空视为删除。返回保存是否成功"""
+    """保存某模板插入步骤；steps 为空视为删除。返回是否成功"""
+    global _cache
     steps = [s for s in (steps or []) if isinstance(s, dict)]
     timing = "after" if timing == "after" else "before"
-    s = config.load_settings()
-    # 注意：load_settings 返回浅拷贝，嵌套 dict 与 DEFAULT_SETTINGS/_settings_cache 共享对象，
-    # 必须先 dict() 拷贝再改，避免把数据写进默认配置（导致删文件/重置后仍残留）
-    m = dict(s.get(SETTINGS_KEY)) if isinstance(s.get(SETTINGS_KEY), dict) else {}
-    if steps:
-        m[var_name] = {"timing": timing, "steps": steps}
-    else:
-        m.pop(var_name, None)
-    s[SETTINGS_KEY] = m
-    config.save_settings(s)   # 失败内部已打印告警，此处视为成功返回
+    with _lock:
+        if _cache is None:
+            data = _read_file()
+            if data is None:
+                data = _migrate_from_settings()
+            _cache = data
+        m = dict(_cache)
+        if steps:
+            m[var_name] = {"timing": timing, "steps": steps}
+        else:
+            m.pop(var_name, None)
+        _write_file(m)
+        _cache = m
     return True
 
 

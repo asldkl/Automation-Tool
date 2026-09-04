@@ -351,6 +351,7 @@ class TestAnnouncements(unittest.TestCase):
 
     def setUp(self):
         import config
+        import template_insert_steps as tis
         self._orig_path = config.SETTINGS_JSON_PATH
         self._orig_cache = config._settings_cache
         config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_announce.json")
@@ -358,12 +359,20 @@ class TestAnnouncements(unittest.TestCase):
             os.remove(config.SETTINGS_JSON_PATH)
         config._settings_cache = None
         config._settings_cache_mtime = 0
+        self._orig_isj = tis.INSERT_STEPS_JSON
+        tis.INSERT_STEPS_JSON = os.path.join(TEST_DIR, "test_announce_tis.json")
+        tis._cache = None
+        if os.path.exists(tis.INSERT_STEPS_JSON):
+            os.remove(tis.INSERT_STEPS_JSON)
 
     def tearDown(self):
         import config
+        import template_insert_steps as tis
         config.SETTINGS_JSON_PATH = self._orig_path
         config._settings_cache = self._orig_cache
         config._settings_cache_mtime = 0
+        tis.INSERT_STEPS_JSON = self._orig_isj
+        tis._cache = None
 
     def test_daily_and_forever(self):
         """今天未弹→应显示；关闭(今天)→当天不再显示；永久→永远不显示"""
@@ -421,6 +430,7 @@ class TestTemplateInsertSteps(unittest.TestCase):
 
     def setUp(self):
         import config
+        import template_insert_steps as tis
         self._orig_path = config.SETTINGS_JSON_PATH
         self._orig_cache = config._settings_cache
         self._orig_cache_mtime = config._settings_cache_mtime
@@ -429,12 +439,21 @@ class TestTemplateInsertSteps(unittest.TestCase):
             os.remove(config.SETTINGS_JSON_PATH)
         config._settings_cache = None
         config._settings_cache_mtime = 0
+        # 插入步骤存独立文件，隔离测试文件路径与内存缓存
+        self._orig_isj = tis.INSERT_STEPS_JSON
+        tis.INSERT_STEPS_JSON = os.path.join(TEST_DIR, "test_tis_store.json")
+        tis._cache = None
+        if os.path.exists(tis.INSERT_STEPS_JSON):
+            os.remove(tis.INSERT_STEPS_JSON)
 
     def tearDown(self):
         import config
+        import template_insert_steps as tis
         config.SETTINGS_JSON_PATH = self._orig_path
         config._settings_cache = self._orig_cache
         config._settings_cache_mtime = self._orig_cache_mtime
+        tis.INSERT_STEPS_JSON = self._orig_isj
+        tis._cache = None
 
     def test_save_get_has_delete_roundtrip(self):
         """保存/读取/判定/清空删除 应正确往返"""
