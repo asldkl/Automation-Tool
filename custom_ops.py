@@ -301,8 +301,21 @@ def _run_batch_steps(app, account_name, steps, stop_event):
             continue
 
         ok = _execute_step(app, op, idx, total, stop_event, account_name)
+        # 重试：失败后按 op.retry 次重试，每次间隔 op.retry_wait 秒
+        retry_n = max(0, int(op.get("retry", 0) or 0))
+        retry_wait = max(0, float(op.get("retry_wait", 1.0) or 0))
+        attempt = 0
+        while not ok and attempt < retry_n and not stop_event.is_set():
+            attempt += 1
+            if retry_wait > 0:
+                time.sleep(retry_wait)
+            print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」失败，第 {attempt}/{retry_n} 次重试...")
+            ok = _execute_step(app, op, idx, total, stop_event, account_name)
         if not ok:
-            return False
+            if op.get("optional"):
+                print(f"  [{idx}/{total}] ℹ️ 步骤「{name}」未成功，但该步骤为可选，跳过继续下一步")
+            else:
+                return False
         if pause > 0:
             time.sleep(pause)
         idx += 1

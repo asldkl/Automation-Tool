@@ -27,19 +27,21 @@ ANNOUNCEMENT_TEXT = (
     "S11 赛季已更新，本工具需要做以下处理：\n"
     "1. 请手动更新配置「第9号模板（烽火地带入口）」——若游戏内图标已变化，\n"
     "   请在 模板上传向导 → 第9模板 → 模板设置 → 截取，重新截图上传；\n"
-    "2. 每个账号第9步（进入烽火地带）完成后、首次进入段位结算界面时，\n"
-    "   需先按空格，再用 OCR 识别点击「开启新赛季」。\n\n"
+    "2. 每个账号第9步（进入烽火地带）完成后、点击第10步（特勤处入口）之前，\n"
+    "   首次进入的段位结算界面需先按空格，再用 OCR 识别点击「开启新赛季」。\n\n"
     "点击下方「一键配置」即可自动写入该段位结算处理步骤\n"
-    "（作为第9模板的点击后插入步骤），随后照常运行即可。\n"
+    "（作为第10模板的点击前插入步骤），随后照常运行即可。\n"
+    "平时没有段位结算界面时会自动跳过，不影响正常运行。\n"
     "该提示每天最多提醒一次；点「关闭」明天再提醒，点「永久不再提示」则不再出现。"
 )
 
-# 一键配置写入的插入步骤（第9模板点击后执行）
-QUICK_CONFIG_TEMPLATE = "Hazard_Operations"
+# 一键配置写入的插入步骤（第10模板=特勤处入口 点击前执行）
+QUICK_CONFIG_TEMPLATE = "Special_Ops"
+QUICK_CONFIG_TIMING = "before"
 QUICK_CONFIG_STEPS = [
     {"type": "keyboard", "name": "按空格", "keys": "space", "key_mode": "key", "pause_after": 1.0},
     {"type": "ocr", "name": "点击开启新赛季", "text": "开启新赛季",
-     "confidence": 0.6, "timeout": 10, "pause_after": 0.5},
+     "confidence": 0.6, "timeout": 10, "pause_after": 0.5, "optional": True},
 ]
 
 
@@ -80,10 +82,23 @@ def maybe_show(root, app=None):
     _show(root)
 
 
-def _apply_quick_config(root):
-    """一键配置：给第9模板写「点击后插入步骤」（空格 + OCR 开启新赛季）"""
+def _clear_stale_hazard_config():
+    """清理旧版本一键配置误写到第9模板(Hazard_Operations)的段位结算步骤（含 OCR「开启新赛季」）"""
     try:
-        ok = template_insert_steps.save(QUICK_CONFIG_TEMPLATE, "after", QUICK_CONFIG_STEPS)
+        cfg = template_insert_steps.get("Hazard_Operations") or {}
+        for st in cfg.get("steps") or []:
+            if isinstance(st, dict) and st.get("type") == "ocr" and "开启新赛季" in str(st.get("text", "")):
+                template_insert_steps.save("Hazard_Operations", "after", [])
+                break
+    except Exception:
+        pass
+
+
+def _apply_quick_config(root):
+    """一键配置：给第10模板（特勤处入口）写「点击前插入步骤」（空格 + OCR 开启新赛季，可选）"""
+    _clear_stale_hazard_config()
+    try:
+        ok = template_insert_steps.save(QUICK_CONFIG_TEMPLATE, QUICK_CONFIG_TIMING, QUICK_CONFIG_STEPS)
     except Exception as e:
         ok = False
         print(f"❌ 一键配置失败：{e}")
@@ -91,13 +106,13 @@ def _apply_quick_config(root):
         if ok:
             messagebox.showinfo(
                 "已配置",
-                "已给「第9模板（烽火地带入口）」写入点击后插入步骤：\n"
-                "按空格 → OCR 识别并点击『开启新赛季』（找不到会自动继续后续流程）。\n\n"
-                "⚠️ 若游戏内「烽火地带入口」图标已随赛季变化，请到\n"
+                "已给「第10模板（特勤处入口）」写入点击前插入步骤：\n"
+                "按空格 → OCR 识别并点击『开启新赛季』（该步为可选，找不到会自动继续第10步）。\n\n"
+                "⚠️ 若游戏内「烽火地带入口」（第9模板）图标已随赛季变化，请到\n"
                 "模板上传向导 → 第9模板 → 模板设置 → 截取，重新截图上传新图标。",
                 parent=root)
         else:
-            messagebox.showerror("配置失败", "写入第9模板插入步骤失败，请重试。", parent=root)
+            messagebox.showerror("配置失败", "写入第10模板插入步骤失败，请重试。", parent=root)
     try:
         root.after(0, _tip)
     except Exception:

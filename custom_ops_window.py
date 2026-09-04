@@ -700,6 +700,9 @@ class CustomOpsWindow:
             """点「常用按键」直接填入该键并切到 key（按键）方式"""
             keys_var.set(_key)
             key_mode_var.set("key")
+        retry_var = tk.StringVar(value=str(op.get("retry", 0) or 0))
+        retry_wait_var = tk.StringVar(value=str(op.get("retry_wait", 1.0) or 0))
+        optional_var = tk.BooleanVar(value=bool(op.get("optional", False)))
         x1_var = tk.StringVar(value=str(op.get("x1", 0)))
         y1_var = tk.StringVar(value=str(op.get("y1", 0)))
         x2_var = tk.StringVar(value=str(op.get("x2", 0)))
@@ -967,11 +970,29 @@ class CustomOpsWindow:
 
         _row("停顿(秒)", pause_var, 8)
 
+        # 通用高级属性：重试 / 重试间隔 / 可选
+        _row("重试(次)", retry_var, 6)
+        _row("重试间隔(秒)", retry_wait_var, 8)
+        opt_row = ttk.Frame(form)
+        opt_row.pack(fill=tk.X, pady=2)
+        ttk.Label(opt_row, text="失败处理", style='Settings.TLabel', width=10).pack(side=tk.LEFT)
+        ttk.Checkbutton(opt_row, text="可选：失败也继续下一步（找不到图/字不判失败）",
+                        variable=optional_var).pack(side=tk.LEFT)
+
         def on_save():
             try:
                 op["type"] = NAME_TO_TYPE.get(type_var.get(), type_var.get())   # 中文名 → key
                 op["name"] = name_var.get().strip() or f"步骤{idx + 1}"
                 op["pause_after"] = max(0, float(pause_var.get()))
+                try:
+                    op["retry"] = max(0, int(float(retry_var.get() or 0)))
+                except ValueError:
+                    op["retry"] = 0
+                try:
+                    op["retry_wait"] = max(0, float(retry_wait_var.get() or 0))
+                except ValueError:
+                    op["retry_wait"] = 0
+                op["optional"] = bool(optional_var.get())
                 t = op["type"]
                 if t == "coordinate":
                     op["x"] = int(float(x_var.get()))

@@ -10,7 +10,7 @@
 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作。
 
 【版本历史】
-6.08.22 (2026-09-04)：键盘输入步骤常用按键（空格/Tab/回车/Esc/方向键）仅 key 方式显示；赛季公告 announcements.py（每天提醒一次：announcement_last_date 同天不重复、announcements_forever 永久关闭；一键配置=给第9模板写点击后插入步骤「按空格+OCR点开启新赛季」；gui_app.main 启动3s后检测）
+6.08.22 (2026-09-04)：键盘输入步骤常用按键（空格/Tab/回车/Esc/方向键）仅 key 方式显示；步骤编辑通用属性新增 重试(次)/重试间隔/失败处理可选(optional)（custom_ops._run_batch_steps 支持）；赛季公告 announcements.py（每天提醒一次：announcement_last_date 同天不重复、announcements_forever 永久关闭；一键配置=给第10模板(特勤处入口)写点击前插入步骤「空格+可选OCR点开启新赛季」并清理旧版误写；gui_app.main 启动3s后检测）
 6.08.22 (2026-09-02)：新增模板插入步骤（向导→模板设置→插入步骤，给某模板配一段自定义步骤在识别点击前/后执行；settings[template_insert_steps][var_name]={timing,steps}；执行复用 custom_ops 引擎；CustomOpsWindow 单列模式；配置了插入步骤的模板行红勾；挂载到 WeGame 登录/启动/手动单账号/game_operations 全部模板点击点，失败=该模板失败）
 6.08.22 (2026-09-01)：日志遮罩回退（字体恢复12px、鼠标坐标并入第一行行尾不再独占一行、移除找图/OCR 截图时自动隐藏）、邮件表格新增资产列（状态与下次运行之间，M 格式同主页）+下次运行去掉年份秒（08-31 15:00）、组间等待改用动态统计当前位置后就绪账号（修复快照漏触发）+等待期间主页操作栏与遮罩顶行显示组间等待倒计时（_overlay_override_text 临时覆盖遮罩顶行）、测试隔离修复（cooldown 测试同时覆盖 COOLDOWN_JSON_BACKUP 防污染真实备份）
 6.08.22 (2026-08-30)：DPI 设置修正（main.py 顶部 SetProcessDpiAwarenessContext PER_MONITOR_AWARE_V2，移除与 Qt 高 DPI 冲突的旧 SetProcessDPIAware）、WinError740 提权启动（启动 WeGame 失败时改用 ShellExecuteW runas）、日志遮罩线程安全（worker 线程经 _app_root.after 转发主线程，修复运行测试/右键测试卡死）+组间等待倒计时（主页操作栏）、分组运行勾选时冷却检测等待<10 自动改 15（设置窗口即时反馈）

@@ -383,19 +383,36 @@ class TestAnnouncements(unittest.TestCase):
         config.save_settings(s)
         self.assertFalse(announcements.should_show())
 
-    def test_quick_config_writes_template9_after_steps(self):
-        """一键配置应把 空格+OCR开启新赛季 写入第9模板(Hazard_Operations)点击后插入步骤"""
+    def test_quick_config_writes_template10_before_steps(self):
+        """一键配置应把 空格+可选OCR开启新赛季 写入第10模板(Special_Ops 特勤处入口)点击前插入步骤"""
         import announcements
         import template_insert_steps as tis
-        ok = tis.save(announcements.QUICK_CONFIG_TEMPLATE, "after",
+        ok = tis.save(announcements.QUICK_CONFIG_TEMPLATE,
+                      announcements.QUICK_CONFIG_TIMING,
                       announcements.QUICK_CONFIG_STEPS)
         self.assertTrue(ok)
+        self.assertEqual(announcements.QUICK_CONFIG_TEMPLATE, "Special_Ops")
         cfg = tis.get(announcements.QUICK_CONFIG_TEMPLATE)
-        self.assertEqual(cfg["timing"], "after")
+        self.assertEqual(cfg["timing"], "before")
         types = [st.get("type") for st in cfg["steps"]]
         self.assertEqual(types, ["keyboard", "ocr"])
         self.assertEqual(cfg["steps"][0]["keys"], "space")
         self.assertEqual(cfg["steps"][1]["text"], "开启新赛季")
+        self.assertTrue(cfg["steps"][1].get("optional"))
+
+    def test_clear_stale_hazard_config(self):
+        """应清除旧版误写到第9模板(Hazard_Operations)的段位结算 OCR 步骤"""
+        import announcements
+        import template_insert_steps as tis
+        tis.save("Hazard_Operations", "after",
+                 [{"type": "keyboard", "keys": "space"},
+                  {"type": "ocr", "text": "开启新赛季"}])
+        announcements._clear_stale_hazard_config()
+        cfg = tis.get("Hazard_Operations")
+        # 含 开启新赛季 的 OCR 配置被清除；若原配仅为该误写则整条删除
+        self.assertTrue(cfg is None or not any(
+            isinstance(s, dict) and s.get("type") == "ocr" and "开启新赛季" in str(s.get("text", ""))
+            for s in (cfg or {}).get("steps") or []))
 
 
 # ==================== 模板插入步骤 ====================
@@ -437,6 +454,16 @@ class TestTemplateInsertSteps(unittest.TestCase):
         tis.save("Hazard_Operations", "before", [])
         self.assertIsNone(tis.get("Hazard_Operations"))
         self.assertFalse(tis.has_steps("Hazard_Operations"))
+
+    def test_run_optional_failing_step_continues(self):
+        """步骤标记 optional=True 时，找图失败不判失败 → run_for_account 返回 True"""
+        import threading
+        import template_insert_steps as tis
+        stop = threading.Event()
+        bad_optional = {"type": "image", "image": "_no_such_insert_test.png",
+                        "confidence": 0.7, "timeout": 1, "pause_after": 0, "optional": True}
+        tis.save("SIGN_IN", "after", [bad_optional])
+        self.assertTrue(tis.run_for_account({}, stop, "A", "SIGN_IN", "after"))
 
     def test_run_no_config_or_timing_mismatch(self):
         """未配置 / 时序不符 → 返回 True（不执行）"""
