@@ -754,37 +754,53 @@ class SettingsWindow:
         ttk.Button(sniper_btn_frame, text="打开皮肤抢购", style='Accent.TButton',
                    command=lambda: self._open_sniper_window(getattr(self, '_dev_win', None)), width=14).pack(side=tk.LEFT)
 
-        # ----- 测试关闭游戏 -----
-        frame_close = ttk.LabelFrame(parent, text="  测试关闭游戏  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_close.pack(fill=tk.X, pady=(0, 8))
+        # ----- 图片识别点击（用户上传图片） -----
+        frame_click = ttk.LabelFrame(parent, text="  图片识别点击  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_click.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_close, text="优雅关闭《三角洲行动》（WM_CLOSE 优先，无效才 Alt+F4）；请先打开游戏再测试",
+        ttk.Label(frame_click, text="选择一张图片，在当前屏幕识别并点击其中心；用于测试自己截取的模板/图片能否被正确识别点击",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
-        close_btn_frame = ttk.Frame(frame_close, style='SettingsInner.TFrame')
-        close_btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(close_btn_frame, text="关闭三角洲游戏", style='Accent.TButton',
-                   command=self._test_close_game, width=16).pack(side=tk.LEFT)
+        click_btn_frame = ttk.Frame(frame_click, style='SettingsInner.TFrame')
+        click_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(click_btn_frame, text="选择图片并识别点击", style='Accent.TButton',
+                   command=self._pick_and_click_image, width=18).pack(side=tk.LEFT)
+        self._dev_click_status = ttk.Label(frame_click, text="", style='SettingsSmall.TLabel')
+        self._dev_click_status.pack(anchor=tk.W, padx=5, pady=(4, 0))
 
-    def _test_close_game(self):
-        """测试优雅关闭三角洲游戏（WM_CLOSE 优先，验证蓝屏修复是否生效）"""
-        if not messagebox.askyesno("测试关闭游戏",
-                "将尝试优雅关闭正在运行的《三角洲行动》（WM_CLOSE 优先，无效才 Alt+F4）。\n\n"
-                "请确认游戏已打开、当前无需保存的游戏进度。是否继续？",
-                parent=self.win):
-            return
+    def _pick_and_click_image(self):
+        """选择一张用户上传的图片，在当前屏幕识别并点击其中心（后台执行，避免卡界面）"""
+        import os
         import threading
-        threading.Thread(target=self._run_close_game_test, daemon=True).start()
-        messagebox.showinfo("已执行", "关闭流程已在后台触发，请观察游戏窗口是否正常关闭、是否蓝屏。",
-                            parent=self.win)
+        from tkinter import filedialog, messagebox
+        path = filedialog.askopenfilename(
+            parent=self.win, title="选择要识别点击的图片",
+            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")])
+        if not path:
+            return
+        if getattr(self, '_dev_click_thread', None) and self._dev_click_thread.is_alive():
+            messagebox.showinfo("提示", "上一次识别点击仍在执行，请稍候", parent=self.win)
+            return
+        conf = float(self.app.settings.get("confidence", 0.7) or 0.7)
+        status = self._dev_click_status
+        basename = os.path.basename(path)
 
-    def _run_close_game_test(self):
-        """后台执行关闭游戏测试"""
-        try:
-            import automation_runner
-            automation_runner._close_game(self.app)
-            print("✅ 测试关闭游戏流程执行完成")
-        except Exception as e:
-            print(f"⚠️ 测试关闭游戏异常：{e}")
+        def _set_text(text):
+            try:
+                status.after(0, lambda: status.config(text=text))
+            except Exception:
+                pass
+
+        _set_text(f"正在识别点击：{basename}（置信度 {conf}）...")
+        def _worker():
+            try:
+                import utils
+                ok = utils.find_and_click(path, timeout=12, confidence=conf)
+                _set_text(f"✅ 已识别并点击：{basename}" if ok
+                          else f"❌ 未找到：{basename}（可降低置信度或换清晰截图）")
+            except Exception as e:
+                _set_text(f"❌ 识别点击异常：{e}")
+        self._dev_click_thread = threading.Thread(target=_worker, daemon=True)
+        self._dev_click_thread.start()
 
     def _open_custom_ops_window(self):
         """打开自定义操作配置窗口（隐藏设置窗口，返回时恢复）"""
