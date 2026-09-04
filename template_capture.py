@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import config
 import utils
+import template_insert_steps
 from PIL import Image, ImageTk
 
 
@@ -151,6 +152,12 @@ class TemplateCaptureWizard:
         optional_vars = {"ENSURE", "Observe"}
         produce_order = ["Produce_TechCenter", "Produce_ToolBench", "Produce_ArmorStation", "Produce_PharmacyStation"]
         self.rows = {}
+        # 插入步骤红勾：记录每行状态标签的底色与基础前景色（用于配置后还原）
+        try:
+            self._default_row_bg = ttk.Style(self.win).lookup("TFrame", "background") or "#f0f0f0"
+        except Exception:
+            self._default_row_bg = "#f0f0f0"
+        self._row_base = {}   # var_name -> {"fg": 前景色或 None}
 
         def _add_section_header(title):
             """添加分组标题和下划线"""
@@ -194,16 +201,19 @@ class TemplateCaptureWizard:
                                    foreground='#999999', anchor='e')
             seq_lbl.pack(side=tk.LEFT, padx=(2, 2))
 
-            # 状态图标
+            # 状态图标（统一 tk.Label，便于配置插入步骤后染红为 ✔）
             if is_optional:
                 status_lbl = tk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
                                       bg='#E8F4FD', fg='#4A90D9', anchor='center')
+                self._row_base[var_name] = {"fg": "#4A90D9"}
             elif is_produce:
                 status_lbl = tk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
                                       bg='#FFF8F0', fg='#FF8C00', anchor='center')
+                self._row_base[var_name] = {"fg": "#FF8C00"}
             else:
-                status_lbl = ttk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
-                                      anchor='center')
+                status_lbl = tk.Label(row, text="⬜", width=3, font=('Segoe UI Emoji', 10),
+                                      bg=self._default_row_bg, anchor='center')
+                self._row_base[var_name] = {"fg": None}
             status_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
             # 名称和提示
@@ -234,9 +244,8 @@ class TemplateCaptureWizard:
 
             self.rows[var_name] = (status_lbl, setting_btn)
 
-            # 应用已保存的上传状态
-            if self.status.get(var_name) == "done":
-                status_lbl.config(text="✅")
+            # 应用已保存的上传状态 + 插入步骤红勾
+            self._refresh_insert_status(var_name)
 
             # 在最后一个产出项后添加分界线
             if var_name == produce_order[-1]:
@@ -248,6 +257,31 @@ class TemplateCaptureWizard:
         sell_sep.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(5, 5))
         ttk.Label(self.win, text="售卖物品请在 设置 → 售卖物品 中管理",
                   font=('Microsoft YaHei UI', 9), foreground='#7f8c8d').pack(side=tk.BOTTOM, pady=(0, 5))
+
+    def _refresh_insert_status(self, var_name):
+        """刷新某模板行的状态图标：配置了插入步骤 → 前面的勾变红 ✔；
+        否则按上传状态显示 ⬜ / ✅"""
+        row_widgets = self.rows.get(var_name)
+        if not row_widgets:
+            return
+        status_lbl = row_widgets[0]
+        base = self._row_base.get(var_name) or {}
+        base_fg = base.get("fg")
+        try:
+            if template_insert_steps.has_steps(var_name):
+                status_lbl.config(text="✔", fg="#E74C3C")
+            else:
+                if self.status.get(var_name) == "done":
+                    status_lbl.config(text="✅")
+                else:
+                    status_lbl.config(text="⬜")
+                if base_fg:
+                    status_lbl.config(fg=base_fg)
+                else:
+                    # 默认行还原为 tk 默认文本色（黑）
+                    status_lbl.config(fg='black')
+        except Exception:
+            pass
 
     def _update_progress(self):
         done = sum(1 for s in self.status.values() if s == "done")
@@ -448,8 +482,29 @@ class TemplateCaptureWizard:
             """测试当前模板的识别置信度"""
             self._test_template_confidence(win, rel_path, name)
 
+        def do_insert_step():
+            """配置该模板的「插入步骤」：一段步骤，在模板被自动识别点击前/后执行。
+            编辑器关闭后刷新向导该行的红勾状态。"""
+            from custom_ops_window import CustomOpsWindow
+            _cfg = template_insert_steps.get(var_name) or {}
+            editor = CustomOpsWindow(
+                win,
+                template_insert_steps.make_editor_app(self.app),
+                single_mode=True,
+                single_title=f"插入步骤 - {name}",
+                single_cfg=_cfg,
+                save_handler=lambda timing, steps: template_insert_steps.save(var_name, timing, steps),
+                on_closed=lambda: self._refresh_insert_status(var_name),
+            )
+            try:
+                win.wait_window(editor.win)   # 模态：编辑器关闭后返回
+            except Exception:
+                pass
+            self._refresh_insert_status(var_name)
+
         # 不可文字识别的模板不显示 OCR 按钮
         ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="插入步骤", command=do_insert_step, width=10).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="测试", command=do_test, width=8).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.RIGHT)
 

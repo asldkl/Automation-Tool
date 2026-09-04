@@ -35,29 +35,50 @@ TYPE_NAMES = list(STEP_TYPES.values())                 # 中文名列表（下�
 
 
 class CustomOpsWindow:
-    def __init__(self, parent, app):
+    def __init__(self, parent, app, single_mode=False, single_title="自定义操作",
+                 single_cfg=None, save_handler=None, on_closed=None):
+        """CustomOpsWindow 自定义操作编辑器。
+
+        single_mode=True 时是「模板插入步骤」单列模式：
+          - 只编辑一段步骤（无工作流/频率概念），self.batches 为合成的单个批次
+          - 顶部用「执行时机」下拉（点击前/点击后）替代工作流切换
+          - 保存经 save_handler(timing, steps) 回调（不写全局 ops.json）
+          - 关闭经 on_closed() 通知调用方刷新
+        single_cfg: {"timing": "before"|"after", "steps": [...]} 初始值
+        """
         self.app = app
-        self.parent_win = parent          # 设置窗口
-        self.batches = custom_ops.load_batches()   # 批次列表（工作流）
-        if not self.batches:
-            self.batches = [{"name": "工作流1", "max_runs": 0, "freq_days": 7, "steps": []}]
+        self.parent_win = parent          # 父窗口（设置窗口 / 模板设置弹窗）
+        self.single_mode = bool(single_mode)
+        self.save_handler = save_handler
+        self.on_closed = on_closed
+        if self.single_mode:
+            _cfg = single_cfg or {}
+            self._single_timing = "after" if _cfg.get("timing") == "after" else "before"
+            self.batches = [{"name": single_title or "插入步骤",
+                             "steps": list(_cfg.get("steps") or [])}]
+        else:
+            self.batches = custom_ops.load_batches()   # 批次列表（工作流）
+            if not self.batches:
+                self.batches = [{"name": "工作流1", "max_runs": 0, "freq_days": 7, "steps": []}]
         self.current_bi = 0               # 当前编辑的批次索引
         self._test_stop = threading.Event()
         self._test_thread = None
 
         self.win = tk.Toplevel(parent)
-        self.win.title("自定义操作")
+        self.win.title(single_title if self.single_mode else "自定义操作")
         self.win.resizable(True, True)
         self.win.minsize(560, 420)
         # 记住窗口大小和位置（首次居中显示）
-        utils.restore_window_geometry(self.win, "custom_ops_geometry", "720x520")
+        _geo_key = "template_insert_geometry" if self.single_mode else "custom_ops_geometry"
+        utils.restore_window_geometry(self.win, _geo_key, "720x520")
         # 注意：不加 transient —— 父窗口（设置窗口）已被导航栈隐藏，transient 到隐藏窗口可能不映射
         self.win.grab_set()   # 模态：阻止操作背后的实验功能/设置窗口
         self.win.lift()
         utils.set_window_icon(self.win)
 
         self._build_ui()
-        self._refresh_batch_combo()
+        if not self.single_mode:
+            self._refresh_batch_combo()
         self._refresh_list()
 
     @property
@@ -90,13 +111,22 @@ class CustomOpsWindow:
         add_btn.config(menu=add_menu)
         add_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Label(batch_row, text="工作流：").pack(side=tk.LEFT)
-        self.batch_combo = ttk.Combobox(batch_row, state='readonly', width=12)
-        self.batch_combo.pack(side=tk.LEFT, padx=(0, 8))
-        self.batch_combo.bind('<<ComboboxSelected>>', self._on_batch_select)
-        ttk.Button(batch_row, text="＋ 新增工作流", command=self._add_batch, width=11).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(batch_row, text="删除工作流", command=self._delete_batch, width=10).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(batch_row, text="工作流设置", command=self._batch_settings, width=10).pack(side=tk.LEFT)
+        if self.single_mode:
+            # 单列模式：执行时机下拉（点击前 / 点击后）替代工作流切换
+            ttk.Label(batch_row, text="执行时机：").pack(side=tk.LEFT)
+            self.timing_combo = ttk.Combobox(batch_row, state='readonly', width=9,
+                                             values=["点击前", "点击后"])
+            self.timing_combo.set("点击前" if self._single_timing != "after" else "点击后")
+            self.timing_combo.pack(side=tk.LEFT, padx=(0, 8))
+            self.timing_combo.bind('<<ComboboxSelected>>', self._on_timing_select)
+        else:
+            ttk.Label(batch_row, text="工作流：").pack(side=tk.LEFT)
+            self.batch_combo = ttk.Combobox(batch_row, state='readonly', width=12)
+            self.batch_combo.pack(side=tk.LEFT, padx=(0, 8))
+            self.batch_combo.bind('<<ComboboxSelected>>', self._on_batch_select)
+            ttk.Button(batch_row, text="＋ 新增工作流", command=self._add_batch, width=11).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Button(batch_row, text="删除工作流", command=self._delete_batch, width=10).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Button(batch_row, text="工作流设置", command=self._batch_settings, width=10).pack(side=tk.LEFT)
 
         # ----- 步骤列表 -----
         list_frame = ttk.Frame(self.win, padding=(8, 2))
@@ -122,10 +152,17 @@ class CustomOpsWindow:
         self.tree.bind("<Button-3>", self._show_context_menu)
 
         # ----- 说明 -----
-        tip = ("说明：步骤按「工作流」组织（顶部切换），每个工作流可设不同运行次数。\n"
-               "主流程每个账号运行完、游戏回到主界面后，所有工作流依次执行；某步找不到目标则中止该工作流。\n"
-               "只要配置了自定义操作（工作流含步骤）主流程后就会自动执行；随机偏移跟随全局设置。\n"
-               "右键可修改属性、运行本步骤、上移/下移/删除；「工作流设置」配置每个工作流的频率。")
+        if self.single_mode:
+            tip = ("说明：这段步骤会在「该模板被自动识别点击时」执行——选「点击前」先执行本段再点模板，"
+                   "选「点击后」先点模板再执行本段；执行完自然继续后续流程。\n"
+                   "不配置这段步骤则什么都不做，模板按原样识别点击。任一步失败 = 该模板按失败处理"
+                   "（登录→账号失败；烽火地带/特勤处→1 天冷却；可选步骤→跳过继续）。\n"
+                   "图片存到自定义操作图片目录；右键可修改/运行本步骤/上移/下移/删除。")
+        else:
+            tip = ("说明：步骤按「工作流」组织（顶部切换），每个工作流可设不同运行次数。\n"
+                   "主流程每个账号运行完、游戏回到主界面后，所有工作流依次执行；某步找不到目标则中止该工作流。\n"
+                   "只要配置了自定义操作（工作流含步骤）主流程后就会自动执行；随机偏移跟随全局设置。\n"
+                   "右键可修改属性、运行本步骤、上移/下移/删除；「工作流设置」配置每个工作流的频率。")
         self.tip_lbl = ttk.Label(self.win, text=tip, style='SettingsSmall.TLabel', justify=tk.LEFT,
                                  padding=(10, 4))
         self.tip_lbl.pack(anchor=tk.W, fill=tk.X)
@@ -314,7 +351,23 @@ class CustomOpsWindow:
         self.tree.selection_set(str(idx))
         self._edit_selected()
 
+    def _on_timing_select(self, _e=None):
+        """单列模式：切换执行时机（点击前/点击后）并立即保存"""
+        if self.timing_combo.current() == 1:
+            self._single_timing = "after"
+        else:
+            self._single_timing = "before"
+        self._save_ops_now()
+
     def _save_ops_now(self):
+        if self.single_mode:
+            # 单列模式：经 save_handler 持久化（settings["template_insert_steps"]），不写全局 ops.json
+            if self.save_handler:
+                try:
+                    self.save_handler(self._single_timing, list(self.ops))
+                except Exception as e:
+                    print(f"⚠️ 插入步骤保存失败：{e}")
+            return
         if custom_ops.save_batches(self.batches):
             print("💾 自定义操作已保存")
 
@@ -325,7 +378,9 @@ class CustomOpsWindow:
 
     # ==================== 批次（工作流）管理 ====================
     def _refresh_batch_combo(self):
-        """刷新工作流下拉列表"""
+        """刷新工作流下拉列表（单列模式无批次，跳过）"""
+        if self.single_mode:
+            return
         names = [b.get("name", f"工作流{i + 1}") for i, b in enumerate(self.batches)]
         self.batch_combo.config(values=names)
         if 0 <= self.current_bi < len(names):
@@ -1093,6 +1148,31 @@ class CustomOpsWindow:
                 self._test_stop.set()
         except Exception:
             pass
+        if self.single_mode:
+            # 单列模式：非导航栈成员，兜底保存后直接销毁，并把模态交还父窗
+            try:
+                self._save_ops_now()
+            except Exception:
+                pass
+            try:
+                utils.save_window_geometry(self.win, "template_insert_geometry")
+            except Exception:
+                pass
+            try:
+                self.win.destroy()
+            except Exception:
+                pass
+            try:
+                if self.parent_win and self.parent_win.winfo_exists():
+                    self.parent_win.grab_set()
+            except Exception:
+                pass
+            if self.on_closed:
+                try:
+                    self.on_closed()
+                except Exception:
+                    pass
+            return
         # 记住窗口大小和位置
         try:
             utils.save_window_geometry(self.win, "custom_ops_geometry")

@@ -193,6 +193,8 @@ DEFAULT_SETTINGS = {
     "template_resolution": "",        # 模板截图时的屏幕分辨率
     # 模板上传状态记录
     "template_upload_status": {},     # var_name -> "pending" | "done"
+    # 模板插入步骤（某模板被识别点击前/后执行的自定义步骤）
+    "template_insert_steps": {},      # var_name -> {"timing":"before"|"after", "steps":[custom_ops步骤]}
     # 运行完成后关机
     "post_run_shutdown_delay": 0,     # 运行完成后延迟关机（0-5分钟，0=不关机）
     # 服务器配置（可通过 ~/.delta_auto_settings.json 覆盖）

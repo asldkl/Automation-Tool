@@ -248,6 +248,7 @@ def _run_single_account_main(app, img_path):
             return
 
         _cleanup_processes(app)
+        run_insert = _make_run_insert(app)   # 模板插入步骤执行回调
 
         account_failed = False
         account_interrupted = False
@@ -259,23 +260,39 @@ def _run_single_account_main(app, img_path):
         # 步骤2：找到三角洲图标并启动游戏
         if not account_failed and not app._stop_event.is_set():
             print("🔍 查找三角洲游戏图标...")
-            if not utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=10):
+            if not automation._hook(run_insert, "DELTA_GAME_ICON", "before"):
+                print("❌ 三角洲游戏图标 插入步骤(点击前)失败")
+                account_failed = True
+            elif not utils.find_and_click_smart(config.DELTA_GAME_ICON, timeout=10):
                 print("❌ 未找到三角洲游戏图标")
+                account_failed = True
+            elif not automation._hook(run_insert, "DELTA_GAME_ICON", "after"):
+                print("❌ 三角洲游戏图标 插入步骤(点击后)失败")
                 account_failed = True
             else:
                 time.sleep(2)
                 # 点击启动按钮
-                if not utils.find_and_click_smart(config.DELTA_LAUNCH_BTN, timeout=10):
+                if not automation._hook(run_insert, "DELTA_LAUNCH_BTN", "before"):
+                    print("❌ 启动按钮 插入步骤(点击前)失败")
+                    account_failed = True
+                elif not utils.find_and_click_smart(config.DELTA_LAUNCH_BTN, timeout=10):
                     print("❌ 未找到启动按钮")
+                    account_failed = True
+                elif not automation._hook(run_insert, "DELTA_LAUNCH_BTN", "after"):
+                    print("❌ 启动按钮 插入步骤(点击后)失败")
                     account_failed = True
                 else:
                     print("✅ 游戏启动中，等待进入大厅...")
                     time.sleep(1)
-                    # 查找并点击「确定」按钮
-                    if utils.find_and_click_smart(config.ENSURE, timeout=5):
-                        print("✅ 已点击确认按钮")
+                    # 查找并点击「确定」按钮（可选）
+                    if automation._hook(run_insert, "ENSURE", "before"):
+                        if utils.find_and_click_smart(config.ENSURE, timeout=5):
+                            print("✅ 已点击确认按钮")
+                            automation._hook(run_insert, "ENSURE", "after")
+                        else:
+                            print("ℹ️ 无需确认，继续等待游戏窗口")
                     else:
-                        print("ℹ️ 无需确认，继续等待游戏窗口")
+                        print("ℹ️ 确定按钮 插入步骤(点击前)失败，跳过")
                     # 等待游戏窗口出现
                     game_loaded = False
                     for _ in range(30):
@@ -299,19 +316,25 @@ def _run_single_account_main(app, img_path):
                             print("🔍 观察账号：识别观察状态入口...")
                             observe_found = False
                             observe_interrupted = False
-                            for retry in range(5):
-                                if app._stop_event.is_set():
-                                    observe_interrupted = True
-                                    break
-                                if utils.find_and_click_smart(config.Observe, timeout=8):
-                                    observe_found = True
-                                    break
-                                print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/5)...")
-                                time.sleep(4)
+                            if not automation._hook(run_insert, "Observe", "before"):
+                                print("⚠️ 观察状态入口 插入步骤(点击前)失败，跳过")
+                            else:
+                                for retry in range(5):
+                                    if app._stop_event.is_set():
+                                        observe_interrupted = True
+                                        break
+                                    if utils.find_and_click_smart(config.Observe, timeout=8):
+                                        observe_found = True
+                                        break
+                                    print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/5)...")
+                                    time.sleep(4)
                             if observe_interrupted:
                                 account_interrupted = True
                             elif observe_found:
-                                print("✅ 已进入观察状态入口")
+                                if automation._hook(run_insert, "Observe", "after"):
+                                    print("✅ 已进入观察状态入口")
+                                else:
+                                    print("⚠️ 观察状态入口 插入步骤(点击后)失败，继续主流程")
                             else:
                                 print("ℹ️ 5次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
                             if not observe_interrupted:
@@ -320,19 +343,28 @@ def _run_single_account_main(app, img_path):
                         # 进入烽火地带（单账号运行：最多重试 3 次）
                         print("进入烽火地带...")
                         hazard_found = False
-                        for retry in range(3):
-                            if app._stop_event.is_set():
-                                account_interrupted = True
-                                break
-                            if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
-                                hazard_found = True
-                                break
-                            print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/3)...")
-                            automation._ensure_game_focused()
-                            time.sleep(5)
+                        if not automation._hook(run_insert, "Hazard_Operations", "before"):
+                            print("❌ 烽火地带入口 插入步骤(点击前)失败")
+                        else:
+                            for retry in range(3):
+                                if app._stop_event.is_set():
+                                    account_interrupted = True
+                                    break
+                                if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
+                                    hazard_found = True
+                                    break
+                                print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/3)...")
+                                automation._ensure_game_focused()
+                                time.sleep(5)
                         if account_interrupted:
                             pass  # 用户中断，交给后面统一处理
-                        elif hazard_found:
+                        elif not hazard_found:
+                            print("❌ 3次重试后仍未找到烽火地带入口（或插入步骤失败）")
+                            account_failed = True
+                        elif not automation._hook(run_insert, "Hazard_Operations", "after"):
+                            print("❌ 烽火地带入口 插入步骤(点击后)失败")
+                            account_failed = True
+                        else:
                             time.sleep(5)
 
                             # 按 Space、Space、Tab 进入特勤处（与主流程一致）
@@ -349,9 +381,6 @@ def _run_single_account_main(app, img_path):
 
                             print("✅ 已进入游戏大厅，用户可自行操作。程序不会退出游戏。")
                             processed_accounts.append(f"{file_name} (已登录)")
-                        else:
-                            print("❌ 3次重试后仍未找到烽火地带入口")
-                            account_failed = True
                     else:
                         print("❌ 未检测到游戏窗口")
                         account_failed = True
@@ -406,6 +435,20 @@ def set_operation(app, text):
     app.root.after(0, lambda: app.op_label.config(text=text))
 
 
+def _make_run_insert(app):
+    """构建模板「插入步骤」执行回调 ri(var_name, timing)，供登录/启动/游戏内流程注入。
+    回调内部以真实 app 上下文执行；某模板未配置或时序不符时返回 True（不执行）。"""
+    import template_insert_steps as _tis
+    def run_insert(var_name, timing):
+        account = getattr(app, "_current_account_name", "") or ""
+        try:
+            return bool(_tis.run_for_account(app.settings, app._stop_event, account,
+                                             var_name, timing))
+        except Exception:
+            return True
+    return run_insert
+
+
 def _validate_daily(app):
     """每日首次运行时进行服务器验证，返回 True=通过，False=应退出"""
     today_str = datetime.date.today().isoformat()
@@ -457,6 +500,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
     5. 图像识别点击 Input → Interception 输入密码
     6. 图像识别点击 Sign-in 完成登录
     返回 True=成功"""
+    run_insert = _make_run_insert(app)   # 模板插入步骤执行回调（含 WeGame 登录模板）
     set_operation(app, f"WeGame 登录 ({i+1}/{total})")
 
     note_data = app._account_notes.get(account_name, {})
@@ -562,8 +606,14 @@ def _login_account(app, account_name, i, total, processed_accounts):
         # 步骤3：图像识别双击 account_select（左偏 15px，选中旧账号文本）
         set_operation(app, "选择账号输入框")
         print("🔍 查找账号选择框...")
+        if not automation._hook(run_insert, "ACCOUNT_SELECT", "before"):
+            print(f"⚠️ 账号选择框 插入步骤(点击前)失败，重试 ({attempt+1}/{max_retries})...")
+            continue
         if not utils.find_and_click_smart(config.ACCOUNT_SELECT, clicks=2, timeout=10, x_offset=-15):
             print(f"⚠️ 未找到账号选择框，重试 ({attempt+1}/{max_retries})...")
+            continue
+        if not automation._hook(run_insert, "ACCOUNT_SELECT", "after"):
+            print(f"⚠️ 账号选择框 插入步骤(点击后)失败，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已双击账号选择框")
         time.sleep(0.3)
@@ -594,8 +644,14 @@ def _login_account(app, account_name, i, total, processed_accounts):
         # 步骤5：图像识别点击 Input（密码输入框）
         set_operation(app, "点击密码输入框")
         print("🔍 识别密码输入框...")
+        if not automation._hook(run_insert, "IMAGE_INPUT_FIELD", "before"):
+            print(f"⚠️ 密码输入框 插入步骤(点击前)失败，重试 ({attempt+1}/{max_retries})...")
+            continue
         if not utils.find_and_click_smart(config.IMAGE_INPUT_FIELD, timeout=10):
             print(f"⚠️ 未找到密码输入框，重试 ({attempt+1}/{max_retries})...")
+            continue
+        if not automation._hook(run_insert, "IMAGE_INPUT_FIELD", "after"):
+            print(f"⚠️ 密码输入框 插入步骤(点击后)失败，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已点击密码输入框")
         time.sleep(0.2)
@@ -619,8 +675,14 @@ def _login_account(app, account_name, i, total, processed_accounts):
         # 步骤6：图像识别点击 Sign-in（登录确认按钮）
         set_operation(app, "点击登录")
         print("🔍 识别登录确认按钮...")
+        if not automation._hook(run_insert, "SIGN_IN", "before"):
+            print(f"⚠️ 登录确认按钮 插入步骤(点击前)失败，重试 ({attempt+1}/{max_retries})...")
+            continue
         if not utils.find_and_click_smart(config.SIGN_IN, timeout=10):
             print(f"⚠️ 未找到登录确认按钮，重试 ({attempt+1}/{max_retries})...")
+            continue
+        if not automation._hook(run_insert, "SIGN_IN", "after"):
+            print(f"⚠️ 登录确认按钮 插入步骤(点击后)失败，重试 ({attempt+1}/{max_retries})...")
             continue
         print("✅ 已点击登录确认按钮")
 
@@ -651,12 +713,18 @@ def _login_account(app, account_name, i, total, processed_accounts):
 def _launch_game(app):
     """查找三角洲图标、资产识别、启动游戏、等待窗口。返回 True=成功"""
     app._asset_hub_value = None  # 重置大厅候选资产（防跨账号残留）
+    run_insert = _make_run_insert(app)   # 模板插入步骤执行回调
     set_operation(app, "查找三角洲游戏图标")
     print("\n--- 启动三角洲行动 ---")
     if not utils.activate_window_by_title("WeGame", partial_match=True):
         print("⚠️ 激活 WeGame 窗口失败，尝试直接识别...")
     time.sleep(1)
 
+    if not automation._hook(run_insert, "DELTA_GAME_ICON", "before"):
+        print("❌ 三角洲游戏图标 插入步骤(点击前)失败，跳过此账号")
+        app._last_account_error = "三角洲游戏图标 插入步骤失败"
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
     delta_icon_found = False
     for retry in range(3):
         if app._stop_event.is_set():
@@ -676,7 +744,17 @@ def _launch_game(app):
         app._last_account_error = msg
         utils.kill_process(config.WEGAME_PROCESS)
         return False
+    if not automation._hook(run_insert, "DELTA_GAME_ICON", "after"):
+        print("❌ 三角洲游戏图标 插入步骤(点击后)失败，跳过此账号")
+        app._last_account_error = "三角洲游戏图标 插入步骤失败"
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
 
+    if not automation._hook(run_insert, "DELTA_LAUNCH_BTN", "before"):
+        print("❌ 启动游戏按钮 插入步骤(点击前)失败，跳过此账号")
+        app._last_account_error = "启动游戏按钮 插入步骤失败"
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
     launch_found = False
     for retry in range(3):
         if app._stop_event.is_set():
@@ -692,13 +770,22 @@ def _launch_game(app):
         app._last_account_error = msg
         utils.kill_process(config.WEGAME_PROCESS)
         return False
+    if not automation._hook(run_insert, "DELTA_LAUNCH_BTN", "after"):
+        print("❌ 启动游戏按钮 插入步骤(点击后)失败，跳过此账号")
+        app._last_account_error = "启动游戏按钮 插入步骤失败"
+        utils.kill_process(config.WEGAME_PROCESS)
+        return False
 
     time.sleep(1)  # 等待游戏加载
-    # 查找并点击「确定」按钮（部分用户会出现的确认步骤）
-    if utils.find_and_click_smart(config.ENSURE, timeout=5):
-        print("✅ 已点击确认按钮")
+    # 查找并点击「确定」按钮（部分用户会出现的确认步骤；可选，插入失败不中止）
+    if automation._hook(run_insert, "ENSURE", "before"):
+        if utils.find_and_click_smart(config.ENSURE, timeout=5):
+            print("✅ 已点击确认按钮")
+            automation._hook(run_insert, "ENSURE", "after")
+        else:
+            print("ℹ️ 无需确认，继续等待游戏窗口")
     else:
-        print("ℹ️ 无需确认，继续等待游戏窗口")
+        print("ℹ️ 确定按钮 插入步骤(点击前)失败，跳过")
 
     print("✅ 三角洲正在启动，等待游戏窗口出现...")
     game_loaded = False
@@ -1407,7 +1494,8 @@ def game_operations_wrapper(app):
             update_ui_callback=lambda: app.root.after(0, app.update_ui, True),
             on_hub_entered=lambda: _hub_asset_check(app),
             observe_mode=observe_mode,
-            hazard_retry=hazard_retry)
+            hazard_retry=hazard_retry,
+            run_insert=_make_run_insert(app))
     finally:
         utils.set_click_jitter(False)
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)
@@ -1432,7 +1520,9 @@ def sell_operations_wrapper(app):
     utils.set_click_jitter(app.settings.get("enable_click_jitter", False),
                            app.settings.get("click_jitter_max", 5))
     try:
-        return automation.sell_operations(app.settings, app._stop_event, lambda text: set_operation(app, text))
+        return automation.sell_operations(app.settings, app._stop_event,
+                                          lambda text: set_operation(app, text),
+                                          run_insert=_make_run_insert(app))
     finally:
         utils.set_click_jitter(False)
 

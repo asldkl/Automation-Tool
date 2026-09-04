@@ -13,23 +13,52 @@ import config
 import utils
 
 
-def handle_facility(facility_img, produce_item_img, facility_name, stop_event, set_operation, update_ui_callback=None):
+def _hook(run_insert, var_name, timing):
+    """运行某模板的「插入步骤」（点击前/后）。run_insert 为空或该模板未配置 → True；
+    插入步骤执行失败 → False（调用处应视为该模板失败）"""
+    if run_insert is None:
+        return True
+    try:
+        return bool(run_insert(var_name, timing))
+    except Exception as e:
+        print(f"⚠️ 模板[{var_name}]插入步骤回调异常：{e}")
+        return True
+
+
+def _click(run_insert, var_name, img_path, timeout=15, **kw):
+    """识别点击某模板图并夹入其插入步骤。
+    返回：True=点击成功（无插入或插入成功）；
+         'nofind'=未找到图（原失败语义）；
+         'insert'=插入步骤失败（应视为该模板点击失败处理）"""
+    if not _hook(run_insert, var_name, "before"):
+        return "insert"
+    if not utils.find_and_click_smart(img_path, timeout=timeout, **kw):
+        return "nofind"
+    if not _hook(run_insert, var_name, "after"):
+        return "insert"
+    return True
+
+
+def handle_facility(facility_img, produce_item_img, facility_name, stop_event, set_operation,
+                    update_ui_callback=None, fac_var="", prod_var="", run_insert=None):
     """
     处理单个设施的完整流程：进入设施 → 收取 → 选择产出 → 补齐材料 → 生产
+    fac_var / prod_var: 设施图标与产出项的模板 var_name（插入步骤用）
+    run_insert: 插入步骤执行回调 ri(var_name, timing)
     返回 True=成功，False=失败
     """
     if stop_event.is_set():
         return False
     print(f"🏭 开始处理 {facility_name} ...")
-    if not utils.find_and_click_smart(facility_img, timeout=15):
+    if _click(run_insert, fac_var, facility_img, 15) is not True:
         return False
     utils.human_pause()
 
-    if not utils.find_and_click_smart(config.MAKE, timeout=15):
+    if _click(run_insert, "MAKE", config.MAKE, 15) is not True:
         return False
     utils.human_pause()
 
-    if not utils.find_and_click_smart(config.Collect, timeout=15):
+    if _click(run_insert, "Collect", config.Collect, 15) is not True:
         return False
     utils.human_pause()
 
@@ -37,16 +66,22 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     pyautogui.press("Space")
     utils.human_pause()
 
-    if not utils.find_and_click_smart(produce_item_img, timeout=15):
+    if _click(run_insert, prod_var, produce_item_img, 15) is not True:
         return False
     utils.human_pause()
 
-    if utils.find_and_click_smart(config.Auto_fill, timeout=8):
+    # 一键补齐（可选模板）：未找到/插入失败均按「材料已足够」继续
+    if not _hook(run_insert, "Auto_fill", "before"):
+        print("ℹ️ 一键补齐 插入步骤(点击前)失败，按材料足够处理")
+    elif utils.find_and_click_smart(config.Auto_fill, timeout=8):
         print(f"🔧 一键补齐材料 ({facility_name})")
+        _hook(run_insert, "Auto_fill", "after")   # 失败仅记录，不中断
     else:
         print(f"ℹ️ 材料已足够，无需补齐 ({facility_name})")
     utils.human_pause()
 
+    # 游戏币购买（while 循环按钮）：整个购买块前/后各触发一次插入步骤
+    _hook(run_insert, "COIN_GAME", "before")
     buy_attempts = 0
     while utils.find_and_click_smart(config.COIN_GAME, timeout=5):
         if stop_event.is_set():
@@ -57,8 +92,10 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
         if buy_attempts >= 5:
             print("⚠️ 购买尝试已达上限，可能价格波动频繁")
             break
+    if buy_attempts > 0:
+        _hook(run_insert, "COIN_GAME", "after")
 
-    if not utils.find_and_click_smart(config.Produce, timeout=15):
+    if _click(run_insert, "Produce", config.Produce, 15) is not True:
         return False
     utils.human_pause()
 
@@ -70,9 +107,10 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     return True
 
 
-def sell_operations(settings, stop_event, set_operation):
+def sell_operations(settings, stop_event, set_operation, run_insert=None):
     """
     一键出售流程：打开仓库，遍历售卖物品执行出售
+    run_insert: 插入步骤执行回调 ri(var_name, timing)
     返回 (success: bool, stats: dict)
     stats: {"total": N, "sold": N, "not_found": N, "failed": N}
     """
@@ -105,8 +143,8 @@ def sell_operations(settings, stop_event, set_operation):
     # 清除模板缓存，确保使用最新模板
     utils.clear_template_cache()
 
-    if not utils.find_and_click_smart(config.Warehouse, timeout=15):
-        print("❌ 未找到仓库入口")
+    if _click(run_insert, "Warehouse", config.Warehouse, 15) is not True:
+        print("❌ 未找到仓库入口（或插入步骤失败），结束出售")
         return False, sell_stats
     # 等待仓库界面完全加载
     time.sleep(3)
@@ -147,13 +185,13 @@ def sell_operations(settings, stop_event, set_operation):
                 break
             utils.human_pause()
 
-            if not utils.find_and_click_smart(config.Sell, timeout=10):
+            if _click(run_insert, "Sell", config.Sell, 10) is not True:
                 print(f"❌ 未找到出售按钮")
                 sell_stats["failed"] += 1
                 break
             utils.human_pause()
 
-            if not utils.find_and_click_smart(config.List_Item, timeout=10):
+            if _click(run_insert, "List_Item", config.List_Item, 10) is not True:
                 print(f"❌ 未找到上架按钮")
                 sell_stats["failed"] += 1
                 break
@@ -163,7 +201,7 @@ def sell_operations(settings, stop_event, set_operation):
 
             if discount_times > 0:
                 # 首次识别降价按钮并点击，鼠标停在按钮位置
-                if utils.find_and_click_smart(config.Discount, timeout=5):
+                if _click(run_insert, "Discount", config.Discount, 5) is True:
                     print(f"📉 降价 1/{discount_times}")
                     time.sleep(0.3)
                     # 鼠标已在按钮上，原地继续点击剩余次数
@@ -171,7 +209,7 @@ def sell_operations(settings, stop_event, set_operation):
                         pyautogui.click()
                         time.sleep(0.3)
 
-            if not utils.find_and_click_smart(config.Confirm_Listing, timeout=10):
+            if _click(run_insert, "Confirm_Listing", config.Confirm_Listing, 10) is not True:
                 print(f"❌ 未找到确认上架按钮")
                 sell_stats["failed"] += 1
                 break
@@ -207,12 +245,13 @@ def _ensure_game_focused():
 
 
 def game_operations(settings, stop_event, set_operation, update_ui_callback=None, on_hub_entered=None,
-                    observe_mode=False, hazard_retry=5):
+                    observe_mode=False, hazard_retry=5, run_insert=None):
     """
     执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
     on_hub_entered: 进入大厅（空格Tab后、特勤处前）的回调，用于资产识别
     observe_mode: 观察状态账号，在按下烽火地带前先识别并点击观察状态入口（可选模板）
     hazard_retry: 烽火地带入口识别重试次数（单账号运行为 3，主流程为 5）
+    run_insert: 插入步骤执行回调 ri(var_name, timing)
     返回 True=成功，False=失败
     """
     print("\n--- 进入游戏操作 ---")
@@ -223,32 +262,48 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         set_operation("观察状态入口")
         print("🔍 观察账号：识别观察状态入口...")
         observe_found = False
-        for retry in range(5):
-            if stop_event.is_set():
-                return False
-            if utils.find_and_click_smart(config.Observe, timeout=8):
-                observe_found = True
-                break
-            print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/5)...")
-            time.sleep(4)
+        if _hook(run_insert, "Observe", "before"):
+            for retry in range(5):
+                if stop_event.is_set():
+                    return False
+                if utils.find_and_click_smart(config.Observe, timeout=8):
+                    observe_found = True
+                    break
+                print(f"⚠️ 未找到观察状态入口，4秒后重试 ({retry + 1}/5)...")
+                time.sleep(4)
+        else:
+            print("⚠️ 观察状态入口 插入步骤(点击前)失败，跳过")
         if observe_found:
-            print("✅ 已进入观察状态入口")
+            # 可选步骤：点击后插入步骤失败仅记录，不影响后续流程
+            if _hook(run_insert, "Observe", "after"):
+                print("✅ 已进入观察状态入口")
+            else:
+                print("⚠️ 观察状态入口 插入步骤(点击后)失败，继续主流程")
         else:
             print("ℹ️ 5次重试后仍未找到观察状态入口，跳过（不影响后续流程）")
         utils.human_pause()
 
     set_operation("进入烽火地带")
     print("进入烽火地带...")
+    # 插入步骤（点击前）：失败按烽火地带识别失败处理（game_failed）
+    if not _hook(run_insert, "Hazard_Operations", "before"):
+        print("❌ 烽火地带入口 插入步骤(点击前)失败，视为模板失败")
+        return "game_failed"
+    hazard_clicked = False
     for retry in range(hazard_retry):
         if stop_event.is_set():
             return False
         if utils.find_and_click_smart(config.Hazard_Operations, timeout=15):
+            hazard_clicked = True
             break
         print(f"⚠️ 未找到烽火地带图标，5秒后重试 ({retry + 1}/{hazard_retry})...")
         _ensure_game_focused()
         time.sleep(5)
-    else:
+    if not hazard_clicked:
         print(f"❌ {hazard_retry}次重试后仍未找到烽火地带图标")
+        return "game_failed"
+    if not _hook(run_insert, "Hazard_Operations", "after"):
+        print("❌ 烽火地带入口 插入步骤(点击后)失败，视为模板失败")
         return "game_failed"
 
     time.sleep(5)
@@ -270,26 +325,38 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         except Exception:
             pass
 
+    if not _hook(run_insert, "Special_Ops", "before"):
+        print("❌ 特勤处入口 插入步骤(点击前)失败，视为模板失败")
+        return "game_failed"
+    special_clicked = False
     for retry in range(3):
         if stop_event.is_set():
             return False
         if utils.find_and_click_smart(config.Special_Ops, timeout=15):
+            special_clicked = True
             break
         print(f"⚠️ 未找到特勤处图标，5秒后重试 ({retry + 1}/3)...")
         time.sleep(5)
-    else:
+    if not special_clicked:
         print("❌ 多次重试后仍未找到特勤处图标")
+        return "game_failed"
+    if not _hook(run_insert, "Special_Ops", "after"):
+        print("❌ 特勤处入口 插入步骤(点击后)失败，视为模板失败")
         return "game_failed"
     utils.human_pause()
 
     selected_ops = settings.get("selected_operations", [])
     all_facilities = [
-        ("tech_center", config.Tech_Center, config.Produce_TechCenter, "技术中心"),
-        ("tool_bench", config.Tool_Bench, config.Produce_ToolBench, "工作台"),
-        ("armor_station", config.Armor_Station, config.Produce_ArmorStation, "防具台"),
-        ("pharmacy_station", config.Pharmacy_Station, config.Produce_PharmacyStation, "制药台"),
+        ("tech_center", config.Tech_Center, config.Produce_TechCenter, "技术中心",
+         "Tech_Center", "Produce_TechCenter"),
+        ("tool_bench", config.Tool_Bench, config.Produce_ToolBench, "工作台",
+         "Tool_Bench", "Produce_ToolBench"),
+        ("armor_station", config.Armor_Station, config.Produce_ArmorStation, "防具台",
+         "Armor_Station", "Produce_ArmorStation"),
+        ("pharmacy_station", config.Pharmacy_Station, config.Produce_PharmacyStation, "制药台",
+         "Pharmacy_Station", "Produce_PharmacyStation"),
     ]
-    facilities = [(f[1], f[2], f[3]) for f in all_facilities if f[0] in selected_ops]
+    facilities = [(f[1], f[2], f[3], f[4], f[5]) for f in all_facilities if f[0] in selected_ops]
     if not facilities:
         print("ℹ️ 未选择任何设施操作，跳过游戏内操作")
         return True
@@ -298,12 +365,14 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     random.shuffle(facilities)
     print(f"🔧 将执行：{'、'.join(op_names)}")
     all_success = True
-    for fac_img, prod_img, fac_name in facilities:
+    for fac_img, prod_img, fac_name, fac_var, prod_var in facilities:
         if stop_event.is_set():
             return False
         set_operation(f"处理 {fac_name}")
         _ensure_game_focused()
-        if not handle_facility(fac_img, prod_img, fac_name, stop_event, set_operation, update_ui_callback):
+        if not handle_facility(fac_img, prod_img, fac_name, stop_event, set_operation,
+                               update_ui_callback, fac_var=fac_var, prod_var=prod_var,
+                               run_insert=run_insert):
             if not stop_event.is_set():
                 print(f"❌ 处理{fac_name}失败，终止当前账号")
                 all_success = False
@@ -322,7 +391,7 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         print("\n--- 主流程完成，执行一键出售 ---")
         pyautogui.press("esc")
         time.sleep(1)
-        _, sell_stats = sell_operations(settings, stop_event, set_operation)
+        _, sell_stats = sell_operations(settings, stop_event, set_operation, run_insert=run_insert)
         # 出售完成：关闭仓库回到主界面（若接下来走邮箱流程，其开头会再 esc，无需重复）
         if not settings.get("enable_email_currency", False):
             pyautogui.press("esc")
@@ -335,24 +404,34 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         # 确保回到主界面
         pyautogui.press("esc")
         time.sleep(1)
-        if utils.find_and_click_smart(config.EMAIL_MAIL, timeout=10):
+        # 注意区分点击结果：True=成功、'nofind'=未找到、'insert'=点击成功但插入步骤失败（界面已切换，仍需 esc 退出）
+        _mail = _click(run_insert, "EMAIL_MAIL", config.EMAIL_MAIL, 10)
+        if _mail == "nofind":
+            print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
+        else:
             time.sleep(1)
-            if utils.find_and_click_smart(config.EMAIL_TRADE_HOUSE, timeout=10):
+            _trade = _click(run_insert, "EMAIL_TRADE_HOUSE", config.EMAIL_TRADE_HOUSE, 10)
+            if _trade != "nofind":
                 utils.human_pause()
-                if utils.find_and_click_smart(config.EMAIL_CLAIM_ALL, timeout=10):
+                _claim = _click(run_insert, "EMAIL_CLAIM_ALL", config.EMAIL_CLAIM_ALL, 10)
+                if _claim is True:
                     utils.human_pause()
                     # 领取完成：直接按空格确认（对应模板第27步，无需图片识别）
                     pyautogui.press("Space")
                     time.sleep(0.5)
                     utils.human_pause()
+                    print("✅ 邮箱货币领取流程完成")
+                elif _claim == "nofind":
+                    print("ℹ️ 未找到全部领取按钮，退出交易中心")
+                else:
+                    print("ℹ️ 全部领取 插入步骤失败，退出交易中心")
                 pyautogui.press("esc")  # 退出交易中心 → 回到邮箱界面
                 utils.human_pause()
+            elif _trade == "insert":
+                print("ℹ️ 交易中心入口 插入步骤失败，退出邮箱")
             # 退出邮箱界面 → 回到主界面（确保自定义操作/二次资产识别在主界面执行）
             pyautogui.press("esc")
             time.sleep(0.8)
-            print("✅ 邮箱货币领取流程完成")
-        else:
-            print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
 
     # 汇总返回数据
     extra = {}

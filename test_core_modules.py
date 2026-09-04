@@ -345,5 +345,69 @@ class TestAssetValueParsing(unittest.TestCase):
             self.assertEqual(parse_asset_value(val), account_manager._parse_asset_value(val))
 
 
+# ==================== 模板插入步骤 ====================
+class TestTemplateInsertSteps(unittest.TestCase):
+    """测试 template_insert_steps 的配置读写与执行判定（不真实按键/截图）"""
+
+    def setUp(self):
+        import config
+        self._orig_path = config.SETTINGS_JSON_PATH
+        self._orig_cache = config._settings_cache
+        self._orig_cache_mtime = config._settings_cache_mtime
+        config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_insert_steps.json")
+        if os.path.exists(config.SETTINGS_JSON_PATH):
+            os.remove(config.SETTINGS_JSON_PATH)
+        config._settings_cache = None
+        config._settings_cache_mtime = 0
+
+    def tearDown(self):
+        import config
+        config.SETTINGS_JSON_PATH = self._orig_path
+        config._settings_cache = self._orig_cache
+        config._settings_cache_mtime = self._orig_cache_mtime
+
+    def test_save_get_has_delete_roundtrip(self):
+        """保存/读取/判定/清空删除 应正确往返"""
+        import template_insert_steps as tis
+        self.assertIsNone(tis.get("Hazard_Operations"))
+        self.assertFalse(tis.has_steps("Hazard_Operations"))
+        steps = [{"type": "keyboard", "keys": "esc", "key_mode": "key", "pause_after": 0}]
+        self.assertTrue(tis.save("Hazard_Operations", "before", steps))
+        cfg = tis.get("Hazard_Operations")
+        self.assertEqual(cfg["timing"], "before")
+        self.assertEqual(len(cfg["steps"]), 1)
+        self.assertTrue(tis.has_steps("Hazard_Operations"))
+        # 覆盖为 after
+        tis.save("Hazard_Operations", "after", steps)
+        self.assertEqual(tis.get("Hazard_Operations")["timing"], "after")
+        # 空步骤 → 删除该项
+        tis.save("Hazard_Operations", "before", [])
+        self.assertIsNone(tis.get("Hazard_Operations"))
+        self.assertFalse(tis.has_steps("Hazard_Operations"))
+
+    def test_run_no_config_or_timing_mismatch(self):
+        """未配置 / 时序不符 → 返回 True（不执行）"""
+        import threading
+        import template_insert_steps as tis
+        stop = threading.Event()
+        settings = {"enable_cooldown": True}
+        # 无配置
+        self.assertTrue(tis.run_for_account(settings, stop, "账号A", "SIGN_IN", "before"))
+        # 配置了 after，但请求 before → 不执行返回 True
+        tis.save("SIGN_IN", "after", [{"type": "keyboard", "keys": "x", "pause_after": 0}])
+        self.assertTrue(tis.run_for_account(settings, stop, "账号A", "SIGN_IN", "before"))
+
+    def test_run_failing_image_step_returns_false(self):
+        """执行时某步找图失败（图片不存在）→ 返回 False（视为模板失败）"""
+        import threading
+        import template_insert_steps as tis
+        stop = threading.Event()
+        settings = {"enable_cooldown": True}
+        # 指向 custom_ops/images 下不存在的图片 → _execute_step 立即失败
+        bad_step = {"type": "image", "image": "_no_such_insert_test.png",
+                    "confidence": 0.7, "timeout": 1, "pause_after": 0}
+        tis.save("Hazard_Operations", "before", [bad_step])
+        self.assertFalse(tis.run_for_account(settings, stop, "账号A", "Hazard_Operations", "before"))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
