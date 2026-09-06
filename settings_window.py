@@ -345,107 +345,21 @@ class SettingsWindow:
         ttk.Button(jitter_row, text="保存", style='TButton',
                    command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
 
-        # ----- AI 视觉验证（登录点击式验证码） -----
-        frame_aiv = ttk.LabelFrame(parent, text="  AI视觉验证（登录验证码）  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_aiv.pack(fill=tk.X, pady=(0, 8))
+        # ----- 登录验证码自动处理（总开关 + 统一设置入口） -----
+        frame_cap = ttk.LabelFrame(parent, text="  登录验证码  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_cap.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_aiv, text="WeGame 登录弹出点击式图片验证码时，截图交由视觉模型定位并自动点击；滑块验证仅提示手动处理。需配置供应商后才生效",
+        ttk.Label(frame_cap, text="WeGame 登录弹出验证码时自动处理：OCR 判定类型 → 滑块验证走 YOLO 缺口拖动、点击式走 AI 视觉模型。总开关关闭时不做任何处理；详细配置点下方按钮",
                   style='SettingsSmall.TLabel', wraplength=520, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 8))
 
-        self._aiv_enabled_var = tk.BooleanVar(value=self.app.settings.get("ai_visual_captcha_enabled", False))
-        ttk.Checkbutton(frame_aiv, text="启用 AI 视觉验证（登录第三态自动触发）",
-                        variable=self._aiv_enabled_var,
-                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
-
-        import ai_visual_captcha as _aiv_module
-        aiv_row1 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
-        aiv_row1.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(aiv_row1, text="供应商预设：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        stored_provider = str(self.app.settings.get("ai_visual_captcha_provider", "") or "").strip()
-        if stored_provider not in _aiv_module.PROVIDER_NAMES:
-            stored_provider = _aiv_module.PROVIDER_NAMES[0]
-        self._aiv_provider_var = tk.StringVar(value=stored_provider)
-        provider_combo = ttk.Combobox(aiv_row1, textvariable=self._aiv_provider_var,
-                                      values=_aiv_module.PROVIDER_NAMES, state="readonly", width=18)
-        provider_combo.pack(side=tk.LEFT, padx=(0, 8))
-        preset_note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS
-                            if p["name"] == stored_provider), "")
-        self._aiv_provider_note_var = tk.StringVar(value=preset_note)
-        ttk.Label(aiv_row1, textvariable=self._aiv_provider_note_var,
-                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-
-        aiv_row2 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
-        aiv_row2.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(aiv_row2, text="API地址：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        self._aiv_base_url_var = tk.StringVar(value=self.app.settings.get("ai_visual_captcha_base_url", ""))
-        ttk.Entry(aiv_row2, textvariable=self._aiv_base_url_var, width=42).pack(
-            side=tk.LEFT, fill=tk.X, expand=True)
-
-        aiv_row3 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
-        aiv_row3.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(aiv_row3, text="API Key：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
-        self._aiv_api_key_var = tk.StringVar(value=self.app.settings.get("ai_visual_captcha_api_key", ""))
-        ttk.Entry(aiv_row3, textvariable=self._aiv_api_key_var, width=30, show="*").pack(
-            side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(aiv_row3, text="模型：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(12, 8))
-        self._aiv_model_var = tk.StringVar(value=self.app.settings.get("ai_visual_captcha_model", ""))
-        ttk.Entry(aiv_row3, textvariable=self._aiv_model_var, width=24).pack(
-            side=tk.LEFT, fill=tk.X, expand=True)
-
-        aiv_row4 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
-        aiv_row4.pack(fill=tk.X)
-        ttk.Label(aiv_row4, text="最大轮次：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        try:
-            stored_rounds = max(1, min(10, int(self.app.settings.get("ai_visual_captcha_max_rounds", 5) or 5)))
-        except (TypeError, ValueError):
-            stored_rounds = 5
-        self._aiv_rounds_var = tk.IntVar(value=stored_rounds)
-        ttk.Spinbox(aiv_row4, from_=1, to=10, increment=1,
-                    textvariable=self._aiv_rounds_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(aiv_row4, text="轮（每轮截图-识别-点击-复核）", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(aiv_row4, text="测试识别", style='TButton',
-                   command=self._test_ai_visual_captcha, width=10).pack(side=tk.LEFT)
-
-        def _on_aiv_provider_changed(*_args):
-            name = self._aiv_provider_var.get()
-            preset = _aiv_module.get_preset(name)
-            note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS if p["name"] == name), "")
-            self._aiv_provider_note_var.set(note)
-            if name != _aiv_module.CUSTOM_PROVIDER and preset["base_url"]:
-                # 切换预设自动回填地址与模型（自定义不覆盖手填内容）
-                self._aiv_base_url_var.set(preset["base_url"])
-                self._aiv_model_var.set(preset["model"])
-        provider_combo.bind("<<ComboboxSelected>>", _on_aiv_provider_changed)
-        # 首次打开：存了预设名但地址为空时也回填一次
-        if stored_provider != _aiv_module.CUSTOM_PROVIDER and not self._aiv_base_url_var.get().strip():
-            _on_aiv_provider_changed()
-
-        # ----- 滑块验证（YOLO 缺口定位） -----
-        frame_slider = ttk.LabelFrame(parent, text="  滑块验证（YOLO）  ", style='SettingsCard.TLabelframe', padding=12)
-        frame_slider.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(frame_slider, text="WeGame 登录弹出滑块拼图验证时，用 YOLO 模型（best.onnx）定位缺口并自动拟人拖动；无需框选区域。与上方 AI 视觉验证相互独立",
-                  style='SettingsSmall.TLabel', wraplength=520, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 8))
-
-        self._slider_enabled_var = tk.BooleanVar(value=self.app.settings.get("slider_yolo_enabled", False))
-        ttk.Checkbutton(frame_slider, text="启用滑块自动拖动（需程序目录有 best.onnx）",
-                        variable=self._slider_enabled_var,
-                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
-
-        slider_row1 = ttk.Frame(frame_slider, style='SettingsInner.TFrame')
-        slider_row1.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(slider_row1, text="检测置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self._slider_conf_var = tk.StringVar(value=str(self.app.settings.get("slider_yolo_confidence", 0.35)))
-        ttk.Entry(slider_row1, textvariable=self._slider_conf_var, width=6).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Label(slider_row1, text="拖动微调(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self._slider_offset_var = tk.StringVar(value=str(self.app.settings.get("slider_yolo_drag_offset", 0)))
-        ttk.Entry(slider_row1, textvariable=self._slider_offset_var, width=6).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Label(slider_row1, text="最大尝试：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        self._slider_attempts_var = tk.IntVar(value=max(1, min(6, int(self.app.settings.get("slider_yolo_max_attempts", 3) or 3))))
-        ttk.Spinbox(slider_row1, from_=1, to=6, increment=1,
-                    textvariable=self._slider_attempts_var, width=4).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(slider_row1, text="测试滑块", style='TButton',
-                   command=self._test_slider_yolo, width=10).pack(side=tk.LEFT)
+        cap_row = ttk.Frame(frame_cap, style='SettingsInner.TFrame')
+        cap_row.pack(fill=tk.X)
+        self._captcha_auto_var = tk.BooleanVar(value=self.app.settings.get("captcha_auto_enabled", False))
+        ttk.Checkbutton(cap_row, text="启用登录验证码自动处理（总开关）",
+                        variable=self._captcha_auto_var,
+                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(cap_row, text="验证码设置…", style='Accent.TButton',
+                   command=self._open_captcha_settings, width=12).pack(side=tk.LEFT)
 
         # ----- 实用工具 -----
         guide_frame = ttk.LabelFrame(parent, text="  实用工具  ", style='SettingsCard.TLabelframe', padding=12)
@@ -971,8 +885,196 @@ class SettingsWindow:
                             f"点击随机偏移：{'开启' if self._jitter_enabled_var.get() else '关闭'}，最大偏移 {max_px}px",
                             parent=self.win)
 
+    # ==================== 登录验证码统一设置窗口 ====================
+
+    def _open_captcha_settings(self):
+        """打开「验证码设置」统一管理窗口：总开关 + OCR 判定关键词 + 滑块YOLO + AI视觉"""
+        if getattr(self, "_captcha_win", None) is not None and self._captcha_win.winfo_exists():
+            try:
+                self._captcha_win.deiconify()
+                self._captcha_win.lift()
+            except Exception:
+                pass
+            return
+        s = self.app.settings
+        win = tk.Toplevel(self.win)
+        self._captcha_win = win
+        win.title("验证码设置")
+        win.geometry("600x680")
+        win.minsize(520, 560)
+        win.transient(self.win)
+        try:
+            utils.set_window_icon(win)
+        except Exception:
+            pass
+
+        body = ttk.Frame(win, style='SettingsInner.TFrame', padding=10)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # ----- 总开关（与全局设置页共用同一个 BooleanVar，两处同步） -----
+        frame_master = ttk.LabelFrame(body, text="  总开关  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_master.pack(fill=tk.X, pady=(0, 8))
+        ttk.Checkbutton(frame_master, text="启用登录验证码自动处理（关闭后登录流程不做任何验证码处理）",
+                        variable=self._captcha_auto_var,
+                        style='Settings.TCheckbutton').pack(anchor='w')
+
+        # ----- OCR 类型判定 -----
+        frame_ocr = ttk.LabelFrame(body, text="  OCR 类型判定  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_ocr.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(frame_ocr, text="登录异常时先 OCR 识别屏幕文字：命中滑块关键词走 YOLO 拖动，命中点击关键词走 AI 视觉；都没命中时由 AI 视觉兜底判定（未配置 AI 则放行）",
+                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
+        ocr_row1 = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
+        ocr_row1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(ocr_row1, text="滑块关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        self._cap_slider_kw_var = tk.StringVar(value=s.get("captcha_slider_keywords", ""))
+        ttk.Entry(ocr_row1, textvariable=self._cap_slider_kw_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ocr_row2 = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
+        ocr_row2.pack(fill=tk.X)
+        ttk.Label(ocr_row2, text="点击关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        self._cap_click_kw_var = tk.StringVar(value=s.get("captcha_click_keywords", ""))
+        ttk.Entry(ocr_row2, textvariable=self._cap_click_kw_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(frame_ocr, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击",
+                  style='SettingsSmall.TLabel').pack(anchor='w', pady=(4, 0))
+
+        # ----- 滑块验证（YOLO） -----
+        frame_slider = ttk.LabelFrame(body, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_slider.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(frame_slider, text="滑块拼图验证用 YOLO 模型（best.onnx）整屏定位缺口并拟人拖动，无需框选区域",
+                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
+        self._slider_enabled_var = tk.BooleanVar(value=s.get("slider_yolo_enabled", False))
+        ttk.Checkbutton(frame_slider, text="启用滑块自动拖动（需程序目录有 best.onnx）",
+                        variable=self._slider_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 6))
+        slider_row1 = ttk.Frame(frame_slider, style='SettingsInner.TFrame')
+        slider_row1.pack(fill=tk.X)
+        ttk.Label(slider_row1, text="检测置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._slider_conf_var = tk.StringVar(value=str(s.get("slider_yolo_confidence", 0.35)))
+        ttk.Entry(slider_row1, textvariable=self._slider_conf_var, width=6).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(slider_row1, text="拖动微调(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._slider_offset_var = tk.StringVar(value=str(s.get("slider_yolo_drag_offset", 0)))
+        ttk.Entry(slider_row1, textvariable=self._slider_offset_var, width=6).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(slider_row1, text="最大尝试：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        try:
+            stored_attempts = max(1, min(6, int(s.get("slider_yolo_max_attempts", 3) or 3)))
+        except (TypeError, ValueError):
+            stored_attempts = 3
+        self._slider_attempts_var = tk.IntVar(value=stored_attempts)
+        ttk.Spinbox(slider_row1, from_=1, to=6, increment=1,
+                    textvariable=self._slider_attempts_var, width=4).pack(side=tk.LEFT)
+
+        # ----- AI 视觉验证 -----
+        frame_aiv = ttk.LabelFrame(body, text="  AI 视觉验证（点击式验证码）  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_aiv.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(frame_aiv, text="截图交由视觉模型定位验证目标并自动点击；国内供应商走 OpenAI 兼容接口",
+                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
+        self._aiv_enabled_var = tk.BooleanVar(value=s.get("ai_visual_captcha_enabled", False))
+        ttk.Checkbutton(frame_aiv, text="启用 AI 视觉验证（需下方供应商配置完整）",
+                        variable=self._aiv_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 6))
+
+        import ai_visual_captcha as _aiv_module
+        aiv_row1 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(aiv_row1, text="供应商预设：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        stored_provider = str(s.get("ai_visual_captcha_provider", "") or "").strip()
+        if stored_provider not in _aiv_module.PROVIDER_NAMES:
+            stored_provider = _aiv_module.PROVIDER_NAMES[0]
+        self._aiv_provider_var = tk.StringVar(value=stored_provider)
+        provider_combo = ttk.Combobox(aiv_row1, textvariable=self._aiv_provider_var,
+                                      values=_aiv_module.PROVIDER_NAMES, state="readonly", width=18)
+        provider_combo.pack(side=tk.LEFT, padx=(0, 8))
+        preset_note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS
+                            if p["name"] == stored_provider), "")
+        self._aiv_provider_note_var = tk.StringVar(value=preset_note)
+        ttk.Label(aiv_row1, textvariable=self._aiv_provider_note_var,
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        aiv_row2 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row2.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(aiv_row2, text="API地址：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self._aiv_base_url_var = tk.StringVar(value=s.get("ai_visual_captcha_base_url", ""))
+        ttk.Entry(aiv_row2, textvariable=self._aiv_base_url_var, width=44).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+
+        aiv_row3 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row3.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(aiv_row3, text="API Key：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self._aiv_api_key_var = tk.StringVar(value=s.get("ai_visual_captcha_api_key", ""))
+        ttk.Entry(aiv_row3, textvariable=self._aiv_api_key_var, width=28, show="*").pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(aiv_row3, text="模型：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(10, 8))
+        self._aiv_model_var = tk.StringVar(value=s.get("ai_visual_captcha_model", ""))
+        ttk.Entry(aiv_row3, textvariable=self._aiv_model_var, width=24).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+
+        aiv_row4 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row4.pack(fill=tk.X)
+        ttk.Label(aiv_row4, text="最大轮次：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        try:
+            stored_rounds = max(1, min(10, int(s.get("ai_visual_captcha_max_rounds", 5) or 5)))
+        except (TypeError, ValueError):
+            stored_rounds = 5
+        self._aiv_rounds_var = tk.IntVar(value=stored_rounds)
+        ttk.Spinbox(aiv_row4, from_=1, to=10, increment=1,
+                    textvariable=self._aiv_rounds_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(aiv_row4, text="轮（每轮截图-识别-点击-复核）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        def _on_aiv_provider_changed(*_args):
+            name = self._aiv_provider_var.get()
+            preset = _aiv_module.get_preset(name)
+            note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS if p["name"] == name), "")
+            self._aiv_provider_note_var.set(note)
+            if name != _aiv_module.CUSTOM_PROVIDER and preset["base_url"]:
+                # 切换预设自动回填地址与模型（自定义不覆盖手填内容）
+                self._aiv_base_url_var.set(preset["base_url"])
+                self._aiv_model_var.set(preset["model"])
+        provider_combo.bind("<<ComboboxSelected>>", _on_aiv_provider_changed)
+        # 首次打开：存了预设名但地址为空时也回填一次
+        if stored_provider != _aiv_module.CUSTOM_PROVIDER and not self._aiv_base_url_var.get().strip():
+            _on_aiv_provider_changed()
+
+        # ----- 底部按钮：测试 + 保存 -----
+        btn_bar = ttk.Frame(body, style='SettingsInner.TFrame')
+        btn_bar.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(btn_bar, text="测试完整流程", style='TButton',
+                   command=self._test_captcha_router, width=12).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_bar, text="仅测试滑块", style='TButton',
+                   command=self._test_slider_yolo, width=10).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_bar, text="仅测试AI", style='TButton',
+                   command=self._test_ai_visual_captcha, width=10).pack(side=tk.LEFT)
+        ttk.Button(btn_bar, text="保存", style='Accent.TButton',
+                   command=self._save_captcha_settings, width=8).pack(side=tk.RIGHT)
+
+        def _on_close():
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+        try:
+            win.update_idletasks()
+            x = (win.winfo_screenwidth() - win.winfo_width()) // 2
+            y = (win.winfo_screenheight() - win.winfo_height()) // 3
+            win.geometry(f"+{x}+{y}")
+            win.grab_set()
+        except Exception:
+            pass
+
+    def _save_captcha_settings(self):
+        """保存验证码设置窗口的全部配置（总开关/关键词/滑块/AI）"""
+        target = dict(config.load_settings())
+        target["captcha_auto_enabled"] = self._captcha_auto_var.get()
+        target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
+        target["captcha_click_keywords"] = self._cap_click_kw_var.get().strip()
+        self._apply_ai_visual_settings_to(target)
+        self._apply_slider_yolo_settings_to(target)
+        config.save_settings(target)
+        self.app.settings.update(target)
+        messagebox.showinfo("已保存", "验证码设置已保存。", parent=self._captcha_win)
+
     def _apply_ai_visual_settings_to(self, target):
-        """把 AI 视觉验证设置写入 target 字典（_save 与测试按钮共用）"""
+        """把 AI 视觉验证设置写入 target 字典（保存与测试按钮共用）"""
         target["ai_visual_captcha_enabled"] = self._aiv_enabled_var.get()
         target["ai_visual_captcha_provider"] = self._aiv_provider_var.get().strip()
         target["ai_visual_captcha_base_url"] = self._aiv_base_url_var.get().strip()
@@ -984,7 +1086,7 @@ class SettingsWindow:
             target["ai_visual_captcha_max_rounds"] = 5
 
     def _apply_slider_yolo_settings_to(self, target):
-        """把滑块 YOLO 设置写入 target 字典（_save 与测试按钮共用）"""
+        """把滑块 YOLO 设置写入 target 字典（保存与测试按钮共用）"""
         target["slider_yolo_enabled"] = self._slider_enabled_var.get()
         try:
             target["slider_yolo_confidence"] = min(0.9, max(0.1, float(self._slider_conf_var.get())))
@@ -999,6 +1101,25 @@ class SettingsWindow:
         except (TypeError, ValueError):
             target["slider_yolo_max_attempts"] = 3
 
+    def _captcha_parent(self):
+        """验证码相关弹窗的 parent：验证码设置窗口存活时用它，否则用设置主窗口"""
+        w = getattr(self, "_captcha_win", None)
+        try:
+            if w is not None and w.winfo_exists():
+                return w
+        except Exception:
+            pass
+        return self.win
+
+    def _iconify_for_captcha_test(self):
+        """测试验证码处理前最小化设置窗口与验证码设置窗口，避免入镜"""
+        for w in (getattr(self, "_captcha_win", None), self.win):
+            try:
+                if w is not None and w.winfo_exists():
+                    w.iconify()
+            except Exception:
+                pass
+
     def _test_slider_yolo(self):
         """测试滑块 YOLO：保存当前输入后对当前屏幕跑一次检测+处理"""
         import slider_captcha
@@ -1007,16 +1128,13 @@ class SettingsWindow:
         if not slider_captcha.resolve_model_path():
             messagebox.showwarning("缺少模型",
                                    f"未找到 {slider_captcha.MODEL_FILENAME}，请把权重文件放到程序目录。",
-                                   parent=self.win)
+                                   parent=self._captcha_parent())
             return
-        try:
-            self.win.iconify()  # 最小化设置窗口，避免入镜
-        except Exception:
-            pass
+        self._iconify_for_captcha_test()
         slider_captcha.test_slider_yolo(self.app)
         messagebox.showinfo("测试已启动",
                             "3 秒后开始截图检测，结果与拖动过程见主界面日志。",
-                            parent=self.win)
+                            parent=self._captcha_parent())
 
     def _test_ai_visual_captcha(self):
         """测试 AI 视觉验证：保存当前输入后对当前屏幕跑一次检测处理"""
@@ -1024,19 +1142,35 @@ class SettingsWindow:
         if (not self._aiv_base_url_var.get().strip()
                 or not self._aiv_api_key_var.get().strip()
                 or not self._aiv_model_var.get().strip()):
-            messagebox.showwarning("配置不完整", "请先填写 API地址、API Key 和模型。", parent=self.win)
+            messagebox.showwarning("配置不完整", "请先填写 API地址、API Key 和模型。",
+                                   parent=self._captcha_parent())
             return
         # 先落盘窗口里的最新配置，保证测试与之后登录流程用的是同一份
         self._apply_ai_visual_settings_to(self.app.settings)
         config.save_settings(self.app.settings)
-        try:
-            self.win.iconify()  # 最小化设置窗口，避免入镜
-        except Exception:
-            pass
+        self._iconify_for_captcha_test()
         ai_visual_captcha.test_captcha(self.app)
         messagebox.showinfo("测试已启动",
                             "3 秒后开始截图识别（可在测试画面上放一张验证码图），\n结果与点击过程见主界面日志。",
-                            parent=self.win)
+                            parent=self._captcha_parent())
+
+    def _test_captcha_router(self):
+        """测试完整流程：OCR 判定类型 → 对应处理（与登录时链路一致）"""
+        import captcha_router
+        # 先落盘窗口里的全部配置（总开关/关键词/滑块/AI）
+        target = dict(config.load_settings())
+        target["captcha_auto_enabled"] = self._captcha_auto_var.get()
+        target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
+        target["captcha_click_keywords"] = self._cap_click_kw_var.get().strip()
+        self._apply_ai_visual_settings_to(target)
+        self._apply_slider_yolo_settings_to(target)
+        config.save_settings(target)
+        self.app.settings.update(target)
+        self._iconify_for_captcha_test()
+        captcha_router.test_router(self.app)
+        messagebox.showinfo("测试已启动",
+                            "3 秒后开始：OCR 判定验证类型 → 滑块YOLO / AI视觉 处理，\n过程与结果见主界面日志。",
+                            parent=self._captcha_parent())
 
     def _export_accounts(self):
         """导出账号数据到用户选择的文件"""
@@ -2036,11 +2170,8 @@ class SettingsWindow:
         # 滚动量
         fresh["scroll_amount"] = self.scroll_amount_var.get()
 
-        # AI 视觉验证（登录验证码）
-        self._apply_ai_visual_settings_to(fresh)
-
-        # 滑块验证（YOLO）
-        self._apply_slider_yolo_settings_to(fresh)
+        # 登录验证码总开关（详细配置在「验证码设置」窗口内单独保存）
+        fresh["captcha_auto_enabled"] = self._captcha_auto_var.get()
 
         # 保存并同步内存中的设置引用
         config.save_settings(fresh)

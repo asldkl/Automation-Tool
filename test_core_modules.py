@@ -707,5 +707,133 @@ class TestSliderCaptchaYolo(unittest.TestCase):
         # 开发机上 best.onnx 在项目根目录应能找到；若被移走则为空串，不应抛异常
         self.assertIsInstance(path, str)
 
+
+# ==================== 验证码调度（OCR 判定 → 分发，离线） ====================
+class TestCaptchaRouter(unittest.TestCase):
+    """测试 captcha_router 的关键词解析与路由判定（不发真实请求、不加载模型）"""
+
+    def test_parse_keywords(self):
+        """关键词解析：中英文逗号/顿号分隔、去空白、空配置返回空"""
+        from captcha_router import _parse_keywords
+        self.assertEqual(_parse_keywords("拖动,滑动"), ["拖动", "滑动"])
+        self.assertEqual(_parse_keywords("拖动，滑动、拼图"), ["拖动", "滑动", "拼图"])
+        self.assertEqual(_parse_keywords(" 拖动 , 滑动 "), ["拖动", "滑动"])
+        self.assertEqual(_parse_keywords(""), [])
+        self.assertEqual(_parse_keywords(None), [])
+
+    def test_route_disabled_master_switch(self):
+        """总开关关闭 → 不做任何处理"""
+        import types
+        from captcha_router import route_and_solve
+        app = types.SimpleNamespace(settings={"captcha_auto_enabled": False})
+        ok, detail = route_and_solve(app, screen_text="请拖动滑块")
+        self.assertFalse(ok)
+        self.assertIn("总开关未启用", detail)
+
+    def test_route_slider_keyword_disabled_modules(self):
+        """命中滑块关键词但滑块YOLO未启用且AI未配置 → 未解决（不误放行）"""
+        import types
+        from captcha_router import route_and_solve
+        app = types.SimpleNamespace(settings={
+            "captcha_auto_enabled": True,
+            "captcha_slider_keywords": "拖动",
+            "captcha_click_keywords": "依次点击",
+            "slider_yolo_enabled": False,
+            "ai_visual_captcha_enabled": False,
+        })
+        ok, detail = route_and_solve(app, screen_text="请拖动滑块完成验证")
+        self.assertFalse(ok)
+        self.assertIn("未配置", detail)
+
+    def test_route_click_keyword_no_ai(self):
+        """命中点击关键词但 AI 未配置 → 未解决"""
+        import types
+        from captcha_router import route_and_solve
+        app = types.SimpleNamespace(settings={
+            "captcha_auto_enabled": True,
+            "captcha_slider_keywords": "拖动",
+            "captcha_click_keywords": "依次点击",
+            "slider_yolo_enabled": False,
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "",  # AI 配置不完整
+        })
+        ok, detail = route_and_solve(app, screen_text="请依次点击文字")
+        self.assertFalse(ok)
+        self.assertIn("未配置", detail)
+
+    def test_route_no_keyword_no_ai_releases(self):
+        """未命中关键词且未配置 AI → 放行（由启动流程兜底判断）"""
+        import types
+        from captcha_router import route_and_solve
+        app = types.SimpleNamespace(settings={
+            "captcha_auto_enabled": True,
+            "captcha_slider_keywords": "拖动",
+            "captcha_click_keywords": "依次点击",
+        })
+        ok, detail = route_and_solve(app, screen_text="欢迎登录WeGame")
+        self.assertTrue(ok)
+        self.assertIn("无验证码特征", detail)
+
+    def test_route_slider_keyword_dispatches_to_yolo(self):
+        """命中滑块关键词且滑块YOLO启用 → 分发到 solve_slider_yolo（mock 验证）"""
+        import types
+        import slider_captcha
+        from captcha_router import route_and_solve
+        calls = {}
+
+        def _mock_solve(app, stop_event=None, **kwargs):
+            calls["called"] = True
+            return True, True, "mock拖动成功"
+
+        original = slider_captcha.solve_slider_yolo
+        slider_captcha.solve_slider_yolo = _mock_solve
+        try:
+            app = types.SimpleNamespace(settings={
+                "captcha_auto_enabled": True,
+                "captcha_slider_keywords": "拖动",
+                "captcha_click_keywords": "依次点击",
+                "slider_yolo_enabled": True,
+            })
+            ok, detail = route_and_solve(app, screen_text="请拖动滑块完成拼图")
+            self.assertTrue(calls.get("called"))
+            self.assertTrue(ok)
+            self.assertIn("mock拖动成功", detail)
+        finally:
+            slider_captcha.solve_slider_yolo = original
+
+    def test_route_slider_yolo_not_found_falls_back_to_ai(self):
+        """YOLO 未检出滑块元素（OCR 误报）→ 落 AI 兜底（mock 验证）"""
+        import types
+        import slider_captcha
+        import ai_visual_captcha
+        from captcha_router import route_and_solve
+
+        slider_captcha.solve_slider_yolo = lambda *a, **k: (False, False, "未检测到滑块元素")
+        ai_calls = {}
+        original_ai = ai_visual_captcha.solve_captcha
+
+        def _mock_ai(app, stop_event=None):
+            ai_calls["called"] = True
+            return True, "AI判定无验证码"
+
+        ai_visual_captcha.solve_captcha = _mock_ai
+        try:
+            app = types.SimpleNamespace(settings={
+                "captcha_auto_enabled": True,
+                "captcha_slider_keywords": "拖动",
+                "captcha_click_keywords": "依次点击",
+                "slider_yolo_enabled": True,
+                "ai_visual_captcha_enabled": True,
+                "ai_visual_captcha_base_url": "https://x/v1",
+                "ai_visual_captcha_api_key": "sk",
+                "ai_visual_captcha_model": "glm-4v-flash",
+            })
+            ok, detail = route_and_solve(app, screen_text="请拖动滑块")
+            self.assertTrue(ai_calls.get("called"))
+            self.assertTrue(ok)
+            self.assertIn("AI兜底", detail)
+        finally:
+            ai_visual_captcha.solve_captcha = original_ai
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

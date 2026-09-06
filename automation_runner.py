@@ -523,17 +523,8 @@ def _login_account(app, account_name, i, total, processed_accounts):
     返回 True=成功"""
     run_insert = _make_run_insert(app)   # 模板插入步骤执行回调（含 WeGame 登录模板）
     set_operation(app, f"WeGame 登录 ({i+1}/{total})")
-    # AI 视觉验证（点击式验证码）与滑块 YOLO 是否可用（每次登录时读取一次设置）
-    try:
-        import ai_visual_captcha as _avc
-        _ai_captcha_ready = _avc.is_configured(app.settings)
-    except Exception:
-        _ai_captcha_ready = False
-    try:
-        import slider_captcha as _slider
-        _slider_yolo_ready = _slider.is_enabled(app.settings)
-    except Exception:
-        _slider_yolo_ready = False
+    # 登录验证码自动处理总开关（OCR 判定→滑块YOLO/AI视觉分发，详见 captcha_router）
+    _captcha_auto_enabled = bool(app.settings.get("captcha_auto_enabled", False))
 
     note_data = app._account_notes.get(account_name, {})
     if isinstance(note_data, dict):
@@ -735,9 +726,10 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 login_ok = True
                 break
         else:
-            # 4 次检查既没看到重新登录按钮也没看到三角洲图标（可能停在滑块验证/公告页等
+            # 4 次检查既没看到重新登录按钮也没看到三角洲图标（可能停在验证码/公告页等
             # 第三态界面）：先输出屏幕文字诊断便于失败归因
             print("⚠️ 登录后既未检测到重新登录按钮也未检测到三角洲图标，可能停在验证/公告等界面")
+            screen_text = ""
             try:
                 screen_text = _ocr_capture_screen_text()
                 if screen_text:
@@ -745,41 +737,20 @@ def _login_account(app, account_name, i, total, processed_accounts):
             except Exception:
                 pass
             handled = False
-            if _slider_yolo_ready:
-                # 滑块验证（本地 YOLO 缺口定位，先于 AI：免费且快）
+            if _captcha_auto_enabled:
+                # 登录验证码自动处理：OCR 判定类型 → 滑块YOLO / AI视觉 分发（captcha_router）
                 try:
-                    import slider_captcha
-                    found, solved, slider_detail = slider_captcha.solve_slider_yolo(
-                        app, stop_event=app._stop_event)
+                    import captcha_router
+                    captcha_ok, captcha_detail = captcha_router.route_and_solve(
+                        app, stop_event=app._stop_event, screen_text=screen_text)
                 except Exception as e:
-                    print(f"⚠️ 滑块YOLO处理异常：{e}")
-                    found, solved, slider_detail = False, False, f"处理异常：{e}"
-                if found:
-                    print(f"🧩 滑块验证{'已自动处理' if solved else '未能自动通过'}：{slider_detail}")
-                    login_ok = solved
-                    handled = True
-                else:
-                    # 屏幕上没有滑块元素：继续走 AI 点击验证判定
-                    print(f"🧩 滑块YOLO：{slider_detail}")
-            if not handled and _ai_captcha_ready:
-                # AI 视觉验证：尝试自动处理点击式验证码
-                try:
-                    import ai_visual_captcha
-                    captcha_ok, captcha_detail = ai_visual_captcha.solve_captcha(
-                        app, stop_event=app._stop_event)
-                except Exception as e:
-                    print(f"⚠️ AI视觉验证处理异常：{e}")
-                    captcha_ok, captcha_detail = False, f"处理异常：{e}"
-                print(f"🤖 AI视觉验证处理{'完成' if captcha_ok else '未完成'}：{captcha_detail}")
-                if captcha_ok:
-                    # 无验证码/已点完：视为登录成功（三角洲图标由 _launch_game 的识别兜底判断）
-                    login_ok = True
-                else:
-                    # 验证码未解决（无效回复/接口异常）：本轮按登录失败处理走重试
-                    login_ok = False
+                    print(f"⚠️ 登录验证码处理异常：{e}")
+                    captcha_ok, captcha_detail = False, f"调度异常：{e}"
+                print(f"🛡️ 登录验证码处理{'通过' if captcha_ok else '未通过'}：{captcha_detail}")
+                login_ok = captcha_ok
                 handled = True
             if not handled:
-                # 未启用任何视觉处理：按原逻辑假设登录成功（真实状态由 _launch_game 兜底判断）
+                # 总开关关闭：按原逻辑假设登录成功（真实状态由 _launch_game 兜底判断）
                 login_ok = True
 
         if not login_ok:
