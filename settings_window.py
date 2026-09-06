@@ -345,19 +345,19 @@ class SettingsWindow:
         ttk.Button(jitter_row, text="保存", style='TButton',
                    command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
 
-        # ----- 登录验证码自动处理（总开关 + 统一设置入口） -----
+        # ----- 登录验证码（入口按钮；总开关在「验证码设置」窗口内统一管理） -----
         frame_cap = ttk.LabelFrame(parent, text="  登录验证码  ", style='SettingsCard.TLabelframe', padding=12)
         frame_cap.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_cap, text="WeGame 登录弹出验证码时自动处理：OCR 判定类型 → 滑块验证走 YOLO 缺口拖动、点击式走 AI 视觉模型。总开关关闭时不做任何处理；详细配置点下方按钮",
+        ttk.Label(frame_cap, text="WeGame 登录弹出验证码时自动处理：OCR 判定类型 → 滑块验证走 YOLO 缺口拖动、点击式走 AI 视觉模型。总开关与全部配置在下方窗口内统一管理",
                   style='SettingsSmall.TLabel', wraplength=520, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         cap_row = ttk.Frame(frame_cap, style='SettingsInner.TFrame')
         cap_row.pack(fill=tk.X)
-        self._captcha_auto_var = tk.BooleanVar(value=self.app.settings.get("captcha_auto_enabled", False))
-        ttk.Checkbutton(cap_row, text="启用登录验证码自动处理（总开关）",
-                        variable=self._captcha_auto_var,
-                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 12))
+        self._captcha_status_var = tk.StringVar(
+            value=f"当前状态：{'✅ 已启用' if self.app.settings.get('captcha_auto_enabled', False) else '⛔ 未启用'}")
+        ttk.Label(cap_row, textvariable=self._captcha_status_var,
+                  style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(cap_row, text="验证码设置…", style='Accent.TButton',
                    command=self._open_captcha_settings, width=12).pack(side=tk.LEFT)
 
@@ -911,7 +911,8 @@ class SettingsWindow:
         body = ttk.Frame(win, style='SettingsInner.TFrame', padding=10)
         body.pack(fill=tk.BOTH, expand=True)
 
-        # ----- 总开关（与全局设置页共用同一个 BooleanVar，两处同步） -----
+        # ----- 总开关（唯一入口：每次打开窗口时从设置重新读取） -----
+        self._captcha_auto_var = tk.BooleanVar(value=s.get("captcha_auto_enabled", False))
         frame_master = ttk.LabelFrame(body, text="  总开关  ", style='SettingsCard.TLabelframe', padding=8)
         frame_master.pack(fill=tk.X, pady=(0, 8))
         ttk.Checkbutton(frame_master, text="启用登录验证码自动处理（关闭后登录流程不做任何验证码处理）",
@@ -1071,7 +1072,14 @@ class SettingsWindow:
         self._apply_slider_yolo_settings_to(target)
         config.save_settings(target)
         self.app.settings.update(target)
-        messagebox.showinfo("已保存", "验证码设置已保存。", parent=self._captcha_win)
+        # 同步全局设置页的状态显示
+        try:
+            if getattr(self, "_captcha_status_var", None) is not None:
+                self._captcha_status_var.set(
+                    f"当前状态：{'✅ 已启用' if target.get('captcha_auto_enabled') else '⛔ 未启用'}")
+        except Exception:
+            pass
+        messagebox.showinfo("已保存", "验证码设置已保存。", parent=self._captcha_parent())
 
     def _apply_ai_visual_settings_to(self, target):
         """把 AI 视觉验证设置写入 target 字典（保存与测试按钮共用）"""
@@ -2170,8 +2178,7 @@ class SettingsWindow:
         # 滚动量
         fresh["scroll_amount"] = self.scroll_amount_var.get()
 
-        # 登录验证码总开关（详细配置在「验证码设置」窗口内单独保存）
-        fresh["captcha_auto_enabled"] = self._captcha_auto_var.get()
+        # 登录验证码：总开关与详细配置在「验证码设置」窗口内单独保存，这里不处理
 
         # 保存并同步内存中的设置引用
         config.save_settings(fresh)
