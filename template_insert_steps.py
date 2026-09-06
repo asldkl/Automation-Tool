@@ -45,7 +45,8 @@ _cache = None        # dict | None（None=尚未加载）
 
 
 def _read_file():
-    """读取文件；文件不存在返回 None，存在但解析失败返回 {}"""
+    """读取文件；文件不存在返回 None，存在但解析失败时备份原文件并返回 {}
+    （损坏文件备份保留供手动找回，避免之后 save 整份覆盖时无迹可循）"""
     try:
         with open(INSERT_STEPS_JSON, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -53,29 +54,40 @@ def _read_file():
     except FileNotFoundError:
         return None
     except Exception:
+        try:
+            import time
+            backup = f"{INSERT_STEPS_JSON}.corrupt.{time.strftime('%Y%m%d_%H%M%S')}"
+            os.replace(INSERT_STEPS_JSON, backup)
+            print(f"⚠️ 模板插入步骤配置文件损坏，已备份为 {os.path.basename(backup)}，"
+                  f"当前按空配置继续（可从备份手动找回其他模板的配置）")
+        except Exception:
+            pass
         return {}
 
 
 def _write_file(data):
-    """原子写文件（.tmp + os.replace）"""
+    """原子写文件（.tmp + os.replace），返回是否成功"""
     try:
         config.ensure_app_data_dir()
         tmp = INSERT_STEPS_JSON + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, INSERT_STEPS_JSON)
+        return True
     except Exception as e:
         print(f"⚠️ 模板插入步骤保存失败：{e}")
+        return False
 
 
 def _migrate_from_settings():
-    """旧版配置在 settings.json[template_insert_steps]，搬到独立文件"""
+    """旧版配置在 settings.json[template_insert_steps]，搬到独立文件（深拷贝，避免与 settings 缓存共享嵌套对象）"""
     try:
         s = config.load_settings()
         old = s.get(SETTINGS_KEY)
         if isinstance(old, dict) and old:
-            _write_file(dict(old))
-            return dict(old)
+            data = json.loads(json.dumps(old))
+            _write_file(data)
+            return data
     except Exception:
         pass
     return {}
@@ -110,7 +122,7 @@ def has_steps(var_name):
 
 
 def save(var_name, timing, steps):
-    """保存某模板插入步骤；steps 为空视为删除。返回是否成功"""
+    """保存某模板插入步骤；steps 为空视为删除。返回写入是否成功（失败时内存缓存不变，重启后可重试）"""
     global _cache
     steps = [s for s in (steps or []) if isinstance(s, dict)]
     timing = "after" if timing == "after" else "before"
@@ -125,7 +137,8 @@ def save(var_name, timing, steps):
             m[var_name] = {"timing": timing, "steps": steps}
         else:
             m.pop(var_name, None)
-        _write_file(m)
+        if not _write_file(m):
+            return False
         _cache = m
     return True
 

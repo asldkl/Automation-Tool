@@ -225,23 +225,34 @@ class TestConfigSettings(unittest.TestCase):
         self.assertGreater(h, 0)
 
     def test_sell_items_meta(self):
-        """售卖物品元数据读写（自动同步目录图片）"""
-        from config import load_sell_items_meta, save_sell_items_meta, SELL_ITEMS_DIR
-        os.makedirs(SELL_ITEMS_DIR, exist_ok=True)
-        # 创建临时测试图片
-        test_file = os.path.join(SELL_ITEMS_DIR, "_test_meta_sync.png")
-        with open(test_file, "wb") as f:
-            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        """售卖物品元数据读写（自动同步目录图片）——目录/元数据隔离到临时目录"""
+        import config
+        from config import load_sell_items_meta, save_sell_items_meta
+        # 隔离：把售卖物品目录与元数据路径指向临时目录，不读写真实用户数据
+        orig = (config.SELL_ITEMS_DIR, config.ITEMS_META_PATH, config.ITEMS_META_BACKUP)
+        config.SELL_ITEMS_DIR = os.path.join(TEST_DIR, "sell_items")
+        config.ITEMS_META_PATH = os.path.join(config.SELL_ITEMS_DIR, "items_meta.json")
+        config.ITEMS_META_BACKUP = os.path.join(config.SELL_ITEMS_DIR, "items_meta.backup.json")
         try:
+            os.makedirs(config.SELL_ITEMS_DIR, exist_ok=True)
+            # 创建两张临时测试图片（一张在元数据中，一张仅存在目录里，验证自动同步）
+            test_file = os.path.join(config.SELL_ITEMS_DIR, "_test_meta_sync.png")
+            with open(test_file, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+            extra_file = os.path.join(config.SELL_ITEMS_DIR, "_test_meta_extra.png")
+            with open(extra_file, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
             meta = {"items": [{"filename": "_test_meta_sync.png", "name": "_test_meta_sync", "discount_times": 0, "quantity": 1}]}
             save_sell_items_meta(meta)
             loaded = load_sell_items_meta()
             names = [i["name"] for i in loaded["items"]]
             self.assertIn("_test_meta_sync", names)
-            # 验证同步：目录中已有图片也被加入
-            self.assertGreater(len(loaded["items"]), 1)
+            # 验证同步：目录中已有但元数据中没有的图片也被加入
+            self.assertIn("_test_meta_extra", names)
         finally:
             os.remove(test_file)
+            os.remove(extra_file)
+            config.SELL_ITEMS_DIR, config.ITEMS_META_PATH, config.ITEMS_META_BACKUP = orig
 
 
 # ==================== utils ====================
@@ -345,13 +356,13 @@ class TestAssetValueParsing(unittest.TestCase):
             self.assertEqual(parse_asset_value(val), account_manager._parse_asset_value(val))
 
 
-# ==================== 公告（每天一次 / 永久 / 一键配置） ====================
+# ==================== 公告（每天一次 / 永久关闭） ====================
 class TestAnnouncements(unittest.TestCase):
-    """测试公告的展示判定与一键配置写入（不弹真实窗口）"""
+    """测试公告的展示判定与状态存储（独立文件，不弹真实窗口）"""
 
     def setUp(self):
         import config
-        import template_insert_steps as tis
+        import announcements
         self._orig_path = config.SETTINGS_JSON_PATH
         self._orig_cache = config._settings_cache
         config.SETTINGS_JSON_PATH = os.path.join(TEST_DIR, "test_announce.json")
@@ -359,20 +370,19 @@ class TestAnnouncements(unittest.TestCase):
             os.remove(config.SETTINGS_JSON_PATH)
         config._settings_cache = None
         config._settings_cache_mtime = 0
-        self._orig_isj = tis.INSERT_STEPS_JSON
-        tis.INSERT_STEPS_JSON = os.path.join(TEST_DIR, "test_announce_tis.json")
-        tis._cache = None
-        if os.path.exists(tis.INSERT_STEPS_JSON):
-            os.remove(tis.INSERT_STEPS_JSON)
+        # 公告状态存独立文件，隔离测试文件路径
+        self._orig_ajson = announcements.ANNOUNCEMENTS_JSON
+        announcements.ANNOUNCEMENTS_JSON = os.path.join(TEST_DIR, "test_announce_state.json")
+        if os.path.exists(announcements.ANNOUNCEMENTS_JSON):
+            os.remove(announcements.ANNOUNCEMENTS_JSON)
 
     def tearDown(self):
         import config
-        import template_insert_steps as tis
+        import announcements
         config.SETTINGS_JSON_PATH = self._orig_path
         config._settings_cache = self._orig_cache
         config._settings_cache_mtime = 0
-        tis.INSERT_STEPS_JSON = self._orig_isj
-        tis._cache = None
+        announcements.ANNOUNCEMENTS_JSON = self._orig_ajson
 
     def test_daily_and_forever(self):
         """今天未弹→应显示；关闭(今天)→当天不再显示；永久→永远不显示"""
@@ -380,48 +390,45 @@ class TestAnnouncements(unittest.TestCase):
         # 从未弹过 → 应显示
         self.assertTrue(announcements.should_show())
         # 关闭(仅今天)
-        announcements._save(done_forever=False)
+        self.assertTrue(announcements._save(done_forever=False))
         self.assertFalse(announcements.should_show())
         # 永久关闭
-        announcements._save(done_forever=True)
+        self.assertTrue(announcements._save(done_forever=True))
         self.assertFalse(announcements.should_show())
-        # 即便把日期清掉（模拟第二天）永久仍不显示
+        # 即便状态里日期清掉（模拟第二天）永久仍不显示
+        import json
+        with open(announcements.ANNOUNCEMENTS_JSON, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        state["last_date"] = ""
+        with open(announcements.ANNOUNCEMENTS_JSON, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        self.assertFalse(announcements.should_show())
+
+    def test_migrate_from_settings(self):
+        """旧版 settings.json 里的公告状态应在首次读取时迁移到独立文件"""
+        import json
         import config
+        import announcements
         s = config.load_settings()
-        s["announcement_last_date"] = ""
+        s["announcement_last_date"] = "2026-09-01"
+        s["announcements_forever"] = ["s11_season_20260902"]
         config.save_settings(s)
+        # 永久关闭已迁移 → 不显示
         self.assertFalse(announcements.should_show())
+        with open(announcements.ANNOUNCEMENTS_JSON, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertEqual(state.get("last_date"), "2026-09-01")
+        self.assertIn(announcements.ANNOUNCEMENT_ID, state.get("forever", []))
 
-    def test_quick_config_writes_template10_before_steps(self):
-        """一键配置应把 空格+可选OCR开启新赛季 写入第10模板(Special_Ops 特勤处入口)点击前插入步骤"""
+    def test_corrupt_state_file_backed_up(self):
+        """状态文件损坏时应备份原文件并按空状态继续（可再次弹出）"""
         import announcements
-        import template_insert_steps as tis
-        ok = tis.save(announcements.QUICK_CONFIG_TEMPLATE,
-                      announcements.QUICK_CONFIG_TIMING,
-                      announcements.QUICK_CONFIG_STEPS)
-        self.assertTrue(ok)
-        self.assertEqual(announcements.QUICK_CONFIG_TEMPLATE, "Special_Ops")
-        cfg = tis.get(announcements.QUICK_CONFIG_TEMPLATE)
-        self.assertEqual(cfg["timing"], "before")
-        types = [st.get("type") for st in cfg["steps"]]
-        self.assertEqual(types, ["keyboard", "ocr"])
-        self.assertEqual(cfg["steps"][0]["keys"], "space")
-        self.assertEqual(cfg["steps"][1]["text"], "开启新赛季")
-        self.assertTrue(cfg["steps"][1].get("optional"))
-
-    def test_clear_stale_hazard_config(self):
-        """应清除旧版误写到第9模板(Hazard_Operations)的段位结算 OCR 步骤"""
-        import announcements
-        import template_insert_steps as tis
-        tis.save("Hazard_Operations", "after",
-                 [{"type": "keyboard", "keys": "space"},
-                  {"type": "ocr", "text": "开启新赛季"}])
-        announcements._clear_stale_hazard_config()
-        cfg = tis.get("Hazard_Operations")
-        # 含 开启新赛季 的 OCR 配置被清除；若原配仅为该误写则整条删除
-        self.assertTrue(cfg is None or not any(
-            isinstance(s, dict) and s.get("type") == "ocr" and "开启新赛季" in str(s.get("text", ""))
-            for s in (cfg or {}).get("steps") or []))
+        with open(announcements.ANNOUNCEMENTS_JSON, "w", encoding="utf-8") as f:
+            f.write("{not valid json")
+        self.assertTrue(announcements.should_show())
+        # 损坏文件被改名备份
+        import glob
+        self.assertTrue(glob.glob(announcements.ANNOUNCEMENTS_JSON + ".corrupt.*"))
 
 
 # ==================== 模板插入步骤 ====================

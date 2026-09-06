@@ -203,6 +203,7 @@ def start_single_account_run(app, img_path):
     app._user_stopped_cooldown = False
     app._ignore_cooldown_this_run = False
     app._is_boot_startup = False
+    app._cooldown_wait_done = False  # 重置冷却等待标志：单账号结束后只跑已到期账号、不进入等待
     app.current_step = 0
     app.progress['value'] = 0
     app.stats_label.config(text="")
@@ -418,16 +419,34 @@ def _on_single_account_finish(app):
         if getattr(app, '_single_account_was_paused', False):
             cooldown_manager.set_account_paused(file_name, True)
             print(f"⏸️ 账号 {file_name} 原为暂停状态，已恢复暂停")
+    # 检查是否有其他冷却完成的账号，优先运行（在后台线程执行，避免冻结 UI）。
+    # 检查期间保持 app.running=True（结束后才 on_finish），防止用户手动「开始」或
+    # 冷却监听线程与本检查线程同时驱动键鼠（双流程竞态）
+    if app.settings.get("enable_cooldown", False) and not app._stop_event.is_set():
+        app.running = True
+
+        def _check_and_run():
+            try:
+                processed = []
+                _wait_and_run_nearby_cooldowns(app, processed)
+            finally:
+                try:
+                    app.root.after(0, lambda: _finish_after_cooldown_check(app))
+                except Exception:
+                    _finish_after_cooldown_check(app)
+
+        threading.Thread(target=_check_and_run, daemon=True).start()
+    else:
+        # 先调用 on_finish（内部会检查 _single_account_mode 跳过邮件和关机），再清除标志
+        on_finish(app)
+        app._single_account_mode = False
+
+
+def _finish_after_cooldown_check(app):
+    """单账号结束后的后台冷却检查收尾（主线程执行）"""
     # 先调用 on_finish（内部会检查 _single_account_mode 跳过邮件和关机），再清除标志
     on_finish(app)
     app._single_account_mode = False
-
-    # 检查是否有其他冷却完成的账号，优先运行（在后台线程执行，避免冻结 UI）
-    if app.settings.get("enable_cooldown", False):
-        def _check_and_run():
-            processed = []
-            _wait_and_run_nearby_cooldowns(app, processed)
-        threading.Thread(target=_check_and_run, daemon=True).start()
 
 
 def set_operation(app, text):
@@ -437,15 +456,17 @@ def set_operation(app, text):
 
 def _make_run_insert(app):
     """构建模板「插入步骤」执行回调 ri(var_name, timing)，供登录/启动/游戏内流程注入。
-    回调内部以真实 app 上下文执行；某模板未配置或时序不符时返回 True（不执行）。"""
+    回调内部以真实 app 上下文执行；某模板未配置或时序不符时返回 True（不执行）。
+    异常时返回 False（与 run_for_account 内部「异常=失败」语义一致，调用方按该模板失败处理）"""
     import template_insert_steps as _tis
     def run_insert(var_name, timing):
         account = getattr(app, "_current_account_name", "") or ""
         try:
             return bool(_tis.run_for_account(app.settings, app._stop_event, account,
                                              var_name, timing))
-        except Exception:
-            return True
+        except Exception as e:
+            print(f"❌ 模板[{var_name}]插入步骤回调异常：{e}")
+            return False
     return run_insert
 
 
@@ -686,20 +707,33 @@ def _login_account(app, account_name, i, total, processed_accounts):
             continue
         print("✅ 已点击登录确认按钮")
 
-        # 轮询检查登录结果（最多 8 秒，每 2 秒检查一次）
+        # 轮询检查登录结果（每轮 2 秒间隔 + 两次纯探测各最多 2 秒，4 轮最长约 24 秒）
         # 注意：这里只是「探测是否出现」，必须用只识别不点击的判断，
         # 否则会把三角洲图标当按钮提前点击一次，之后 _launch_game 又会点一次（造成点 2 次）
         login_ok = False
         for _ in range(4):
             time.sleep(2)
-            if utils.find_image_on_screen(config.LOGIN_AGAIN, timeout=2):
+            if app._stop_event.is_set():
+                return False
+            if utils.find_image_on_screen(config.LOGIN_AGAIN, timeout=2,
+                                          stop_event=app._stop_event):
                 print(f"⚠️ 检测到重新登录按钮，登录失败，重试...")
                 break
-            if utils.find_image_on_screen(config.DELTA_GAME_ICON, timeout=2):
+            if utils.find_image_on_screen(config.DELTA_GAME_ICON, timeout=2,
+                                          stop_event=app._stop_event):
                 login_ok = True
                 break
         else:
-            # 4 次检查都没发现异常，假设登录成功
+            # 4 次检查既没看到重新登录按钮也没看到三角洲图标（可能停在滑块验证/公告页等
+            # 第三态界面）：先输出屏幕文字诊断便于失败归因，再按原逻辑假设登录成功
+            # （真实状态由 _launch_game 的图标识别兜底判断）
+            print("⚠️ 登录后既未检测到重新登录按钮也未检测到三角洲图标，可能停在验证/公告等界面")
+            try:
+                screen_text = _ocr_capture_screen_text()
+                if screen_text:
+                    print(f"📋 屏幕文字: {screen_text}")
+            except Exception:
+                pass
             login_ok = True
 
         if not login_ok:
@@ -946,16 +980,8 @@ def _wait_game_process_exit(max_wait):
     return not _game_process_running()
 
 
-def _close_game(app):
-    """关闭三角洲游戏窗口
-
-    优先优雅关闭：先发送 WM_CLOSE 并等待进程退出；
-    仅当 WM_CLOSE 无效时再兜底 Alt+F4 + 强制结束。
-    避免对全屏游戏直接注入 Alt+F4 强制退出（该路径会硬拆输入栈，
-    与拦截驱动/反作弊收尾冲突，曾导致 0x139/0xBE 蓝屏）。"""
-    set_operation(app, "关闭三角洲游戏")
-    print("\n--- 关闭三角洲游戏 ---")
-    # 先激活游戏窗口，避免关闭其他窗口
+def _activate_delta_window():
+    """查找并前台激活三角洲游戏窗口，返回是否成功"""
     for title in DELTA_TITLES:
         hwnd = utils.find_window_by_title(title, partial_match=True)
         if hwnd:
@@ -968,7 +994,21 @@ def _close_game(app):
                 time.sleep(0.3)
             except Exception:
                 pass
-            break
+            return True
+    return False
+
+
+def _close_game(app):
+    """关闭三角洲游戏窗口
+
+    优先优雅关闭：先发送 WM_CLOSE 并等待进程退出；
+    仅当 WM_CLOSE 无效时再兜底 Alt+F4 + 强制结束。
+    避免对全屏游戏直接注入 Alt+F4 强制退出（该路径会硬拆输入栈，
+    与拦截驱动/反作弊收尾冲突，曾导致 0x139/0xBE 蓝屏）。"""
+    set_operation(app, "关闭三角洲游戏")
+    print("\n--- 关闭三角洲游戏 ---")
+    # 先激活游戏窗口，避免关闭其他窗口
+    _activate_delta_window()
 
     # 优雅关闭：发送 WM_CLOSE，等待进程退出（最多约 8 秒）
     for title in DELTA_TITLES:
@@ -979,8 +1019,10 @@ def _close_game(app):
         _wait_game_process_exit(8)
 
     # 仍未退出 → 兜底 Alt+F4（SendInput，不含驱动注入）
+    # Alt+F4 作用于当前焦点窗口，等待期间焦点可能已漂移，必须重新激活游戏窗口再发
     if not app._stop_event.is_set() and _game_process_running():
         print("⚠️ WM_CLOSE 未生效，尝试 Alt+F4 关闭...")
+        _activate_delta_window()
         for _ in range(3):
             pyautogui.hotkey('alt', 'f4')
             time.sleep(0.5)
@@ -1233,14 +1275,18 @@ def _run_single_account(app, img_path, total, processed_accounts):
             print("🔄 重新登录...")
             if not _login_account(app, file_name, 0, total, processed_accounts):
                 account_failed = True
+                launch_result = None  # 登录失败已处理，跳过下方启动结果判断
             elif app._stop_event.is_set():
                 account_interrupted = True
+                launch_result = None
             else:
                 launch_result = _launch_game(app)
-                if launch_result is False or launch_result == "relogin":
-                    account_failed = True
-        elif launch_result == "game_failed":
+                if launch_result == "relogin":
+                    # 二次启动仍要求重新登录：按启动失败处理
+                    launch_result = False
+        if launch_result == "game_failed":
             # 游戏内操作失败（识别问题），设置1天冷却，用户自行处理
+            # （重新登录后二次启动同样适用，不能漏判成成功）
             print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
             app.run_stats["fail"] += 1
             cooldown_manager.record_run(file_name, 24)  # 24小时冷却
@@ -1251,8 +1297,10 @@ def _run_single_account(app, img_path, total, processed_accounts):
             _cleanup_account_processes(app)
             app._cooldown_single_run = False
             return  # 单账号模式直接返回
-        elif launch_result is False:
-            if app._stop_event.is_set():
+        elif launch_result is False or launch_result == "interrupted":
+            if account_failed or account_interrupted:
+                pass  # 重新登录路径已处理，不重复记账
+            elif app._stop_event.is_set() or launch_result == "interrupted":
                 account_interrupted = True
             else:
                 account_failed = True
@@ -1403,14 +1451,17 @@ def run_script_main(app):
                     print("🔄 重新登录...")
                     if not _login_account(app, file_name, i, total, processed_accounts):
                         account_failed = True
+                        launch_result = None  # 登录失败已处理，跳过下方启动结果判断
                     elif app._stop_event.is_set():
                         account_interrupted = True
+                        launch_result = None
                     else:
                         launch_result = _launch_game(app)
-                        if launch_result is False or launch_result == "relogin":
-                            account_failed = True
-                elif launch_result == "game_failed":
-                    # 游戏内操作失败，设置1天冷却
+                        if launch_result == "relogin":
+                            # 二次启动仍要求重新登录：按启动失败处理
+                            launch_result = False
+                if launch_result == "game_failed":
+                    # 游戏内操作失败，设置1天冷却（重新登录后二次启动同样适用，不能漏判成成功）
                     print(f"⚠️ 游戏内操作失败，设置 1 天冷却等待用户处理")
                     app.run_stats["fail"] += 1
                     cooldown_manager.record_run(file_name, 24)
@@ -1422,7 +1473,9 @@ def run_script_main(app):
                     _group_wait()  # 分组运行：计入本组并可能触发组间等待
                     continue  # 继续下一个账号
                 elif launch_result is False or launch_result == "interrupted":
-                    if app._stop_event.is_set() or launch_result == "interrupted":
+                    if account_failed or account_interrupted:
+                        pass  # 重新登录路径已处理，不重复记账
+                    elif app._stop_event.is_set() or launch_result == "interrupted":
                         account_interrupted = True
                     else:
                         account_failed = True

@@ -263,52 +263,80 @@ def run_custom_ops(app, account_name, stop_event=None):
     return True
 
 
+def _safe_int(value, default):
+    """宽容解析整数（ops.json 手工编辑可能出现非数字字符串，解析失败用默认值而不是炸出整批）"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value, default):
+    """宽容解析浮点数（解析失败用默认值）"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _run_batch_steps(app, account_name, steps, stop_event):
     """执行一个批次的步骤序列（支持跳转/循环）。
     返回 True=全部完成，False=某步失败中止该批次"""
     total = len(steps)
     idx = 1
-    visited = 0   # 跳转死循环保护
+    visited = 0   # 迭代次数保护
+    jumps = 0     # 跳转次数保护（带探针的回环迭代很慢，单看迭代次数防不住死循环）
+    warned_retry_ctrl = set()  # 已提示过「跳转类步骤不支持重试」的步骤索引
     while idx <= total:
         if stop_event.is_set():
             print("⏹ 自定义操作被用户停止")
             return False
         visited += 1
-        if visited > 10000:
-            print("⚠️ 检测到可能死循环（跳转次数过多），已中止")
+        if visited > 10000 or jumps > 1000:
+            print("⚠️ 检测到可能死循环（跳转/迭代次数过多），已中止")
             return False
 
         op = steps[idx - 1]
         op_type = op.get("type", "image")
         name = op.get("name", f"步骤{idx}")
-        pause = float(op.get("pause_after", 0.5))
+        pause = _safe_float(op.get("pause_after", 0.5), 0.5)
 
         if op_type == "jump":
-            target = max(1, min(int(op.get("jump_to", idx + 1)), total))
+            if _safe_int(op.get("retry", 0), 0) > 0 and idx not in warned_retry_ctrl:
+                warned_retry_ctrl.add(idx)
+                print(f"  [{idx}/{total}] ℹ️ 跳转步骤不支持重试属性，已忽略")
+            target = max(1, min(_safe_int(op.get("jump_to", idx + 1), idx + 1), total))
             print(f"  [{idx}/{total}] 跳转到步骤 {target}")
             idx = target
+            jumps += 1
             continue
 
         if op_type == "condition":
-            jump_to = max(1, min(int(op.get("jump_to", idx + 1)), total))
+            if _safe_int(op.get("retry", 0), 0) > 0 and idx not in warned_retry_ctrl:
+                warned_retry_ctrl.add(idx)
+                print(f"  [{idx}/{total}] ℹ️ 条件跳转步骤不支持重试属性，已忽略")
+            jump_to = max(1, min(_safe_int(op.get("jump_to", idx + 1), idx + 1), total))
             satisfied = _eval_condition(op, stop_event)
             if satisfied:
                 print(f"  [{idx}/{total}] 条件「{name}」满足，跳转到步骤 {jump_to}")
                 idx = jump_to
+                jumps += 1
             else:
                 print(f"  [{idx}/{total}] 条件「{name}」不满足，继续下一步")
                 idx += 1
             continue
 
         ok = _execute_step(app, op, idx, total, stop_event, account_name)
-        # 重试：失败后按 op.retry 次重试，每次间隔 op.retry_wait 秒
-        retry_n = max(0, int(op.get("retry", 0) or 0))
-        retry_wait = max(0, float(op.get("retry_wait", 1.0) or 0))
+        # 重试：失败后按 op.retry 次重试，每次间隔 op.retry_wait 秒（间隔期间可被停止打断）
+        retry_n = max(0, _safe_int(op.get("retry", 0), 0))
+        retry_wait = max(0.0, _safe_float(op.get("retry_wait", 1.0), 1.0))
         attempt = 0
         while not ok and attempt < retry_n and not stop_event.is_set():
             attempt += 1
             if retry_wait > 0:
-                time.sleep(retry_wait)
+                stop_event.wait(retry_wait)
+            if stop_event.is_set():
+                break
             print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」失败，第 {attempt}/{retry_n} 次重试...")
             ok = _execute_step(app, op, idx, total, stop_event, account_name)
         if not ok:
@@ -317,7 +345,7 @@ def _run_batch_steps(app, account_name, steps, stop_event):
             else:
                 return False
         if pause > 0:
-            time.sleep(pause)
+            stop_event.wait(pause)
         idx += 1
     return True
 
@@ -369,12 +397,13 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
         if not text:
             print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置要识别的文字，中止该工作流")
             return False
-        ocr_conf = float(op.get("confidence", 0.6))
-        ocr_timeout = float(op.get("timeout", 5))
+        ocr_conf = _safe_float(op.get("confidence", 0.6), 0.6)
+        ocr_timeout = _safe_float(op.get("timeout", 5), 5)
         region = op.get("region") or None
         print(f"  [{idx}/{total}] OCR查找「{text}」...")
         found = utils.ocr_find_and_click(text, region=region,
-                                         timeout=ocr_timeout, confidence=ocr_conf)
+                                         timeout=ocr_timeout, confidence=ocr_conf,
+                                         stop_event=stop_event)
         if not found:
             print(f"    ❌ 未找到文字「{text}」，中止该工作流")
             return False
@@ -406,8 +435,8 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
         if not images:
             print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」未配置图片，中止该工作流")
             return False
-        confidence = float(op.get("confidence", 0.7))
-        timeout = float(op.get("timeout", 2))
+        confidence = _safe_float(op.get("confidence", 0.7), 0.7)
+        timeout = _safe_float(op.get("timeout", 2), 2)
         found = False
         for img_name in images:
             img = image_path(img_name)
@@ -415,7 +444,8 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
                 print(f"    ⚠️ 图片不存在: {img_name}")
                 continue
             print(f"  [{idx}/{total}] 尝试「{img_name}」...")
-            if utils.find_and_click(img, timeout=timeout, confidence=confidence):
+            if utils.find_and_click(img, timeout=timeout, confidence=confidence,
+                                    stop_event=stop_event):
                 print(f"    ✅ 已点击「{img_name}」")
                 found = True
                 break
@@ -462,13 +492,14 @@ def _execute_step(app, op, idx, total, stop_event, account_name):
     else:
         # 找图点击（默认）
         img = image_path(op.get("image", ""))
-        confidence = float(op.get("confidence", 0.7))
-        timeout = float(op.get("timeout", 5))
+        confidence = _safe_float(op.get("confidence", 0.7), 0.7)
+        timeout = _safe_float(op.get("timeout", 5), 5)
         if not os.path.exists(img):
             print(f"  [{idx}/{total}] ⚠️ 步骤「{name}」图片不存在，中止该工作流")
             return False
         print(f"  [{idx}/{total}] 查找「{name}」...")
-        found = utils.find_and_click(img, timeout=timeout, confidence=confidence)
+        found = utils.find_and_click(img, timeout=timeout, confidence=confidence,
+                                     stop_event=stop_event)
         if not found:
             print(f"    ❌ 未找到「{name}」，中止该工作流")
             return False

@@ -42,9 +42,17 @@ _lock = threading.Lock()
 _load_corrupt = False
 
 
+def _plausible_cooldown_data(data):
+    """备份数据结构校验：必须是 dict 且每个值也是 dict（冷却条目）。
+    用于恢复时跳过「非空但结构错误」的坏备份，避免坏 .bak 挡住有效的时间戳备份"""
+    if not isinstance(data, dict):
+        return False
+    return all(isinstance(v, dict) for v in data.values())
+
+
 def _restore_from_backup():
-    """从备份恢复冷却数据（优先 .bak，再尝试最近的时间戳备份）
-    成功返回数据，全部失败返回空 dict"""
+    """从备份恢复冷却数据（按顺序尝试：.bak → 时间戳备份从新到旧）
+    只采纳「非空且结构正确」的候选；成功返回数据，全部失败返回空 dict"""
     import shutil
     candidates = [COOLDOWN_JSON_BACKUP]
     try:
@@ -58,7 +66,7 @@ def _restore_from_backup():
                 continue
             with open(path, "r", encoding="utf-8") as f:
                 backup_data = json.load(f)
-            if backup_data:
+            if backup_data and _plausible_cooldown_data(backup_data):
                 # 恢复主文件
                 try:
                     shutil.copy2(path, COOLDOWN_JSON_PATH)
@@ -450,8 +458,13 @@ def reduce_all_cooldowns(minutes=30):
                 if next_run > now:  # 仅冷却中的账号
                     new_run = next_run - delta
                     if new_run <= now:
-                        # 缩减后视为冷却结束，移除该账号冷却记录
-                        del data[name]
+                        # 缩减后视为冷却结束：带 game_failed/auto_paused 标记的账号保留标记，
+                        # 仅清冷却字段（与 remove_expired_cooldowns 语义一致）
+                        if entry.get("game_failed") or entry.get("auto_paused"):
+                            for key in ("next_run_time", "last_run_time"):
+                                entry.pop(key, None)
+                        else:
+                            del data[name]
                         removed.append(name)
                     else:
                         entry["next_run_time"] = new_run.strftime("%Y-%m-%d %H:%M:%S")
@@ -485,8 +498,9 @@ def remove_expired_cooldowns():
     """
     移除所有已过期的冷却记录
     暂停账号在暂停期间保留冷却进度（不清时间戳），仅在冷却真正到期时清除冷却字段、保留暂停标记；
-    非暂停账号冷却到期或没有冷却记录时移除整个条目。
-    返回: 被移除的账号名称列表
+    带 game_failed / auto_paused 标记的账号到期时清除冷却字段但保留标记（黄/橙标语义与
+    reset_all_cooldowns 一致，避免到期即抹掉失败提示）；其余账号冷却到期或没有冷却记录时移除整个条目。
+    返回: 冷却已到期被清除的账号名称列表（含整条移除与仅清冷却字段两类）
     """
     with _lock:
         data = _load_data()
@@ -514,10 +528,18 @@ def remove_expired_cooldowns():
                 for key in ("next_run_time", "last_run_time", "paused", "paused_remaining", "paused_at"):
                     entry.pop(key, None)
                 cleared_paused = True
+            elif entry.get("game_failed") or entry.get("auto_paused"):
+                # 游戏失败/自动暂停账号：清除冷却字段但保留标记，界面标记不随到期消失
+                for key in ("next_run_time", "last_run_time"):
+                    entry.pop(key, None)
+                removed.append(name)
             else:
                 removed.append(name)
         for name in removed:
-            del data[name]
+            entry = data.get(name)
+            # 仅清除冷却字段、保留标记的条目不整条删除
+            if entry is not None and not (entry.get("game_failed") or entry.get("auto_paused")):
+                del data[name]
         if removed or cleared_paused:
             _save_data(data)
         return removed

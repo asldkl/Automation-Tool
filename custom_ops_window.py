@@ -361,12 +361,22 @@ class CustomOpsWindow:
 
     def _save_ops_now(self):
         if self.single_mode:
-            # 单列模式：经 save_handler 持久化（settings["template_insert_steps"]），不写全局 ops.json
+            # 单列模式：经 save_handler 持久化（独立 JSON 文件），不写全局 ops.json
             if self.save_handler:
                 try:
-                    self.save_handler(self._single_timing, list(self.ops))
+                    ok = self.save_handler(self._single_timing, list(self.ops))
                 except Exception as e:
+                    ok = False
                     print(f"⚠️ 插入步骤保存失败：{e}")
+                if not ok:
+                    try:
+                        from tkinter import messagebox
+                        messagebox.showerror("保存失败",
+                                             "插入步骤写入磁盘失败（磁盘空间/权限？），\n"
+                                             "配置仅在本会话内有效，请排查后重新保存。",
+                                             parent=self.win)
+                    except Exception:
+                        pass
             return
         if custom_ops.save_batches(self.batches):
             print("💾 自定义操作已保存")

@@ -307,9 +307,10 @@ def _template_cn(img_path):
     return None
 
 
-def find_image_on_screen(img_path, timeout=2, confidence=None, region=None):
+def find_image_on_screen(img_path, timeout=2, confidence=None, region=None, stop_event=None):
     """只探测屏幕上是否存在目标图片（不点击）。返回 bool。
-    用于登录结果轮询等“仅判断是否出现、不应误点”的场景（避免把图标当按钮提前点击）"""
+    用于登录结果轮询等“仅判断是否出现、不应误点”的场景（避免把图标当按钮提前点击）
+    stop_event: 可选，置位时立即返回 False（中断轮询）"""
     import config as _cfg
     threshold = confidence if confidence is not None else CONFIDENCE
     resolved = _cfg.resolve_template_path(img_path)
@@ -317,10 +318,14 @@ def find_image_on_screen(img_path, timeout=2, confidence=None, region=None):
     if template is None:
         template = _imread_unicode(resolved)
         if template is None:
+            # 模板缺失不能静默：调用方（如登录结果轮询）会把「探测不到」当业务信号
+            throttled_print(f"❌ 探测图片不存在或无法读取：{resolved}")
             return False
         _cache_put(resolved, template)
     start = time.time()
     while time.time() - start < timeout:
+        if stop_event is not None and stop_event.is_set():
+            return False
         gray = _screenshot_gray(region)
         if gray is not None:
             try:
@@ -335,11 +340,12 @@ def find_image_on_screen(img_path, timeout=2, confidence=None, region=None):
 
 def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0,
-                         multiscale=False, return_pos=False):
+                         multiscale=False, return_pos=False, stop_event=None):
     """
     统一的图像识别+点击函数。
     multiscale: True 使用多尺度边缘+灰度匹配，False 使用标准灰度匹配
     return_pos: True 返回 (success, (x,y)), False 返回 success
+    stop_event: 可选线程停止事件，置位时立即返回 False（不等待当前超时窗口走完）
     """
     # 识别前的'反应时间'随机延时（拟人化思考后再动作）
     human_reaction_delay()
@@ -355,6 +361,8 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
 
     start = time.time()
     while time.time() - start < timeout:
+        if stop_event is not None and stop_event.is_set():
+            return (False, None) if return_pos else False
         gray = _screenshot_gray(region)
         if gray is None:
             time.sleep(0.5)
@@ -409,10 +417,11 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
     return (False, None) if return_pos else False
 
 
-def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1, x_offset=0, y_offset=0):
+def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1, x_offset=0, y_offset=0, stop_event=None):
     """在当前屏幕中查找图片并点击中心点，返回是否成功"""
     return _find_and_click_core(img_path, timeout, region, confidence,
-                                clicks, x_offset, y_offset, multiscale=False, return_pos=False)
+                                clicks, x_offset, y_offset, multiscale=False, return_pos=False,
+                                stop_event=stop_event)
 
 
 def _match_template_multiscale(gray_screen, template, threshold, scales=None):
@@ -772,14 +781,17 @@ def _click_pos_valid(cx, cy):
     return True
 
 
-def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8):
+def ocr_find_and_click(text, region=None, timeout=20, confidence=0.8, stop_event=None):
     """
     在屏幕指定区域查找包含指定文本的内容并点击其中心。
-    返回: True（找到并点击）/ False（超时未找到）
+    stop_event: 可选线程停止事件，置位时立即返回 False（不等待当前超时窗口走完）
+    返回: True（找到并点击）/ False（超时未找到或被停止）
     """
     start_time = time.time()
     first_scan = True
     while time.time() - start_time < timeout:
+        if stop_event is not None and stop_event.is_set():
+            return False
         results = ocr_recognize(region)
         for recognized_text, conf, bbox in results:
             if conf >= confidence and text in recognized_text:

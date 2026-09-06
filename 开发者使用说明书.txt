@@ -676,6 +676,56 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
+6.08.22 (2026-09-06)
+----------------------------------------
+
+- 赛季公告 announcements.py 重构：
+  - 状态改存独立文件 %APPDATA%\DeltaAutoTool\announcements.json（{"last_date","forever"}），
+    不再写 settings.json —— 运行中多处会用「启动时的 settings 快照」整份覆盖写回
+    （gui_app 托盘切遮罩/换角落、account_manager 自动备份），会把每日一次/永久关闭状态回滚；
+    旧 settings 键（announcement_last_date / announcements_forever）首次读取自动迁移
+  - 删除「一键配置」按钮，仅保留公告展示：按钮只剩「关闭」（今天不再提醒）与「永久不再提示」；
+    点标题栏 X / Alt+F4 同样按「关闭」落盘（绑定 WM_DELETE_WINDOW，不再被绕过）
+  - 正在跑自动化（app.running，含开机自启立即运行）时不弹，改为每 2 分钟重试检测、最多 60 次，
+    修复自启场景自动化先于检测启动导致公告被永久静默跳过
+  - 状态文件损坏时自动备份为 .corrupt.时间戳 后按空状态继续（可手动找回）
+- 修复 relogin 重新登录后第二次 _launch_game 的结果漏判（automation_runner 两处）：
+  原只判断 False/"relogin"，"game_failed" 落入成功分支（应记 24h 冷却+黄标）、"interrupted" 被忽略；
+  现两次启动统一按 game_failed/interrupted 处理，二次启动仍要求重登按启动失败处理；
+  重新登录失败路径用 launch_result=None 跳过后续判断，不重复记账
+- template_insert_steps.py 可靠性：
+  - _write_file 返回写盘成败；save 失败时不再更新内存缓存并返回 False
+  - 编辑器（CustomOpsWindow 单列模式）保存失败弹窗提示，不再静默
+  - 配置文件损坏时自动备份 .corrupt.时间戳 后按空配置继续，防止坏文件被下次 save 整份覆盖放大丢失
+  - 旧 settings 迁移改 json 深拷贝（不再与 settings 缓存共享嵌套对象）
+- cooldown_manager.py：
+  - _restore_from_backup 增加候选结构校验 _plausible_cooldown_data（dict 且值均为 dict），
+    跳过「非空但结构错误」的坏 .bak，让有效的时间戳备份可被轮询到
+  - remove_expired_cooldowns / reduce_all_cooldowns：带 game_failed / auto_paused 标记的账号
+    冷却到期时仅清冷却字段、保留标记（界面黄/橙标不随到期消失，与 reset_all_cooldowns 语义一致）
+- custom_ops._run_batch_steps / _execute_step：
+  - stop_event 贯穿单步内部：utils.find_and_click / ocr_find_and_click / find_image_on_screen
+    新增可选 stop_event 参数（向后兼容），找图/OCR 超时窗口可被停止立即打断（重试会放大等待的问题）
+  - 重试间隔与步骤停顿改用 Event.wait（停止可中断）；新增跳转次数上限 1000 补强死循环保护
+  - 跳转/条件步骤配置了重试属性时提示「不支持重试，已忽略」；步骤字段为非法数值时宽容解析取默认值，
+    不再抛 ValueError 炸出整批
+- automation_runner.py：
+  - 单账号结束后的后台冷却检查：期间保持 app.running=True，检查结束在主线程 on_finish
+    （新增 _finish_after_cooldown_check），修复检查期间用户手动「开始」/冷却监听触发造成
+    双流程同时驱动键鼠的竞态；start_single_account_run 重置 _cooldown_wait_done
+  - _close_game：Alt+F4 兜底前重新激活游戏窗口（等待 WM_CLOSE 期间焦点可能漂移，
+    防止 Alt+F4 发给其他窗口）；窗口激活逻辑提取为 _activate_delta_window
+  - 登录结果轮询既未检测到重登按钮也未检测到三角洲图标（可能停在滑块验证/公告页）时，
+    输出 OCR 屏幕文字诊断便于失败归因；轮询循环响应停止信号
+  - _make_run_insert 回调异常改按失败处理（与 run_for_account 内部语义一致），不再吞成成功
+- automation.py：邮箱领取入口：esc 后若找不到邮箱入口，补按一次 esc（关闭可能误开的系统菜单）
+  再重试一次（自愈式，兼容「出售后停在仓库」与「未出售已在主界面」两种前置状态）
+- utils.find_image_on_screen：模板缺失时节流打印告警（原静默返回 False，
+  会导致登录成功/失败探测双双静默失效）
+- 测试：公告测试改独立文件隔离，新增 旧 settings 迁移 / 损坏文件备份 用例；
+  test_sell_items_meta 改临时目录隔离（不再读写真实 %APPDATA% sell_items 目录）
+
+----------------------------------------
 6.08.22 (2026-09-04)
 ----------------------------------------
 

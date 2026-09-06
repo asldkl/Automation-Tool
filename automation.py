@@ -403,11 +403,16 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     if settings.get("enable_email_currency", False):
         print("\n--- 检查邮箱货币 ---")
         set_operation("领取邮箱货币")
-        # 确保回到主界面
+        # 确保回到主界面（若此前已不在二级界面，esc 会打开系统菜单，由下方补按一次 esc 纠正）
         pyautogui.press("esc")
         time.sleep(1)
         # 注意区分点击结果：True=成功、'nofind'=未找到、'insert'=点击成功但插入步骤失败（界面已切换，仍需 esc 退出）
         _mail = _click(run_insert, "EMAIL_MAIL", config.EMAIL_MAIL, 10)
+        if _mail == "nofind":
+            # 第一次 esc 可能误开了系统菜单（此前已在主界面）：补按一次 esc 关闭后再找一次
+            pyautogui.press("esc")
+            time.sleep(1)
+            _mail = _click(run_insert, "EMAIL_MAIL", config.EMAIL_MAIL, 6)
         if _mail == "nofind":
             print("ℹ️ 未找到邮箱入口，跳过邮箱货币领取")
         else:
