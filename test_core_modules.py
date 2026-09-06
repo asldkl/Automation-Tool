@@ -515,5 +515,113 @@ class TestTemplateInsertSteps(unittest.TestCase):
         tis.save("Hazard_Operations", "before", [bad_step])
         self.assertFalse(tis.run_for_account(settings, stop, "账号A", "Hazard_Operations", "before"))
 
+
+# ==================== AI 视觉验证（离线解析，不联网） ====================
+class TestAiVisualCaptcha(unittest.TestCase):
+    """测试 ai_visual_captcha 的回复解析 / 坐标归一化 / 配置判定（不发真实请求、不点击）"""
+
+    def test_extract_json_plain_and_fenced(self):
+        """裸 JSON / ```json 包裹 / 带前后缀文字 均可提取"""
+        import ai_visual_captcha as avc
+        self.assertEqual(avc._extract_json('{"a": 1}'), {"a": 1})
+        self.assertEqual(avc._extract_json('```json\n{"a": 1}\n```'), {"a": 1})
+        self.assertEqual(avc._extract_json('好的，结果如下：{"a": {"b": 2}} 请查收'),
+                         {"a": {"b": 2}})
+        # 字符串内含花括号不破坏配对
+        self.assertEqual(avc._extract_json('{"s": "包含}花括号"}'), {"s": "包含}花括号"})
+        self.assertIsNone(avc._extract_json("没有json"))
+
+    def test_parse_response_none_and_slider(self):
+        """无验证码 / 滑块验证 的识别分支"""
+        import ai_visual_captcha as avc
+        r = avc.parse_model_response('{"captcha": false, "type": "none", "targets": []}', 1000, 800)
+        self.assertEqual(r["status"], "none")
+        r = avc.parse_model_response('{"captcha": true, "type": "slider", "targets": []}', 1000, 800)
+        self.assertEqual(r["status"], "slider")
+
+    def test_parse_response_click_bbox_and_point(self):
+        """click：bbox 中心优先；point 兜底；scale=1000 归一化换算"""
+        import ai_visual_captcha as avc
+        # bbox 像素 (100,200,200,300) → 中心 (150,250)
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"text": "塔", "bbox": [100, 200, 200, 300]}]}', 1920, 1080)
+        self.assertEqual(r["status"], "click")
+        self.assertEqual(r["points"], [(150, 250)])
+        self.assertEqual(r["labels"], ["塔"])
+        # point + scale 1000：(500,400)/1000 × (1920,1080) → (960,432)
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"text": "字", "point": [500, 400], "scale": 1000}]}', 1920, 1080)
+        self.assertEqual(r["points"], [(960, 432)])
+        # bbox 与 point 同时给出时用 bbox 中心
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"bbox": [0, 0, 10, 10], "point": [999, 999]}]}', 1000, 1000)
+        self.assertEqual(r["points"], [(5, 5)])
+
+    def test_parse_response_zero_to_one_float_scale(self):
+        """scale=1（0-1 浮点）按比例换算；>1 的值按像素处理"""
+        import ai_visual_captcha as avc
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"point": [0.5, 0.25], "scale": 1}]}', 1000, 800)
+        self.assertEqual(r["points"], [(500, 200)])
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"point": [500, 250], "scale": 1}]}', 1000, 800)
+        self.assertEqual(r["points"], [(500, 250)])
+
+    def test_parse_response_invalid(self):
+        """非 JSON / 有验证码但无有效坐标 → invalid"""
+        import ai_visual_captcha as avc
+        self.assertEqual(avc.parse_model_response("我看不懂", 1000, 800)["status"], "invalid")
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": [{"text": "没有坐标"}]}', 1000, 800)
+        self.assertEqual(r["status"], "invalid")
+
+    def test_get_preset(self):
+        """供应商预设回填；自定义返回空"""
+        import ai_visual_captcha as avc
+        p = avc.get_preset("智谱GLM")
+        self.assertTrue(p["base_url"].startswith("https://"))
+        self.assertEqual(p["model"], "glm-4v-flash")
+        self.assertEqual(avc.get_preset(avc.CUSTOM_PROVIDER), {"base_url": "", "model": ""})
+        self.assertEqual(avc.get_preset("不存在的"), {"base_url": "", "model": ""})
+        # 预设表结构完整
+        for item in avc.PROVIDER_PRESETS:
+            self.assertIn("name", item)
+            self.assertIn("base_url", item)
+            self.assertIn("model", item)
+            if item["name"] != avc.CUSTOM_PROVIDER:
+                self.assertTrue(item["base_url"].startswith("https://"))
+
+    def test_is_configured(self):
+        """未启用/缺配置 → False；启用且配置完整 → True"""
+        import ai_visual_captcha as avc
+        self.assertFalse(avc.is_configured({}))
+        self.assertFalse(avc.is_configured({
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://x/v1"}))
+        self.assertTrue(avc.is_configured({
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://x/v1",
+            "ai_visual_captcha_api_key": "sk-x",
+            "ai_visual_captcha_model": "glm-4v-flash"}))
+        # 关闭时即便配置完整也不生效
+        self.assertFalse(avc.is_configured({
+            "ai_visual_captcha_enabled": False,
+            "ai_visual_captcha_base_url": "https://x/v1",
+            "ai_visual_captcha_api_key": "sk-x",
+            "ai_visual_captcha_model": "glm-4v-flash"}))
+
+    def test_build_prompt_contains_resolution(self):
+        """提示词应包含屏幕分辨率与严格 JSON 要求"""
+        import ai_visual_captcha as avc
+        prompt = avc._build_prompt(1920, 1080)
+        self.assertIn("1920", prompt)
+        self.assertIn("1080", prompt)
+        self.assertIn("captcha", prompt)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

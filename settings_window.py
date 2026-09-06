@@ -345,6 +345,81 @@ class SettingsWindow:
         ttk.Button(jitter_row, text="保存", style='TButton',
                    command=self._save_jitter_settings, width=6).pack(side=tk.LEFT)
 
+        # ----- AI 视觉验证（登录点击式验证码） -----
+        frame_aiv = ttk.LabelFrame(parent, text="  AI视觉验证（登录验证码）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_aiv.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_aiv, text="WeGame 登录弹出点击式图片验证码时，截图交由视觉模型定位并自动点击；滑块验证仅提示手动处理。需配置供应商后才生效",
+                  style='SettingsSmall.TLabel', wraplength=520, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        self._aiv_enabled_var = tk.BooleanVar(value=self.app.settings.get("ai_visual_captcha_enabled", False))
+        ttk.Checkbutton(frame_aiv, text="启用 AI 视觉验证（登录第三态自动触发）",
+                        variable=self._aiv_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
+
+        import ai_visual_captcha as _aiv_module
+        aiv_row1 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row1.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(aiv_row1, text="供应商预设：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        stored_provider = str(self.app.settings.get("ai_visual_captcha_provider", "") or "").strip()
+        if stored_provider not in _aiv_module.PROVIDER_NAMES:
+            stored_provider = _aiv_module.PROVIDER_NAMES[0]
+        self._aiv_provider_var = tk.StringVar(value=stored_provider)
+        provider_combo = ttk.Combobox(aiv_row1, textvariable=self._aiv_provider_var,
+                                      values=_aiv_module.PROVIDER_NAMES, state="readonly", width=18)
+        provider_combo.pack(side=tk.LEFT, padx=(0, 8))
+        preset_note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS
+                            if p["name"] == stored_provider), "")
+        self._aiv_provider_note_var = tk.StringVar(value=preset_note)
+        ttk.Label(aiv_row1, textvariable=self._aiv_provider_note_var,
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        aiv_row2 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row2.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(aiv_row2, text="API地址：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self._aiv_base_url_var = tk.StringVar(value=self.app.settings.get("ai_visual_captcha_base_url", ""))
+        ttk.Entry(aiv_row2, textvariable=self._aiv_base_url_var, width=42).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+
+        aiv_row3 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row3.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(aiv_row3, text="API Key：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
+        self._aiv_api_key_var = tk.StringVar(value=self.app.settings.get("ai_visual_captcha_api_key", ""))
+        ttk.Entry(aiv_row3, textvariable=self._aiv_api_key_var, width=30, show="*").pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(aiv_row3, text="模型：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(12, 8))
+        self._aiv_model_var = tk.StringVar(value=self.app.settings.get("ai_visual_captcha_model", ""))
+        ttk.Entry(aiv_row3, textvariable=self._aiv_model_var, width=24).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+
+        aiv_row4 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
+        aiv_row4.pack(fill=tk.X)
+        ttk.Label(aiv_row4, text="最大轮次：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        try:
+            stored_rounds = max(1, min(10, int(self.app.settings.get("ai_visual_captcha_max_rounds", 5) or 5)))
+        except (TypeError, ValueError):
+            stored_rounds = 5
+        self._aiv_rounds_var = tk.IntVar(value=stored_rounds)
+        ttk.Spinbox(aiv_row4, from_=1, to=10, increment=1,
+                    textvariable=self._aiv_rounds_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(aiv_row4, text="轮（每轮截图-识别-点击-复核）", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(aiv_row4, text="测试识别", style='TButton',
+                   command=self._test_ai_visual_captcha, width=10).pack(side=tk.LEFT)
+
+        def _on_aiv_provider_changed(*_args):
+            name = self._aiv_provider_var.get()
+            preset = _aiv_module.get_preset(name)
+            note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS if p["name"] == name), "")
+            self._aiv_provider_note_var.set(note)
+            if name != _aiv_module.CUSTOM_PROVIDER and preset["base_url"]:
+                # 切换预设自动回填地址与模型（自定义不覆盖手填内容）
+                self._aiv_base_url_var.set(preset["base_url"])
+                self._aiv_model_var.set(preset["model"])
+        provider_combo.bind("<<ComboboxSelected>>", _on_aiv_provider_changed)
+        # 首次打开：存了预设名但地址为空时也回填一次
+        if stored_provider != _aiv_module.CUSTOM_PROVIDER and not self._aiv_base_url_var.get().strip():
+            _on_aiv_provider_changed()
+
         # ----- 实用工具 -----
         guide_frame = ttk.LabelFrame(parent, text="  实用工具  ", style='SettingsCard.TLabelframe', padding=12)
         guide_frame.pack(fill=tk.X, pady=(0, 8))
@@ -867,6 +942,38 @@ class SettingsWindow:
         config.save_settings(self.app.settings)
         messagebox.showinfo("已保存",
                             f"点击随机偏移：{'开启' if self._jitter_enabled_var.get() else '关闭'}，最大偏移 {max_px}px",
+                            parent=self.win)
+
+    def _apply_ai_visual_settings_to(self, target):
+        """把 AI 视觉验证设置写入 target 字典（_save 与测试按钮共用）"""
+        target["ai_visual_captcha_enabled"] = self._aiv_enabled_var.get()
+        target["ai_visual_captcha_provider"] = self._aiv_provider_var.get().strip()
+        target["ai_visual_captcha_base_url"] = self._aiv_base_url_var.get().strip()
+        target["ai_visual_captcha_api_key"] = self._aiv_api_key_var.get().strip()
+        target["ai_visual_captcha_model"] = self._aiv_model_var.get().strip()
+        try:
+            target["ai_visual_captcha_max_rounds"] = max(1, min(10, int(self._aiv_rounds_var.get())))
+        except (TypeError, ValueError):
+            target["ai_visual_captcha_max_rounds"] = 5
+
+    def _test_ai_visual_captcha(self):
+        """测试 AI 视觉验证：保存当前输入后对当前屏幕跑一次检测处理"""
+        import ai_visual_captcha
+        if (not self._aiv_base_url_var.get().strip()
+                or not self._aiv_api_key_var.get().strip()
+                or not self._aiv_model_var.get().strip()):
+            messagebox.showwarning("配置不完整", "请先填写 API地址、API Key 和模型。", parent=self.win)
+            return
+        # 先落盘窗口里的最新配置，保证测试与之后登录流程用的是同一份
+        self._apply_ai_visual_settings_to(self.app.settings)
+        config.save_settings(self.app.settings)
+        try:
+            self.win.iconify()  # 最小化设置窗口，避免入镜
+        except Exception:
+            pass
+        ai_visual_captcha.test_captcha(self.app)
+        messagebox.showinfo("测试已启动",
+                            "3 秒后开始截图识别（可在测试画面上放一张验证码图），\n结果与点击过程见主界面日志。",
                             parent=self.win)
 
     def _export_accounts(self):
@@ -1866,6 +1973,9 @@ class SettingsWindow:
 
         # 滚动量
         fresh["scroll_amount"] = self.scroll_amount_var.get()
+
+        # AI 视觉验证（登录验证码）
+        self._apply_ai_visual_settings_to(fresh)
 
         # 保存并同步内存中的设置引用
         config.save_settings(fresh)

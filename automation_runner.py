@@ -523,6 +523,12 @@ def _login_account(app, account_name, i, total, processed_accounts):
     返回 True=成功"""
     run_insert = _make_run_insert(app)   # 模板插入步骤执行回调（含 WeGame 登录模板）
     set_operation(app, f"WeGame 登录 ({i+1}/{total})")
+    # AI 视觉验证（点击式验证码）是否已启用且配置完整（每次登录时读取一次设置）
+    try:
+        import ai_visual_captcha as _avc
+        _ai_captcha_ready = _avc.is_configured(app.settings)
+    except Exception:
+        _ai_captcha_ready = False
 
     note_data = app._account_notes.get(account_name, {})
     if isinstance(note_data, dict):
@@ -725,8 +731,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 break
         else:
             # 4 次检查既没看到重新登录按钮也没看到三角洲图标（可能停在滑块验证/公告页等
-            # 第三态界面）：先输出屏幕文字诊断便于失败归因，再按原逻辑假设登录成功
-            # （真实状态由 _launch_game 的图标识别兜底判断）
+            # 第三态界面）：先输出屏幕文字诊断便于失败归因
             print("⚠️ 登录后既未检测到重新登录按钮也未检测到三角洲图标，可能停在验证/公告等界面")
             try:
                 screen_text = _ocr_capture_screen_text()
@@ -734,7 +739,25 @@ def _login_account(app, account_name, i, total, processed_accounts):
                     print(f"📋 屏幕文字: {screen_text}")
             except Exception:
                 pass
-            login_ok = True
+            if _ai_captcha_ready:
+                # AI 视觉验证：尝试自动处理点击式验证码（未启用时保持原行为）
+                try:
+                    import ai_visual_captcha
+                    captcha_ok, captcha_detail = ai_visual_captcha.solve_captcha(
+                        app, stop_event=app._stop_event)
+                except Exception as e:
+                    print(f"⚠️ AI视觉验证处理异常：{e}")
+                    captcha_ok, captcha_detail = False, f"处理异常：{e}"
+                print(f"🤖 AI视觉验证处理{'完成' if captcha_ok else '未完成'}：{captcha_detail}")
+                if captcha_ok:
+                    # 无验证码/已点完：视为登录成功（三角洲图标由 _launch_game 的识别兜底判断）
+                    login_ok = True
+                else:
+                    # 验证码未解决（滑块需手动/无效回复/接口异常）：本轮按登录失败处理走重试
+                    login_ok = False
+            else:
+                # 未启用 AI 视觉验证：按原逻辑假设登录成功（真实状态由 _launch_game 兜底判断）
+                login_ok = True
 
         if not login_ok:
             continue

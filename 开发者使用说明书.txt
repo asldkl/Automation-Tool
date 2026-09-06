@@ -676,6 +676,36 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
+6.08.22 (2026-09-06b)
+----------------------------------------
+
+- 新增 AI 视觉验证 ai_visual_captcha.py（精简自 LCA-main 的「视觉 Agent」思路）：
+  - 用途：WeGame 登录点击「登录」后可能弹出的**点击式图片验证码**（请依次点击/点选文字图标）
+    自动处理；检测到滑块拼图验证时仅日志提示手动完成（不做拖动）
+  - 流程：隐藏日志遮罩（防入镜）→ 彩色全屏截图（JPEG 90→55 逐级压缩 ≤4MB）→
+    发国内视觉模型（OpenAI 兼容 /chat/completions，图走 base64 data URL，temperature=0）→
+    解析严格 JSON {"captcha","type","targets":[{"text","bbox","point","scale"}]} →
+    坐标归一化（scale=1000/1024 按比例、1 为 0-1 浮点、缺省像素；bbox 中心优先 point 兜底）→
+    smooth_move_to + 拟人点击（间隔 0.6-1.2s 随机）→ 等 2.5s 重新截图复核，验证码消失即成功
+  - 轮次：默认 5（可配 1-10）；「未检测到验证码」即返回成功；模型不给坐标宁可返回找不到（防幻觉）
+  - 挂载点：_login_account 登录结果轮询的第三态（既未见重登按钮也未见三角洲图标）。
+    启用且配置完整才触发（is_configured）；处理成功=登录成功；失败（滑块/无效回复/接口异常）=
+    本轮登录失败走原有重试（最多 3 次）。未启用时行为与旧版完全一致
+  - 供应商预设（下拉切换自动回填地址+模型，可完全自定义）：
+    智谱GLM（glm-4v-flash 免费）/ 阿里百炼（qwen-vl-plus）/ 月之暗面Kimi（moonshot-v1-8k-vision-preview）/
+    豆包火山方舟（doubao-1.5-vision-lite）/ 硅基流动（Qwen2.5-VL）/
+    自定义；HTTP 用标准库 urllib（无新依赖）
+  - 设置界面：全局设置页新增「AI视觉验证（登录验证码）」区块（启用勾选、供应商预设、
+    API地址、API Key 密码态、模型、最大轮次、「测试识别」按钮——先落盘窗口配置再后台线程
+    完整跑一遍检测处理，无验证码时不会点击任何东西）
+  - 配置项：ai_visual_captcha_enabled（默认 False）/ ai_visual_captcha_provider /
+    ai_visual_captcha_base_url / ai_visual_captcha_api_key / ai_visual_captcha_model /
+    ai_visual_captcha_max_rounds（默认 5）
+  - 打包：三角洲自动工具.spec hiddenimports 已加入 'ai_visual_captcha'
+  - 测试：test_core_modules 新增 TestAiVisualCaptcha 8 项（JSON 提取容错、坐标归一化、
+    none/slider/invalid 分支、预设表结构、is_configured），全部离线不联网不点击
+
+----------------------------------------
 6.08.22 (2026-09-06)
 ----------------------------------------
 

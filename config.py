@@ -226,6 +226,13 @@ DEFAULT_SETTINGS = {
     "custom_ops_confidence": 0.7,                # 自定义操作默认找图置信度
     "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）
     "custom_ops_pause": 0.5,                     # 自定义操作默认点击后停顿（秒）
+    # AI 视觉验证（WeGame 登录点击式验证码，配置完整才生效）
+    "ai_visual_captcha_enabled": False,          # 是否启用 AI 视觉验证处理
+    "ai_visual_captcha_provider": "",            # 供应商预设名（智谱GLM/阿里百炼/月之暗面Kimi/豆包（火山方舟）/硅基流动/自定义）
+    "ai_visual_captcha_base_url": "",            # OpenAI 兼容接口基地址
+    "ai_visual_captcha_api_key": "",             # API Key
+    "ai_visual_captcha_model": "",               # 视觉模型名称
+    "ai_visual_captcha_max_rounds": 5,           # 最大处理轮次（每轮截图-识别-点击-复核）
 }
 
 _settings_cache = None
