@@ -605,6 +605,43 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(avc.normalize_model("qwen-vl-plus"), "qwen-vl-plus")
         self.assertEqual(avc.normalize_model(""), "")
 
+    def test_ask_model_retries_on_429(self):
+        """429 限流应自动重试：前两次 429、第三次成功"""
+        import io
+        import urllib.error
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        def _resp(payload):
+            return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+        ok_payload = {"choices": [{"message": {"content": '{"captcha": false}'}}]}
+        responses = [
+            urllib.error.HTTPError("url", 429, "Too Many Requests", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError("url", 429, "Too Many Requests", {}, io.BytesIO(b"")),
+            _resp(ok_payload),
+        ]
+        with mock.patch.object(avc.urllib.request, "urlopen", side_effect=responses), \
+             mock.patch.object(avc.time, "sleep") as sleep_mock, \
+             mock.patch.object(avc, "RETRY_BACKOFF_SECONDS", 0.0):
+            content = avc._ask_model("https://x/v1", "sk", "m", "b64", "p")
+        self.assertIn("captcha", content)
+        self.assertEqual(sleep_mock.call_count, 2)  # 两次 429 各退避一次
+
+    def test_ask_model_does_not_retry_401(self):
+        """401 密钥无效应立即抛出，不重试"""
+        import io
+        import urllib.error
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        with mock.patch.object(avc.urllib.request, "urlopen",
+                               side_effect=urllib.error.HTTPError("url", 401, "Unauthorized", {}, io.BytesIO(b""))), \
+             mock.patch.object(avc.time, "sleep") as sleep_mock:
+            with self.assertRaises(urllib.error.HTTPError):
+                avc._ask_model("https://x/v1", "bad-key", "m", "b64", "p")
+        self.assertEqual(sleep_mock.call_count, 0)
+
     def test_is_configured(self):
         """未启用/缺配置 → False；启用且配置完整 → True"""
         import ai_visual_captcha as avc

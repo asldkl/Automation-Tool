@@ -25,6 +25,8 @@ import utils
 REQUEST_TIMEOUT_SECONDS = 60.0
 # 复核轮次间等待（点击后给页面反应时间）
 RECHECK_WAIT_SECONDS = 2.5
+# 429/5xx 重试退避基数（秒）：第 n 次重试等待 n×该值；免费模型高峰期限流常见
+RETRY_BACKOFF_SECONDS = 5.0
 # JPEG 压缩：从 90 起逐级降到 55（超过 4MB 降一档，与 LCA 同思路）
 JPEG_QUALITIES = (90, 85, 80, 75, 70, 65, 60, 55)
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -248,8 +250,10 @@ def _capture_screen_jpeg():
     return None, None, 0, 0
 
 
-def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIMEOUT_SECONDS):
-    """调用 OpenAI 兼容 /chat/completions（图像走 base64 data URL），返回文本内容"""
+def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIMEOUT_SECONDS,
+               retries=3, backoff_seconds=None):
+    """调用 OpenAI 兼容 /chat/completions（图像走 base64 data URL），返回文本内容。
+    429 限流 / 5xx 服务器错误自动重试 retries 次（免费模型高峰期常见 429），退避等待"""
     url = str(base_url).strip().rstrip("/")
     if not url.endswith("/chat/completions"):
         url = url + "/chat/completions"
@@ -268,6 +272,7 @@ def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIME
             }
         ],
     }
+    wait_base = backoff_seconds if backoff_seconds is not None else RETRY_BACKOFF_SECONDS
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -277,20 +282,32 @@ def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIME
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8", errors="replace"))
-    choices = data.get("choices") or []
-    if not choices:
-        raise RuntimeError(f"模型返回无内容：{str(data)[:200]}")
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and str(item.get("type") or "") in ("text", "output_text"):
-                parts.append(str(item.get("text") or ""))
-        content = "\n".join(p for p in parts if p)
-    return str(content or "").strip()
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            choices = data.get("choices") or []
+            if not choices:
+                raise RuntimeError(f"模型返回无内容：{str(data)[:200]}")
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict) and str(item.get("type") or "") in ("text", "output_text"):
+                        parts.append(str(item.get("text") or ""))
+                content = "\n".join(p for p in parts if p)
+            return str(content or "").strip()
+        except urllib.error.HTTPError as e:
+            # 429 限流 / 5xx：退避后重试；其他错误（401 密钥无效、400 参数错误等）直接抛出
+            if e.code == 429 or 500 <= e.code < 600:
+                last_exc = e
+                if attempt < retries:
+                    time.sleep(wait_base * (attempt + 1))
+                    continue
+            raise
+    raise last_exc
 
 
 def _hide_overlay():

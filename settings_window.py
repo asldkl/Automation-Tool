@@ -966,7 +966,7 @@ class SettingsWindow:
         # ----- AI 视觉验证 -----
         frame_aiv = ttk.LabelFrame(body, text="  AI 视觉验证（点击式验证码）  ", style='SettingsCard.TLabelframe', padding=8)
         frame_aiv.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(frame_aiv, text="截图交由视觉模型定位验证目标并自动点击；国内供应商走 OpenAI 兼容接口",
+        ttk.Label(frame_aiv, text="截图交由视觉模型定位验证目标并自动点击；国内供应商走 OpenAI 兼容接口。免费模型高峰期可能限流（429），程序会自动重试；持续失败可换其他供应商预设",
                   style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
         self._aiv_enabled_var = tk.BooleanVar(value=s.get("ai_visual_captcha_enabled", False))
         ttk.Checkbutton(frame_aiv, text="启用 AI 视觉验证（需下方供应商配置完整）",
@@ -1038,16 +1038,23 @@ class SettingsWindow:
         # ----- 底部按钮：测试 + 保存 -----
         btn_bar = ttk.Frame(body, style='SettingsInner.TFrame')
         btn_bar.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(btn_bar, text="关闭窗口时自动保存（与其他设置页一致）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
         ttk.Button(btn_bar, text="测试完整流程", style='TButton',
-                   command=self._test_captcha_router, width=12).pack(side=tk.LEFT, padx=(0, 6))
+                   command=self._test_captcha_router, width=12).pack(side=tk.LEFT, padx=(6, 6))
         ttk.Button(btn_bar, text="仅测试滑块", style='TButton',
                    command=self._test_slider_yolo, width=10).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_bar, text="仅测试AI", style='TButton',
                    command=self._test_ai_visual_captcha, width=10).pack(side=tk.LEFT)
-        ttk.Button(btn_bar, text="保存", style='Accent.TButton',
+        ttk.Button(btn_bar, text="立即保存", style='Accent.TButton',
                    command=self._save_captcha_settings, width=8).pack(side=tk.RIGHT)
 
         def _on_close():
+            # 与项目其他设置页一致：关闭时自动保存（避免改完忘点保存导致配置不生效）
+            try:
+                self._save_captcha_settings(silent=True)
+            except Exception:
+                pass
             try:
                 win.grab_release()
             except Exception:
@@ -1063,8 +1070,8 @@ class SettingsWindow:
         except Exception:
             pass
 
-    def _save_captcha_settings(self):
-        """保存验证码设置窗口的全部配置（总开关/关键词/滑块/AI）"""
+    def _save_captcha_settings(self, silent=False):
+        """保存验证码设置窗口的全部配置（总开关/关键词/滑块/AI）；关闭窗口时静默自动保存"""
         target = dict(config.load_settings())
         target["captcha_auto_enabled"] = self._captcha_auto_var.get()
         target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
@@ -1080,7 +1087,8 @@ class SettingsWindow:
                     f"当前状态：{'✅ 已启用' if target.get('captcha_auto_enabled') else '⛔ 未启用'}")
         except Exception:
             pass
-        messagebox.showinfo("已保存", "验证码设置已保存。", parent=self._captcha_parent())
+        if not silent:
+            messagebox.showinfo("已保存", "验证码设置已保存。", parent=self._captcha_parent())
 
     def _apply_ai_visual_settings_to(self, target):
         """把 AI 视觉验证设置写入 target 字典（保存与测试按钮共用）"""
