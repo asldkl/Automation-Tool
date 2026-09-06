@@ -33,7 +33,7 @@ MAX_IMAGE_BYTES = 4 * 1024 * 1024
 CUSTOM_PROVIDER = "自定义"
 PROVIDER_PRESETS = [
     {"name": "智谱GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4",
-     "model": "glm-4v-flash", "note": "glm-4v-flash 免费"},
+     "model": "glm-4.6v-flash", "note": "glm-4.6v-flash 免费"},
     {"name": "阿里百炼", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
      "model": "qwen-vl-plus", "note": "qwen-vl-plus 价格低"},
     {"name": "月之暗面Kimi", "base_url": "https://api.moonshot.cn/v1",
@@ -45,6 +45,17 @@ PROVIDER_PRESETS = [
     {"name": CUSTOM_PROVIDER, "base_url": "", "model": "", "note": "手填地址与模型"},
 ]
 PROVIDER_NAMES = [p["name"] for p in PROVIDER_PRESETS]
+
+# 已下线的旧模型 → 当前替代（旧配置调用时自动升级，避免静默失败）
+RETIRED_MODELS = {
+    "glm-4v-flash": "glm-4.6v-flash",  # 初代 glm-4v-flash 已下线
+}
+
+
+def normalize_model(model):
+    """旧模型名自动映射到当前替代（其余原样返回）"""
+    m = str(model or "").strip()
+    return RETIRED_MODELS.get(m.lower(), m)
 
 
 def get_preset(provider_name):
@@ -315,7 +326,7 @@ def solve_captcha(app, stop_event=None, max_rounds=None):
         return False, "AI视觉验证未启用或配置不完整"
     base_url = str(settings.get("ai_visual_captcha_base_url") or "").strip()
     api_key = str(settings.get("ai_visual_captcha_api_key") or "").strip()
-    model = str(settings.get("ai_visual_captcha_model") or "").strip()
+    model = normalize_model(settings.get("ai_visual_captcha_model"))
     try:
         rounds = int(max_rounds or settings.get("ai_visual_captcha_max_rounds", 5) or 5)
     except (TypeError, ValueError):

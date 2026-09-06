@@ -1004,7 +1004,8 @@ class SettingsWindow:
         ttk.Entry(aiv_row3, textvariable=self._aiv_api_key_var, width=28, show="*").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(aiv_row3, text="模型：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(10, 8))
-        self._aiv_model_var = tk.StringVar(value=s.get("ai_visual_captcha_model", ""))
+        # 旧模型名（如已下线的 glm-4v-flash）显示时自动升级为当前替代
+        self._aiv_model_var = tk.StringVar(value=_aiv_module.normalize_model(s.get("ai_visual_captcha_model", "")))
         ttk.Entry(aiv_row3, textvariable=self._aiv_model_var, width=24).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
 

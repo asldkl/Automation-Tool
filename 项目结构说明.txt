@@ -10,6 +10,7 @@
 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作。
 
 【版本历史】
+6.08.22 (2026-09-06e)：智谱免费模型更替——初代 glm-4v-flash 已下线，预设改用 glm-4.6v-flash（GLM-4.6V 免费版）；新增 RETIRED_MODELS 旧模型映射（normalize_model 调用时自动升级 glm-4v-flash→glm-4.6v-flash，大小写不敏感），存量配置不改动也能正常调用；设置窗口模型输入框按映射显示、保存即落盘新名
 6.08.22 (2026-09-06d)：验证码处理重构为统一调度 captcha_router.py——登录第三态先 OCR 识别屏幕文字按关键词判定验证类型（滑块关键词→滑块YOLO拖动、点击关键词→AI视觉点击、未命中→AI兜底判定，未配置AI则放行），滑块YOLO未检出元素（OCR误报）自动落AI兜底，AI判出滑块仍委托YOLO；新增总开关 captcha_auto_enabled（关闭时登录流程不做任何验证码处理）+ 可配置 OCR 关键词（captcha_slider_keywords/captcha_click_keywords）；设置→全局设置改为「登录验证码」小区块（当前状态显示+「验证码设置…」按钮），总开关唯一入口在统一管理窗口内（每次打开从设置重读，避免双开关状态不同步；窗口内：总开关/OCR关键词/滑块YOLO/AI视觉 四区块集中编辑+独立保存+三个测试按钮[完整流程/仅滑块/仅AI]，保存后同步全局页状态显示）
 6.08.22 (2026-09-06c)：新增滑块验证自动处理 slider_captcha.py（YOLO 缺口定位版，复用旧模块名）：用户自训练 YOLOv8 ONNX（best.onnx，类别 gap/slider/puzzle，onnxruntime 推理免 torch）整屏检测缺口与拼图块，拖动距离=gap中心x−puzzle中心x（无puzzle退用slider）+微调，smoothstep 拟人拖动后重新检测复核（默认最多3次）；无需旧版区域框选配置；触发链=登录第三态先滑块YOLO（独立开关 slider_yolo_enabled，未检测到滑块元素自动落到 AI 点击验证）→ AI 视觉验证，AI 判定为滑块时也委托本模块；设置→全局设置新增「滑块验证（YOLO）」区块（启用/置信度/拖动微调/最大尝试/测试滑块）；spec 打包 best.onnx + hiddenimports；离线测试7项（letterbox往返/NMS抑制/坐标裁剪/names元数据/拖动距离/启用判定/权重定位）
 6.08.22 (2026-09-06b)：新增 AI 视觉验证 ai_visual_captcha.py（精简自 LCA「视觉 Agent」：截图→国内视觉模型定位→拟人点击→复核），处理 WeGame 登录点击式图片验证码，滑块仅提示手动；默认关闭，设置→全局设置「AI视觉验证」配置供应商后才生效；供应商预设（智谱GLM/阿里百炼/月之暗面Kimi/豆包方舟/硅基流动/自定义）走 OpenAI 兼容 /chat/completions+base64 图，坐标支持 scale 1000/1024/0-1 归一化、bbox 中心优先；挂载点=登录轮询第三态（既无重登按钮也无三角洲图标），处理失败走登录重试；测试按钮完整走一遍检测；spec hiddenimports 已加

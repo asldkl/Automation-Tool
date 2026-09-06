@@ -585,7 +585,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         import ai_visual_captcha as avc
         p = avc.get_preset("智谱GLM")
         self.assertTrue(p["base_url"].startswith("https://"))
-        self.assertEqual(p["model"], "glm-4v-flash")
+        self.assertEqual(p["model"], "glm-4.6v-flash")
         self.assertEqual(avc.get_preset(avc.CUSTOM_PROVIDER), {"base_url": "", "model": ""})
         self.assertEqual(avc.get_preset("不存在的"), {"base_url": "", "model": ""})
         # 预设表结构完整
@@ -595,6 +595,15 @@ class TestAiVisualCaptcha(unittest.TestCase):
             self.assertIn("model", item)
             if item["name"] != avc.CUSTOM_PROVIDER:
                 self.assertTrue(item["base_url"].startswith("https://"))
+
+    def test_normalize_model_retired_upgrade(self):
+        """已下线旧模型自动映射到当前替代；其他值原样返回"""
+        import ai_visual_captcha as avc
+        self.assertEqual(avc.normalize_model("glm-4v-flash"), "glm-4.6v-flash")
+        self.assertEqual(avc.normalize_model("GLM-4V-FLASH"), "glm-4.6v-flash")  # 大小写不敏感
+        self.assertEqual(avc.normalize_model("glm-4.6v-flash"), "glm-4.6v-flash")
+        self.assertEqual(avc.normalize_model("qwen-vl-plus"), "qwen-vl-plus")
+        self.assertEqual(avc.normalize_model(""), "")
 
     def test_is_configured(self):
         """未启用/缺配置 → False；启用且配置完整 → True"""
