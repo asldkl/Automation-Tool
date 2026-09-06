@@ -348,7 +348,23 @@ def solve_captcha(app, stop_event=None, max_rounds=None):
                 print("🤖 AI视觉验证：未检测到验证码")
                 return True, f"第{round_index}轮未检测到验证码"
             if status == "slider":
-                print("🤖 AI视觉验证：检测到滑块拼图验证，请在游戏内手动完成（本功能仅处理点击式验证）")
+                # 滑块验证：委托本地 YOLO 模块处理（未启用则提示手动）
+                slider_module = None
+                try:
+                    import slider_captcha as slider_module
+                except Exception:
+                    pass
+                if slider_module is not None and slider_module.is_enabled(settings):
+                    print("🤖 AI视觉验证：检测到滑块验证，转交滑块YOLO模块处理...")
+                    found, solved, slider_detail = slider_module.solve_slider_yolo(
+                        app, stop_event=stop_event, manage_overlay=False)
+                    if found and solved:
+                        # 继续下一轮 AI 复核（此时验证码应已消失）
+                        if round_index < rounds:
+                            time.sleep(RECHECK_WAIT_SECONDS)
+                        continue
+                    return False, f"滑块YOLO处理未通过：{slider_detail}"
+                print("🤖 AI视觉验证：检测到滑块拼图验证，请在游戏内手动完成（滑块YOLO未启用）")
                 return False, "检测到滑块验证，需手动处理"
             if status == "invalid":
                 print(f"⚠️ AI视觉验证：模型未返回有效坐标（回复：{content[:120]}）")

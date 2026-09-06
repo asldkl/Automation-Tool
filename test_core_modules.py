@@ -623,5 +623,89 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertIn("1080", prompt)
         self.assertIn("captcha", prompt)
 
+
+# ==================== 滑块验证 YOLO（离线数学与解析，不加载模型） ====================
+class TestSliderCaptchaYolo(unittest.TestCase):
+    """测试 slider_captcha 的 letterbox / NMS / 坐标映射 / 拖动距离 / 元数据解析（不跑真实推理）"""
+
+    def test_is_enabled(self):
+        import slider_captcha as sc
+        self.assertFalse(sc.is_enabled({}))
+        self.assertFalse(sc.is_enabled({"slider_yolo_enabled": False}))
+        self.assertTrue(sc.is_enabled({"slider_yolo_enabled": True}))
+
+    def test_letterbox_roundtrip(self):
+        """letterbox：2560x1440 → 640 等比缩放，回映射坐标应还原"""
+        import numpy as np
+        import slider_captcha as sc
+        img = np.zeros((1440, 2560, 3), dtype=np.uint8)
+        tensor, scale, dw, dh = sc.letterbox(img)
+        self.assertEqual(tensor.shape, (1, 3, 640, 640))
+        self.assertAlmostEqual(scale, 0.25)
+        self.assertEqual(dw, 0)
+        self.assertEqual(dh, (640 - 360) // 2)
+        boxes = np.array([[320.0, 320.0, 400.0, 400.0]])
+        back = sc._scale_boxes_back(boxes, scale, dw, dh, 2560, 1440)
+        # letterbox 中 (320,320) → 原图 ((320-0)/0.25, (320-140)/0.25) = (1280, 720)
+        self.assertEqual(back[0][0], 1280)
+        self.assertEqual(back[0][1], 720)
+
+    def test_scale_boxes_clip(self):
+        """映射回原图后坐标应裁剪到屏幕范围内"""
+        import numpy as np
+        import slider_captcha as sc
+        boxes = np.array([[-50.0, -50.0, 10000.0, 10000.0]])
+        back = sc._scale_boxes_back(boxes, 1.0, 0, 0, 1000, 800)
+        self.assertEqual(back[0][0], 0)
+        self.assertEqual(back[0][1], 0)
+        self.assertEqual(back[0][2], 999)
+        self.assertEqual(back[0][3], 799)
+
+    def test_nms_suppress_overlap(self):
+        """NMS：重叠框被抑制，独立框保留"""
+        import numpy as np
+        import slider_captcha as sc
+        boxes = np.array([
+            [0, 0, 10, 10],
+            [1, 1, 11, 11],     # 与第0个高度重叠，应被抑制
+            [100, 100, 120, 120],  # 独立，应保留
+        ], dtype=np.float64)
+        scores = np.array([0.9, 0.8, 0.7])
+        keep = sc._nms(boxes, scores, iou_threshold=0.45)
+        self.assertEqual(sorted(keep), [0, 2])
+
+    def test_parse_names_from_metadata(self):
+        """Ultralytics names 元数据 JSON 解析；坏数据回退"""
+        import slider_captcha as sc
+        names = sc._parse_names_from_metadata({"names": '{"0": "gap", "1": "slider", "2": "puzzle"}'})
+        self.assertEqual(names, {0: "gap", 1: "slider", 2: "puzzle"})
+        self.assertIsNone(sc._parse_names_from_metadata({"names": "not-json"}))
+        self.assertIsNone(sc._parse_names_from_metadata({}))
+
+    def test_compute_drag_distance(self):
+        """拖动距离 = gap 中心x − puzzle 中心x + 微调；puzzle 缺失退用 slider"""
+        import slider_captcha as sc
+
+        def det(cls, cx, conf=0.9):
+            return {"class": cls, "conf": conf, "box": [cx - 10, 100, cx + 10, 120],
+                    "center": (cx, 110)}
+
+        distance, _ = sc.compute_drag_distance(
+            [det("gap", 800), det("puzzle", 300)], offset=5)
+        self.assertEqual(distance, 505)
+        # 无 puzzle 时用 slider
+        distance, _ = sc.compute_drag_distance([det("gap", 800), det("slider", 300)])
+        self.assertEqual(distance, 500)
+        # 缺 gap → 无法计算
+        distance, detail = sc.compute_drag_distance([det("puzzle", 300)])
+        self.assertIsNone(distance)
+
+    def test_resolve_model_path_missing_returns_empty(self):
+        """权重不存在时返回空串（solve 时给出明确提示）"""
+        import slider_captcha as sc
+        path = sc.resolve_model_path()
+        # 开发机上 best.onnx 在项目根目录应能找到；若被移走则为空串，不应抛异常
+        self.assertIsInstance(path, str)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

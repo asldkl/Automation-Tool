@@ -420,6 +420,33 @@ class SettingsWindow:
         if stored_provider != _aiv_module.CUSTOM_PROVIDER and not self._aiv_base_url_var.get().strip():
             _on_aiv_provider_changed()
 
+        # ----- 滑块验证（YOLO 缺口定位） -----
+        frame_slider = ttk.LabelFrame(parent, text="  滑块验证（YOLO）  ", style='SettingsCard.TLabelframe', padding=12)
+        frame_slider.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_slider, text="WeGame 登录弹出滑块拼图验证时，用 YOLO 模型（best.onnx）定位缺口并自动拟人拖动；无需框选区域。与上方 AI 视觉验证相互独立",
+                  style='SettingsSmall.TLabel', wraplength=520, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 8))
+
+        self._slider_enabled_var = tk.BooleanVar(value=self.app.settings.get("slider_yolo_enabled", False))
+        ttk.Checkbutton(frame_slider, text="启用滑块自动拖动（需程序目录有 best.onnx）",
+                        variable=self._slider_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
+
+        slider_row1 = ttk.Frame(frame_slider, style='SettingsInner.TFrame')
+        slider_row1.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(slider_row1, text="检测置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._slider_conf_var = tk.StringVar(value=str(self.app.settings.get("slider_yolo_confidence", 0.35)))
+        ttk.Entry(slider_row1, textvariable=self._slider_conf_var, width=6).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(slider_row1, text="拖动微调(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._slider_offset_var = tk.StringVar(value=str(self.app.settings.get("slider_yolo_drag_offset", 0)))
+        ttk.Entry(slider_row1, textvariable=self._slider_offset_var, width=6).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(slider_row1, text="最大尝试：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        self._slider_attempts_var = tk.IntVar(value=max(1, min(6, int(self.app.settings.get("slider_yolo_max_attempts", 3) or 3))))
+        ttk.Spinbox(slider_row1, from_=1, to=6, increment=1,
+                    textvariable=self._slider_attempts_var, width=4).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(slider_row1, text="测试滑块", style='TButton',
+                   command=self._test_slider_yolo, width=10).pack(side=tk.LEFT)
+
         # ----- 实用工具 -----
         guide_frame = ttk.LabelFrame(parent, text="  实用工具  ", style='SettingsCard.TLabelframe', padding=12)
         guide_frame.pack(fill=tk.X, pady=(0, 8))
@@ -955,6 +982,41 @@ class SettingsWindow:
             target["ai_visual_captcha_max_rounds"] = max(1, min(10, int(self._aiv_rounds_var.get())))
         except (TypeError, ValueError):
             target["ai_visual_captcha_max_rounds"] = 5
+
+    def _apply_slider_yolo_settings_to(self, target):
+        """把滑块 YOLO 设置写入 target 字典（_save 与测试按钮共用）"""
+        target["slider_yolo_enabled"] = self._slider_enabled_var.get()
+        try:
+            target["slider_yolo_confidence"] = min(0.9, max(0.1, float(self._slider_conf_var.get())))
+        except (TypeError, ValueError):
+            target["slider_yolo_confidence"] = 0.35
+        try:
+            target["slider_yolo_drag_offset"] = max(-100, min(100, int(self._slider_offset_var.get())))
+        except (TypeError, ValueError):
+            target["slider_yolo_drag_offset"] = 0
+        try:
+            target["slider_yolo_max_attempts"] = max(1, min(6, int(self._slider_attempts_var.get())))
+        except (TypeError, ValueError):
+            target["slider_yolo_max_attempts"] = 3
+
+    def _test_slider_yolo(self):
+        """测试滑块 YOLO：保存当前输入后对当前屏幕跑一次检测+处理"""
+        import slider_captcha
+        self._apply_slider_yolo_settings_to(self.app.settings)
+        config.save_settings(self.app.settings)
+        if not slider_captcha.resolve_model_path():
+            messagebox.showwarning("缺少模型",
+                                   f"未找到 {slider_captcha.MODEL_FILENAME}，请把权重文件放到程序目录。",
+                                   parent=self.win)
+            return
+        try:
+            self.win.iconify()  # 最小化设置窗口，避免入镜
+        except Exception:
+            pass
+        slider_captcha.test_slider_yolo(self.app)
+        messagebox.showinfo("测试已启动",
+                            "3 秒后开始截图检测，结果与拖动过程见主界面日志。",
+                            parent=self.win)
 
     def _test_ai_visual_captcha(self):
         """测试 AI 视觉验证：保存当前输入后对当前屏幕跑一次检测处理"""
@@ -1976,6 +2038,9 @@ class SettingsWindow:
 
         # AI 视觉验证（登录验证码）
         self._apply_ai_visual_settings_to(fresh)
+
+        # 滑块验证（YOLO）
+        self._apply_slider_yolo_settings_to(fresh)
 
         # 保存并同步内存中的设置引用
         config.save_settings(fresh)

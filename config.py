@@ -233,6 +233,11 @@ DEFAULT_SETTINGS = {
     "ai_visual_captcha_api_key": "",             # API Key
     "ai_visual_captcha_model": "",               # 视觉模型名称
     "ai_visual_captcha_max_rounds": 5,           # 最大处理轮次（每轮截图-识别-点击-复核）
+    # 滑块验证（YOLO 缺口定位，权重 best.onnx）
+    "slider_yolo_enabled": False,                # 是否启用滑块 YOLO 自动拖动
+    "slider_yolo_confidence": 0.35,              # YOLO 检测置信度阈值
+    "slider_yolo_drag_offset": 0,                # 拖动距离微调（像素，正=多拖）
+    "slider_yolo_max_attempts": 3,               # 最大拖动尝试次数
 }
 
 _settings_cache = None
