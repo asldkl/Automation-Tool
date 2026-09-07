@@ -900,13 +900,15 @@ class SettingsWindow:
         win = tk.Toplevel(self.win)
         self._captcha_win = win
         win.title("验证码设置")
-        win.geometry("600x680")
         win.minsize(520, 560)
         win.transient(self.win)
         try:
             utils.set_window_icon(win)
         except Exception:
             pass
+        # 窗口大小位置记忆（关闭时保存，下次打开恢复；首次默认 600x680 居中）
+        utils.restore_window_geometry(win, "captcha_window_geometry",
+                                      default_size="600x680", min_size=(520, 560))
 
         body = ttk.Frame(win, style='SettingsInner.TFrame', padding=10)
         body.pack(fill=tk.BOTH, expand=True)
@@ -936,6 +938,22 @@ class SettingsWindow:
         ttk.Entry(ocr_row2, textvariable=self._cap_click_kw_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(frame_ocr, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击",
                   style='SettingsSmall.TLabel').pack(anchor='w', pady=(4, 0))
+
+        # 识别区域（滑块YOLO与AI视觉共用，只截图该区域提升识别正确率）
+        region_sep = ttk.Separator(frame_ocr, orient='horizontal')
+        region_sep.pack(fill=tk.X, pady=(8, 6))
+        self._cap_region_enabled_var = tk.BooleanVar(value=s.get("captcha_region_enabled", False))
+        ttk.Checkbutton(frame_ocr, text="仅识别指定区域（验证码通常固定在窗口某处，只截该区域发给识别可提升正确率）",
+                        variable=self._cap_region_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
+        region_row = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
+        region_row.pack(fill=tk.X)
+        ttk.Label(region_row, text="区域 (x, y, w, h)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        stored_region = s.get("captcha_region", [0, 0, 0, 0])
+        self._cap_region_var = tk.StringVar(value=str(stored_region))
+        ttk.Entry(region_row, textvariable=self._cap_region_var, width=22).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(region_row, text="框选区域", style='TButton',
+                   command=self._select_captcha_region, width=10).pack(side=tk.LEFT)
 
         # ----- 滑块验证（YOLO） -----
         frame_slider = ttk.LabelFrame(body, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
@@ -1055,6 +1073,7 @@ class SettingsWindow:
                 self._save_captcha_settings(silent=True)
             except Exception:
                 pass
+            utils.save_window_geometry(win, "captcha_window_geometry")
             try:
                 win.grab_release()
             except Exception:
@@ -1062,20 +1081,105 @@ class SettingsWindow:
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _on_close)
         try:
-            win.update_idletasks()
-            x = (win.winfo_screenwidth() - win.winfo_width()) // 2
-            y = (win.winfo_screenheight() - win.winfo_height()) // 3
-            win.geometry(f"+{x}+{y}")
             win.grab_set()
         except Exception:
             pass
 
+    def _select_captcha_region(self):
+        """让用户在屏幕上拖动框选验证码识别区域（滑块YOLO与AI视觉共用）"""
+        # 暂时隐藏验证码设置窗口与其下的设置窗口，露出目标画面
+        hiding = []
+        for w in (getattr(self, "_captcha_win", None), self.win):
+            try:
+                if w is not None and w.winfo_exists():
+                    w.withdraw()
+                    hiding.append(w)
+            except Exception:
+                pass
+
+        def _show_overlay():
+            import tkinter as tk_overlay
+            overlay = tk_overlay.Toplevel()
+            overlay.attributes('-fullscreen', True)
+            overlay.attributes('-alpha', 0.3)
+            overlay.attributes('-topmost', True)
+            overlay.configure(bg='black')
+            overlay.config(cursor="crosshair")
+            canvas = tk_overlay.Canvas(overlay, highlightthickness=0, bg='black')
+            canvas.pack(fill=tk.BOTH, expand=True)
+            hint = tk_overlay.Label(overlay, text="拖动框选验证码出现的位置（把它完整框住），Esc 取消",
+                                    font=('Microsoft YaHei UI', 14, 'bold'), fg='white', bg='black')
+            hint.place(relx=0.5, rely=0.05, anchor='center')
+            rect_id = None
+            start_x = start_y = 0
+            result = None
+
+            def on_press(event):
+                nonlocal start_x, start_y, rect_id
+                start_x, start_y = event.x, event.y
+                if rect_id:
+                    canvas.delete(rect_id)
+                rect_id = canvas.create_rectangle(start_x, start_y, start_x, start_y,
+                                                  outline='red', width=2)
+
+            def on_drag(event):
+                if rect_id:
+                    canvas.coords(rect_id, start_x, start_y, event.x, event.y)
+
+            def on_release(event):
+                nonlocal result
+                x1, y1 = min(start_x, event.x), min(start_y, event.y)
+                x2, y2 = max(start_x, event.x), max(start_y, event.y)
+                if x2 - x1 > 10 and y2 - y1 > 10:
+                    result = [x1, y1, x2 - x1, y2 - y1]
+                overlay.destroy()
+
+            def on_escape(event):
+                overlay.destroy()
+
+            canvas.bind("<ButtonPress-1>", on_press)
+            canvas.bind("<B1-Motion>", on_drag)
+            canvas.bind("<ButtonRelease-1>", on_release)
+            overlay.bind("<Escape>", on_escape)
+            try:
+                utils.set_window_icon(overlay)
+            except Exception:
+                pass
+            # 模态框选结束后恢复窗口
+            try:
+                overlay.wait_window()
+            finally:
+                for w in hiding:
+                    try:
+                        w.deiconify()
+                    except Exception:
+                        pass
+            if result:
+                self._cap_region_var.set(str(result))
+                self._cap_region_enabled_var.set(True)
+
+        # 延迟到 withdraw 生效后再显示全屏遮罩（资产识别同款做法）
+        try:
+            self.win.after(300, _show_overlay)
+        except Exception:
+            pass
+
     def _save_captcha_settings(self, silent=False):
-        """保存验证码设置窗口的全部配置（总开关/关键词/滑块/AI）；关闭窗口时静默自动保存"""
+        """保存验证码设置窗口的全部配置（总开关/关键词/识别区域/滑块/AI）；关闭窗口时静默自动保存"""
         target = dict(config.load_settings())
         target["captcha_auto_enabled"] = self._captcha_auto_var.get()
         target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
         target["captcha_click_keywords"] = self._cap_click_kw_var.get().strip()
+        # 识别区域（仅当勾选启用时解析；格式非法则保持关闭）
+        target["captcha_region_enabled"] = self._cap_region_enabled_var.get()
+        try:
+            region = ast.literal_eval(self._cap_region_var.get().strip())
+            if isinstance(region, list) and len(region) == 4:
+                target["captcha_region"] = [int(v) for v in region]
+            else:
+                target["captcha_region_enabled"] = False
+        except Exception:
+            target["captcha_region_enabled"] = False
         self._apply_ai_visual_settings_to(target)
         self._apply_slider_yolo_settings_to(target)
         config.save_settings(target)
@@ -1138,10 +1242,10 @@ class SettingsWindow:
                 pass
 
     def _test_slider_yolo(self):
-        """测试滑块 YOLO：保存当前输入后对当前屏幕跑一次检测+处理"""
+        """测试滑块 YOLO：保存当前输入后对当前屏幕跑一次检测+处理。
+        不要求勾选启用，只需权重文件存在（测试链路绕过开关）"""
         import slider_captcha
-        self._apply_slider_yolo_settings_to(self.app.settings)
-        config.save_settings(self.app.settings)
+        self._save_captcha_settings(silent=True)
         if not slider_captcha.resolve_model_path():
             messagebox.showwarning("缺少模型",
                                    f"未找到 {slider_captcha.MODEL_FILENAME}，请把权重文件放到程序目录。",
@@ -1154,7 +1258,8 @@ class SettingsWindow:
                             parent=self._captcha_parent())
 
     def _test_ai_visual_captcha(self):
-        """测试 AI 视觉验证：保存当前输入后对当前屏幕跑一次检测处理"""
+        """测试 AI 视觉验证：保存当前输入后对当前屏幕跑一次检测处理。
+        不要求勾选启用，只需供应商配置完整（测试链路绕过开关）"""
         import ai_visual_captcha
         if (not self._aiv_base_url_var.get().strip()
                 or not self._aiv_api_key_var.get().strip()
@@ -1163,8 +1268,7 @@ class SettingsWindow:
                                    parent=self._captcha_parent())
             return
         # 先落盘窗口里的最新配置，保证测试与之后登录流程用的是同一份
-        self._apply_ai_visual_settings_to(self.app.settings)
-        config.save_settings(self.app.settings)
+        self._save_captcha_settings(silent=True)
         self._iconify_for_captcha_test()
         ai_visual_captcha.test_captcha(self.app)
         messagebox.showinfo("测试已启动",
@@ -1172,17 +1276,11 @@ class SettingsWindow:
                             parent=self._captcha_parent())
 
     def _test_captcha_router(self):
-        """测试完整流程：OCR 判定类型 → 对应处理（与登录时链路一致）"""
+        """测试完整流程：OCR 判定类型 → 对应处理（与登录时链路一致）。
+        不要求勾选总开关/子开关（测试链路 force 绕过）"""
         import captcha_router
-        # 先落盘窗口里的全部配置（总开关/关键词/滑块/AI）
-        target = dict(config.load_settings())
-        target["captcha_auto_enabled"] = self._captcha_auto_var.get()
-        target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
-        target["captcha_click_keywords"] = self._cap_click_kw_var.get().strip()
-        self._apply_ai_visual_settings_to(target)
-        self._apply_slider_yolo_settings_to(target)
-        config.save_settings(target)
-        self.app.settings.update(target)
+        # 先落盘窗口里的全部配置（总开关/关键词/识别区域/滑块/AI）
+        self._save_captcha_settings(silent=True)
         self._iconify_for_captcha_test()
         captcha_router.test_router(self.app)
         messagebox.showinfo("测试已启动",

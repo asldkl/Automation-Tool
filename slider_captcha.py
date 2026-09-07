@@ -241,10 +241,14 @@ def _human_drag(x1, y1, x2, y2):
         return False
 
 
-def _capture_screen_bgr():
-    """彩色全屏截图 → BGR numpy 数组"""
+def _capture_screen_bgr(region=None):
+    """彩色截图 → BGR numpy 数组。region 为 (x, y, w, h) 时只截该区域（验证码识别区域）"""
     import pyautogui
-    shot = pyautogui.screenshot()
+    if region:
+        region = tuple(int(v) for v in region)
+        shot = pyautogui.screenshot(region=region)
+    else:
+        shot = pyautogui.screenshot()
     try:
         arr = np.array(shot)
     finally:
@@ -275,8 +279,11 @@ def _show_overlay(need_restore):
             pass
 
 
-def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=True):
+def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=True, force=False):
     """YOLO 定位 + 拟人拖动，最多尝试 max_attempts 次（每次拖完重新检测复核）。
+
+    force=True 时跳过启用开关校验（设置窗口「仅测试滑块」用，权重文件仍必须存在）。
+    启用验证码识别区域时只截该区域推理，坐标自动换算回全屏再拖动。
 
     返回 (found, solved, detail)：
       found=False → 屏幕上没检测到滑块元素（调用方可继续走其他处理，如 AI 点击验证）
@@ -284,7 +291,7 @@ def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=Tr
       found=True, solved=False → 检测到滑块但 N 次拖动后仍未通过（需手动）
     """
     settings = getattr(app, "settings", None) or {}
-    if not is_enabled(settings):
+    if not is_enabled(settings) and not force:
         return False, False, "滑块YOLO处理未启用"
     model_path = resolve_model_path()
     if not model_path:
@@ -304,12 +311,24 @@ def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=Tr
         attempts = 3
     attempts = max(1, min(attempts, 6))
 
+    # 识别区域（与 AI 视觉共用，定义在 ai_visual_captcha.get_capture_region）：只截该区域推理，
+    # 检测坐标加区域偏移换算回全屏后拖动（拖动距离 = 缺口x − 块x，偏移相消不受影响）
+    region = None
+    try:
+        import ai_visual_captcha as _aiv
+        region = _aiv.get_capture_region(settings)
+    except Exception:
+        region = None
+    offset_x, offset_y = (region[0], region[1]) if region else (0, 0)
+    if region:
+        print(f"🧩 滑块YOLO：使用识别区域 {region}（坐标已自动换算全屏）")
+
     overlay_hidden = _hide_overlay() if manage_overlay else False
     try:
         for attempt in range(1, attempts + 1):
             if stop_event is not None and stop_event.is_set():
                 return False, False, "已停止"
-            image = _capture_screen_bgr()
+            image = _capture_screen_bgr(region)
             try:
                 detections = detect_targets(image, confidence=confidence, model_path=model_path)
             except Exception as e:
@@ -327,14 +346,14 @@ def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=Tr
             piece = next((d for d in detections if d["class"] == CLASS_PUZZLE), None) \
                 or next((d for d in detections if d["class"] == CLASS_SLIDER), None)
             print(f"🧩 滑块YOLO 第{attempt}/{attempts}次：{drag_detail}")
-            sx, sy = piece["center"]
+            sx, sy = piece["center"][0] + offset_x, piece["center"][1] + offset_y
             ex = int(sx + distance)
             if not _human_drag(sx, sy, ex, sy):
                 return True, False, "拖动执行失败"
             if attempt < attempts:
                 time.sleep(DRAG_RECHECK_WAIT_SECONDS)
         # 轮次用尽：再检测一次确认缺口是否仍在
-        image = _capture_screen_bgr()
+        image = _capture_screen_bgr(region)
         try:
             detections = detect_targets(image, confidence=confidence, model_path=model_path)
         except Exception as e:
@@ -348,13 +367,15 @@ def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=Tr
 
 
 def test_slider_yolo(app):
-    """设置窗口「测试」按钮：对当前屏幕跑一次检测+处理（无滑块时只报告未检测到）"""
+    """设置窗口「仅测试滑块」按钮：对当前屏幕跑一次检测+处理（无滑块时只报告未检测到）。
+    不要求启用开关，权重文件仍必须存在"""
     import threading
 
     def _run():
         print("🧩 滑块YOLO测试开始（3秒后截图，请把测试画面摆在前台）...")
         time.sleep(3)
-        found, solved, detail = solve_slider_yolo(app, stop_event=getattr(app, "_stop_event", None))
+        found, solved, detail = solve_slider_yolo(
+            app, stop_event=getattr(app, "_stop_event", None), force=True)
         if not found:
             print(f"ℹ️ 滑块YOLO测试：{detail}")
         else:

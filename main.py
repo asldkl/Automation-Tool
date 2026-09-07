@@ -71,6 +71,18 @@ def ensure_single_instance():
 if __name__ == "__main__":
     ensure_single_instance()
 
+    # faulthandler：闪退（段错误等原生层崩溃）时自动把各线程 Python 堆栈 dump 到 error.log，
+    # 便于定位仅靠 traceback 捕获不到的崩溃点（句柄保持打开，程序生命周期内不关闭）
+    _faulthandler_fh = None
+    try:
+        import faulthandler
+        import config
+        config.ensure_app_data_dir()
+        _faulthandler_fh = open(os.path.join(config.APP_DATA_DIR, "error.log"), "w", encoding="utf-8")
+        faulthandler.enable(file=_faulthandler_fh, all_threads=True)
+    except Exception:
+        _faulthandler_fh = None
+
     try:
         # 初始化数据目录
         import pyautogui

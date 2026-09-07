@@ -642,6 +642,33 @@ class TestAiVisualCaptcha(unittest.TestCase):
                 avc._ask_model("https://x/v1", "bad-key", "m", "b64", "p")
         self.assertEqual(sleep_mock.call_count, 0)
 
+    def test_is_configured_require_enabled(self):
+        """require_enabled=False（测试绕过开关）时只需供应商配置完整"""
+        import ai_visual_captcha as avc
+        cfg = {"ai_visual_captcha_enabled": False,
+               "ai_visual_captcha_base_url": "https://x/v1",
+               "ai_visual_captcha_api_key": "sk",
+               "ai_visual_captcha_model": "glm-4.6v-flash"}
+        # 默认要求启用开关：关着就不通过
+        self.assertFalse(avc.is_configured(cfg))
+        # 测试模式：绕过开关只看配置
+        self.assertTrue(avc.is_configured(cfg, require_enabled=False))
+
+    def test_get_capture_region(self):
+        """识别区域：未启用返回 None，启用且合法返回 (x,y,w,h)，非法返回 None"""
+        import ai_visual_captcha as avc
+        self.assertIsNone(avc.get_capture_region({}))
+        self.assertIsNone(avc.get_capture_region({"captcha_region_enabled": False,
+                                                  "captcha_region": [10, 20, 300, 200]}))
+        self.assertIsNone(avc.get_capture_region({"captcha_region_enabled": True}))
+        self.assertIsNone(avc.get_capture_region({"captcha_region_enabled": True,
+                                                  "captcha_region": [10, 20, 0, 200]}))
+        self.assertIsNone(avc.get_capture_region({"captcha_region_enabled": True,
+                                                  "captcha_region": ["a", 20, 0, 200]}))
+        r = avc.get_capture_region({"captcha_region_enabled": True,
+                                    "captcha_region": [10, 20, 300, 200]})
+        self.assertEqual(r, (10, 20, 300, 200))
+
     def test_is_configured(self):
         """未启用/缺配置 → False；启用且配置完整 → True"""
         import ai_visual_captcha as avc

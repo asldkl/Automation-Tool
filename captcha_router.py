@@ -45,31 +45,34 @@ def gather_screen_text():
     return "".join(parts)
 
 
-def _slider_module_state(settings):
-    """(模块可用, 是否启用)"""
+def _slider_module_state(settings, force=False):
+    """(模块可用, 是否启用)；force=True 时视为已启用（测试按钮绕过开关）"""
     try:
         import slider_captcha
-        return slider_captcha, slider_captcha.is_enabled(settings)
+        return slider_captcha, slider_captcha.is_enabled(settings) or force
     except Exception:
         return None, False
 
 
-def _ai_module_state(settings):
+def _ai_module_state(settings, force=False):
     try:
         import ai_visual_captcha
-        return ai_visual_captcha, ai_visual_captcha.is_configured(settings)
+        return ai_visual_captcha, ai_visual_captcha.is_configured(settings, require_enabled=not force)
     except Exception:
         return None, False
 
 
-def route_and_solve(app, stop_event=None, screen_text=None):
+def route_and_solve(app, stop_event=None, screen_text=None, force=False):
     """OCR 判定验证类型并分发处理。
+
+    force=True 时跳过总开关与各子开关校验（设置窗口「测试完整流程」用，
+    仅测试链路；登录流程始终按开关状态执行）。
 
     返回 (ok, detail)：ok=True 表示无验证码或已处理完成（登录可继续）；
     ok=False 表示检测到验证但未解决（调用方按登录失败重试）。
     总开关未启用时返回 (False, "总开关未启用")，调用方不应触发本函数。"""
     settings = getattr(app, "settings", None) or {}
-    if not settings.get("captcha_auto_enabled", False):
+    if not settings.get("captcha_auto_enabled", False) and not force:
         return False, "总开关未启用"
 
     if screen_text is None:
@@ -78,8 +81,8 @@ def route_and_solve(app, stop_event=None, screen_text=None):
 
     slider_kws = _parse_keywords(settings.get("captcha_slider_keywords"))
     click_kws = _parse_keywords(settings.get("captcha_click_keywords"))
-    slider_mod, slider_on = _slider_module_state(settings)
-    ai_mod, ai_on = _ai_module_state(settings)
+    slider_mod, slider_on = _slider_module_state(settings, force=force)
+    ai_mod, ai_on = _ai_module_state(settings, force=force)
 
     def _try_ai(reason):
         if not ai_on:
@@ -119,14 +122,15 @@ def route_and_solve(app, stop_event=None, screen_text=None):
 
 
 def test_router(app):
-    """设置窗口「测试完整流程」按钮：对当前屏幕跑一遍 OCR 判定 + 对应处理"""
+    """设置窗口「测试完整流程」按钮：对当前屏幕跑一遍 OCR 判定 + 对应处理。
+    不要求启用总开关/子开关（仅测试链路，登录流程仍按开关执行）"""
     import threading
     import time
 
     def _run():
         print("🛡️ 验证码完整流程测试开始（3秒后开始，请把测试画面摆在前台）...")
         time.sleep(3)
-        ok, detail = route_and_solve(app, stop_event=getattr(app, "_stop_event", None))
+        ok, detail = route_and_solve(app, stop_event=getattr(app, "_stop_event", None), force=True)
         print(f"{'✅' if ok else '❌'} 验证码完整流程测试结束：{detail}")
 
     threading.Thread(target=_run, daemon=True).start()

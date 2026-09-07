@@ -68,14 +68,29 @@ def get_preset(provider_name):
     return {"base_url": "", "model": ""}
 
 
-def is_configured(settings):
-    """是否已启用且配置齐全（未齐全时登录流程不会触发）"""
-    if not settings.get("ai_visual_captcha_enabled", False):
+def is_configured(settings, require_enabled=True):
+    """是否配置齐全；require_enabled=False 时只校验供应商配置（供测试按钮绕过启用开关）"""
+    if require_enabled and not settings.get("ai_visual_captcha_enabled", False):
         return False
     return all(str(settings.get(k, "") or "").strip()
                for k in ("ai_visual_captcha_base_url",
                          "ai_visual_captcha_api_key",
                          "ai_visual_captcha_model"))
+
+
+def get_capture_region(settings):
+    """读取验证码识别区域配置（滑块YOLO与AI视觉共用）。
+    启用且区域有效返回 (x, y, w, h)；否则返回 None（全屏）"""
+    if not settings.get("captcha_region_enabled", False):
+        return None
+    region = settings.get("captcha_region", [0, 0, 0, 0])
+    try:
+        x, y, w, h = [int(v) for v in region]
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, w, h)
 
 
 def _build_prompt(width, height):
@@ -227,10 +242,15 @@ def parse_model_response(text, screen_w, screen_h):
     return {"status": "click", "points": points, "labels": labels}
 
 
-def _capture_screen_jpeg():
-    """彩色全屏截图 → JPEG base64（超 4MB 逐级降质），返回 (b64, "image/jpeg", w, h) 或 (None, None, 0, 0)"""
+def _capture_screen_jpeg(region=None):
+    """截图 → JPEG base64（超 4MB 逐级降质）。
+    region 为 (x, y, w, h) 时只截该区域（验证码识别区域），返回 (b64, mime, w, h)"""
     import pyautogui
-    shot = pyautogui.screenshot()
+    if region:
+        region = tuple(int(v) for v in region)
+        shot = pyautogui.screenshot(region=region)
+    else:
+        shot = pyautogui.screenshot()
     try:
         arr = np.array(shot)
     finally:
@@ -331,15 +351,17 @@ def _show_overlay(need_restore):
             pass
 
 
-def solve_captcha(app, stop_event=None, max_rounds=None):
+def solve_captcha(app, stop_event=None, max_rounds=None, force=False):
     """检测并处理屏幕上的点击式验证码（供登录流程/测试调用）。
+
+    force=True 时跳过启用开关校验（设置窗口「仅测试AI」用，只需供应商配置完整）。
 
     返回 (ok, detail)：
       ok=True  = 屏幕无验证码（或已按顺序点击完成且复核通过）
       ok=False = 滑块（需手动）/ AI 不确定 / 轮次用尽仍在 / 调用异常
     """
     settings = getattr(app, "settings", None) or {}
-    if not is_configured(settings):
+    if not is_configured(settings, require_enabled=not force):
         return False, "AI视觉验证未启用或配置不完整"
     base_url = str(settings.get("ai_visual_captcha_base_url") or "").strip()
     api_key = str(settings.get("ai_visual_captcha_api_key") or "").strip()
@@ -349,13 +371,18 @@ def solve_captcha(app, stop_event=None, max_rounds=None):
     except (TypeError, ValueError):
         rounds = 5
     rounds = max(1, min(rounds, 10))
+    # 识别区域（与滑块共用）：只截图该区域发给模型，识别到的坐标换算回全屏再点击
+    region = get_capture_region(settings)
+    offset_x, offset_y = (region[0], region[1]) if region else (0, 0)
+    if region:
+        print(f"🤖 AI视觉验证：使用识别区域 {region}（坐标已自动换算全屏）")
 
     overlay_hidden = _hide_overlay()
     try:
         for round_index in range(1, rounds + 1):
             if stop_event is not None and stop_event.is_set():
                 return False, "已停止"
-            image_b64, mime, w, h = _capture_screen_jpeg()
+            image_b64, mime, w, h = _capture_screen_jpeg(region)
             if not image_b64:
                 return False, "截图失败"
             print(f"🤖 AI视觉验证 第{round_index}/{rounds}轮：请求 {model} 识别验证码...")
@@ -376,16 +403,16 @@ def solve_captcha(app, stop_event=None, max_rounds=None):
                 print("🤖 AI视觉验证：未检测到验证码")
                 return True, f"第{round_index}轮未检测到验证码"
             if status == "slider":
-                # 滑块验证：委托本地 YOLO 模块处理（未启用则提示手动）
+                # 滑块验证：委托本地 YOLO 模块处理（未启用且非 force 则提示手动）
                 slider_module = None
                 try:
                     import slider_captcha as slider_module
                 except Exception:
                     pass
-                if slider_module is not None and slider_module.is_enabled(settings):
+                if slider_module is not None and (slider_module.is_enabled(settings) or force):
                     print("🤖 AI视觉验证：检测到滑块验证，转交滑块YOLO模块处理...")
                     found, solved, slider_detail = slider_module.solve_slider_yolo(
-                        app, stop_event=stop_event, manage_overlay=False)
+                        app, stop_event=stop_event, manage_overlay=False, force=force)
                     if found and solved:
                         # 继续下一轮 AI 复核（此时验证码应已消失）
                         if round_index < rounds:
@@ -397,15 +424,17 @@ def solve_captcha(app, stop_event=None, max_rounds=None):
             if status == "invalid":
                 print(f"⚠️ AI视觉验证：模型未返回有效坐标（回复：{content[:120]}）")
                 return False, "模型未返回有效坐标"
-            # click：按顺序拟人点击
+            # click：按顺序拟人点击（截图带区域时坐标需加区域偏移换算回全屏）
             labels = parsed["labels"]
             for i, (x, y) in enumerate(parsed["points"]):
                 if stop_event is not None and stop_event.is_set():
                     return False, "已停止"
+                screen_x = x + offset_x
+                screen_y = y + offset_y
                 label = labels[i] if i < len(labels) and labels[i] else f"目标{i + 1}"
-                print(f"🤖 AI视觉验证：点击「{label}」（{x},{y}）")
+                print(f"🤖 AI视觉验证：点击「{label}」（{screen_x},{screen_y}）")
                 try:
-                    utils.smooth_move_to(x, y)
+                    utils.smooth_move_to(screen_x, screen_y)
                     utils.human_click_delay()
                     import pyautogui
                     pyautogui.click()
@@ -420,14 +449,15 @@ def solve_captcha(app, stop_event=None, max_rounds=None):
 
 
 def test_captcha(app):
-    """设置窗口「测试」按钮：对当前屏幕跑一次完整检测处理（无验证码时不会点击任何东西）"""
+    """设置窗口「仅测试AI」按钮：对当前屏幕跑一次完整检测处理（无验证码时不会点击任何东西）。
+    不要求启用开关，只需供应商配置完整"""
     import threading
     stop_event = getattr(app, "_stop_event", None)
 
     def _run():
         print("🤖 AI视觉验证测试开始（3秒后截图，请把测试画面摆在前台）...")
         time.sleep(3)
-        ok, detail = solve_captcha(app, stop_event=stop_event)
+        ok, detail = solve_captcha(app, stop_event=stop_event, force=True)
         print(f"{'✅' if ok else '❌'} AI视觉验证测试结束：{detail}")
 
     threading.Thread(target=_run, daemon=True).start()
