@@ -495,6 +495,15 @@ class App:
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
         config.CONFIDENCE = self.settings["confidence"]
 
+        # 启动网络等待（校园网认证场景）：启动时连不上验证服务器则在后台自动重试
+        self._silent_boot = '--auto-start' in sys.argv
+        self._net_hid = False          # 是否已因等待网络而隐藏窗口
+        self._net_last_try = 0.0
+        if self.settings.get("network_wait_on_startup", True):
+            self._net_wait_until = time.time() + max(1, int(self.settings.get("network_wait_seconds", 300) or 300))
+        else:
+            self._net_wait_until = 0   # 0 = 不等待，直接按原失败提示
+
         # 服务器验证（异步，不阻塞 UI 线程）
         self._server_validated = False
         self._server_expiry = None
@@ -533,6 +542,12 @@ class App:
             self._server_expiry = expiry
             print(f"✅ 服务器验证通过，有效期至：{expiry}")
             self._loading_label.destroy()
+            # 若曾因等待网络而隐藏窗口，验证通过后恢复显示（开机自启静默除外）
+            if self._net_hid and not self._silent_boot:
+                try:
+                    self.root.deiconify()
+                except Exception:
+                    pass
             self._continue_init()
         elif allowed is False:
             print(f"❌ 服务器验证失败：{error}")
@@ -544,7 +559,34 @@ class App:
                 f"━━━━━━━━━━━━━━━━━━━━")
             self.root.destroy()
         else:
+            # 连接不上验证服务器
+            if self._net_wait_until and time.time() < self._net_wait_until:
+                # 后台自动重试（校园网认证）：不显示窗口，驻留托盘并气泡提示
+                if not self._net_hid:
+                    self._net_hid = True
+                    try:
+                        if self.root.state() != 'withdrawn':
+                            self.root.withdraw()
+                    except Exception:
+                        pass
+                    if getattr(self, 'tray_icon', None) is None:
+                        try:
+                            self._setup_tray()
+                        except Exception:
+                            pass
+                    self._tray_notify("三角洲行动自动化",
+                                      "尚未连接网络（校园网可能正在认证），将在后台自动重试连接…")
+                    print("⏳ 无法连接验证服务器，将后台自动重试（每 30 秒探测）…")
+                # 每 30 秒重试一次，直到网络可用或达到等待上限
+                self.root.after(30 * 1000, self._net_retry_validate)
+                return
+            # 超时或未开启等待：按原失败提示
             print(f"❌ 服务器验证失败：{error}")
+            try:
+                if self.root.state() == 'withdrawn':
+                    self.root.deiconify()
+            except Exception:
+                pass
             messagebox.showerror("验证失败",
                 f"无法连接到验证服务器，程序无法启动。\n\n"
                 f"错误信息：{error}\n\n"
@@ -554,6 +596,12 @@ class App:
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"请将此指纹发送给管理员添加白名单。")
             self.root.destroy()
+
+    def _net_retry_validate(self):
+        """网络等待重试：重新发起一次服务器验证"""
+        self._validate_thread = threading.Thread(target=self._async_validate, daemon=True)
+        self._validate_thread.start()
+        self.root.after(200, self._check_validate_result)
 
     def _continue_init(self):
         """服务器验证通过后继续初始化"""
@@ -795,6 +843,8 @@ class App:
 
     # ==================== 托盘 ====================
     def _setup_tray(self):
+        if getattr(self, 'tray_icon', None) is not None:
+            return  # 已创建（可能因等待网络提前创建），避免重复
         if not TRAY_AVAILABLE:
             print("⚠️ pystray 或 Pillow 未安装，托盘功能不可用")
             return
@@ -1332,7 +1382,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v1.3.6  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v6.09.08  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')

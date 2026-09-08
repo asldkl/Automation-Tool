@@ -35,6 +35,13 @@ class SettingsWindow:
         self.log_var = tk.StringVar(value=app.settings.get("log_save_path", ""))
         self.autostart_var = tk.BooleanVar(value=self._get_autostart_state())
         self.run_on_startup_var = tk.BooleanVar(value=app.settings.get("run_on_startup", False))
+        # 启动网络等待（校园网认证）
+        self.network_wait_var = tk.BooleanVar(value=app.settings.get("network_wait_on_startup", True))
+        try:
+            _nw_min = max(1, int(int(app.settings.get("network_wait_seconds", 300)) / 60))
+        except Exception:
+            _nw_min = 5
+        self.network_wait_min_var = tk.IntVar(value=_nw_min)
 
         # 自动任务设置变量
         self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
@@ -448,6 +455,17 @@ class SettingsWindow:
                        variable=self.run_on_startup_var).pack(side=tk.LEFT, padx=5, pady=(0, 5))
         ttk.Label(autostart_frame, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
+
+        net_row = ttk.Frame(autostart_frame, style='SettingsInner.TFrame')
+        net_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Checkbutton(net_row, text="启动连不上验证服务器时后台自动重试（校园网认证场景）",
+                        variable=self.network_wait_var).pack(side=tk.LEFT, padx=5)
+        ttk.Label(net_row, text="最多等待").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Spinbox(net_row, from_=1, to=30, textvariable=self.network_wait_min_var, width=4).pack(side=tk.LEFT, padx=3)
+        ttk.Label(net_row, text="分钟（每 30 秒探测一次）").pack(side=tk.LEFT)
+        ttk.Label(autostart_frame,
+                  text="开启后：开机时若校园网尚未认证、连不上验证服务器，将不弹窗口、只驻留托盘并提示「等待网络自动重试」，连上后再验证/自动运行；超时仍不通则按原失败提示",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(2, 0))
 
         # ----- 执行操作选择 -----
         ops_frame = ttk.LabelFrame(parent, text="  执行操作（可多选）  ", style='SettingsCard.TLabelframe', padding=10)
@@ -2204,6 +2222,12 @@ class SettingsWindow:
         fresh["log_save_path"] = self.log_var.get()
         self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())
         fresh["run_on_startup"] = self.run_on_startup_var.get()
+        # 启动网络等待（校园网认证）
+        fresh["network_wait_on_startup"] = self.network_wait_var.get()
+        try:
+            fresh["network_wait_seconds"] = max(1, int(self.network_wait_min_var.get())) * 60
+        except Exception:
+            fresh["network_wait_seconds"] = 300
 
         # 冷却执行设置
         fresh["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()

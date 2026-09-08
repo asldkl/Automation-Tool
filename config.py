@@ -198,6 +198,9 @@ DEFAULT_SETTINGS = {
     # 公告（每天提醒一次 / 永久不再提示）
     "announcement_last_date": "",     # 最近一次弹公告的日期（YYYY-MM-DD），同一天不重复
     "announcements_forever": [],      # 已永久关闭的公告 id 列表
+    # 启动网络等待（校园网认证场景：启动时连不上验证服务器则后台自动重试）
+    "network_wait_on_startup": True,  # 是否开启
+    "network_wait_seconds": 300,      # 最多等待秒数（默认5分钟，每30秒探测一次）
     # 运行完成后关机
     "post_run_shutdown_delay": 0,     # 运行完成后延迟关机（0-5分钟，0=不关机）
     # 服务器配置（可通过 ~/.delta_auto_settings.json 覆盖）
