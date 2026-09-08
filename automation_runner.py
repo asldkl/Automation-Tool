@@ -133,6 +133,7 @@ def _format_asset_display(raw_number, suffix):
 def start_run(app):
     """启动自动化任务"""
     print(f"🔵 start() 被调用，self.running={app.running}，账号数={len(app.qq_account_images)}，boot_startup={app._is_boot_startup}")
+    _boot_now = app._is_boot_startup
     if app.running:
         return
     if not app.qq_account_images:
@@ -167,6 +168,12 @@ def start_run(app):
     server_client.start_heartbeat(app)
     app.work_thread = threading.Thread(target=run_script_main, args=(app,), daemon=True)
     app.work_thread.start()
+    # 托盘气泡：开始运行提示
+    try:
+        app._tray_notify("三角洲行动自动化",
+                         f"开始运行 {len(app.qq_account_images)} 个账号" + ("（开机自启）" if _boot_now else ""))
+    except Exception:
+        pass
     # 启动日志遮罩顶行运行时长刷新
     try:
         app._start_overlay_ticker()
@@ -1655,6 +1662,21 @@ def on_finish(app):
         print(f"\n{'='*40}")
         print(f"   {stats_text}")
         print(f"{'='*40}")
+
+    # 托盘气泡：运行结束提示
+    try:
+        if stats.get("total"):
+            _secs = max(0, int(time.time() - (stats.get("start_time") or time.time())))
+            _h, _rem = divmod(_secs, 3600)
+            _m, _s = divmod(_rem, 60)
+            _dur = f"{_h}时{_m}分{_s}秒" if _h else f"{_m}分{_s}秒"
+            app._tray_notify("三角洲行动自动化",
+                             f"运行完成：共 {stats['total']} · 成功 {stats['success']} · 失败 {stats['fail']}"
+                             f" · 耗时 {_dur}")
+        else:
+            app._tray_notify("三角洲行动自动化", "任务已停止")
+    except Exception:
+        pass
 
     # 发送邮件通知（手动终止或单账号模式时不发送）
     if not app._user_stopped_cooldown and not getattr(app, '_single_account_mode', False):

@@ -622,9 +622,12 @@ class App:
             if self.settings.get("run_on_startup", False) and self.qq_account_images:
                 print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
                 self.root.after(2000, self.start)
+                self._tray_notify("三角洲行动自动化",
+                                  f"开机自启已启动，2 秒后自动运行 {len(self.qq_account_images)} 个账号")
             else:
                 print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
                       f"账号数={len(self.qq_account_images)})")
+                self._tray_notify("三角洲行动自动化", "已开机后台运行（静默驻留托盘，可从托盘恢复窗口）")
 
         # 冷却到期信号文件检查（定时任务兜底机制）
         # 启动时立即检查一次（不等 30 秒），之后每 30 秒检查
@@ -869,6 +872,14 @@ class App:
         except Exception as e:
             print(f"⚠️ 切换日志遮罩角落失败: {e}")
             return None
+
+    def _tray_notify(self, title, message):
+        """托盘气泡提示（Windows；托盘不可用或 pystray 不支持时静默）"""
+        try:
+            if self.tray_icon is not None and hasattr(self.tray_icon, 'notify'):
+                self.tray_icon.notify(str(message), str(title))
+        except Exception:
+            pass
 
     def _hide_to_tray(self):
         """隐藏主窗口到系统托盘（运行自动化时防止遮挡游戏画面）"""
@@ -1596,6 +1607,11 @@ def main():
     root.resizable(True, True)
     root.minsize(500, 600)
 
+    # 开机自启：主窗口自始至终不映射（避免启动闪现），直接后台驻留托盘
+    boot = '--auto-start' in sys.argv
+    if boot:
+        root.withdraw()
+
     # 日志遮罩：默认关闭，仅当设置开启时才延迟加载（PyQt6 可选，失败不影响主程序）
     if config.APP_SETTINGS.get("enable_log_overlay", False):
         enable_log_overlay(root, config.APP_SETTINGS.get("log_overlay_corner", 0))
@@ -1634,17 +1650,19 @@ def main():
                 saved_w, saved_h = 550, 800
         root.geometry(f"{saved_w}x{saved_h}")
         _center_window(root, saved_w, saved_h)
-        _check_resolution_on_startup(root)
+        if not boot:
+            _check_resolution_on_startup(root)
         app = App(root)
-        # 赛季公告（每天提醒一次 / 永久不再提示 / 一键配置）——界面就绪后弹出，自动化运行中则本次跳过
-        try:
-            import announcements
-            root.after(3000, lambda: announcements.maybe_show(root, app))
-        except Exception:
-            pass
-        root.after(50, lambda: (root.lift(), root.focus_force()))
-        root.after(50, lambda: root.attributes('-topmost', True))
-        root.after(200, lambda: root.attributes('-topmost', False))
+        if not boot:
+            # 赛季公告（每天提醒一次 / 永久不再提示 / 一键配置）——界面就绪后弹出，自动化运行中则本次跳过
+            try:
+                import announcements
+                root.after(3000, lambda: announcements.maybe_show(root, app))
+            except Exception:
+                pass
+            root.after(50, lambda: (root.lift(), root.focus_force()))
+            root.after(50, lambda: root.attributes('-topmost', True))
+            root.after(200, lambda: root.attributes('-topmost', False))
 
     root.after(300, _init_app)
     root.mainloop()
