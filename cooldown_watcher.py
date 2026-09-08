@@ -134,7 +134,7 @@ def check_any_account_ready(app):
             # 没有冷却记录，视为就绪
             ready_accounts.append(cd_name)
             continue
-        if info.get("paused") or info.get("account_paused"):
+        if info.get("paused") or info.get("account_paused") or info.get("rented"):
             continue
         # 检查冷却状态
         next_run_str = info.get("next_run_time", "")

@@ -1183,12 +1183,13 @@ class App:
         account_manager.delete_account(self)
 
     def extend_all_cooldowns(self):
-        """全体延时+：给所有冷却中的账号延长 30 分钟冷却（不影响暂停账号）"""
-        extended = cooldown_manager.extend_all_cooldowns(hours=0.5)
+        """全体延时+：冷却中的往后推 30 分钟；已冷却就绪的账号也一并延后 30 分钟（不影响暂停/出租中）"""
+        keys = [account_manager._account_key_from_path(p) for p in self.qq_account_images]
+        extended = cooldown_manager.extend_all_cooldowns(hours=0.5, all_accounts=keys)
         if extended:
-            print(f"⏳ 已为 {len(extended)} 个冷却中的账号延长 30 分钟冷却：{', '.join(extended)}")
+            print(f"⏳ 已为 {len(extended)} 个账号延长 30 分钟（含已就绪）：{', '.join(extended)}")
         else:
-            print("ℹ️ 当前没有正在冷却中的账号，无需延长")
+            print("ℹ️ 没有需要延长的账号（可能都处于暂停/出租中）")
         account_manager.refresh_account_tree(self)
 
     def _reduce_all_cooldowns(self):
@@ -1429,6 +1430,7 @@ class App:
         self.account_tree.tag_configure("runnable", foreground="#4CAF50")  # 绿色 - 可运行
         self.account_tree.tag_configure("paused", foreground="#f44336")    # 红色 - 已暂停
         self.account_tree.tag_configure("auto_paused", foreground="#f1c40f")  # 黄色 - 连续失败自动暂停
+        self.account_tree.tag_configure("rented", foreground="#f1c40f")       # 黄色 - 出租中（≈暂停）
         self.account_tree.tag_configure("game_failed", foreground="#ff8c00")  # 橙黄 - 游戏失败
         self.account_tree.tag_configure("separator", background="#e0e0e0")  # 分隔线
 

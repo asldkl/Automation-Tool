@@ -544,8 +544,18 @@ def refresh_account_tree(app):
     for item in app.account_tree.get_children():
         app.account_tree.delete(item)
     all_cooldowns = cooldown_manager.get_all_cooldowns()
+    # 仅手动暂停账号自动下沉到底部；连续失败自动暂停、出租中保持原位
+    _manual_paused = []
+    _normal = []
+    for _p in app.qq_account_images:
+        _nm = _account_key_from_path(_p)
+        if cooldown_manager.is_account_paused(_nm) and not cooldown_manager.is_auto_paused(_nm):
+            _manual_paused.append(_p)
+        else:
+            _normal.append(_p)
+    ordered = _normal + _manual_paused
     seq = 0
-    for i, p in enumerate(app.qq_account_images):
+    for i, p in enumerate(ordered):
         name = _account_key_from_path(p)
         note_data = app._account_notes.get(name, {})
         if isinstance(note_data, dict) and note_data.get("account"):
@@ -580,8 +590,12 @@ def refresh_account_tree(app):
         # 计算下次运行时间（合并冷却剩余和下次运行）
         next_run_str = ""
         tag = "runnable"  # 默认可运行
+        # 出租中（≈暂停：显示「出租中」黄色、不下沉）
+        if cooldown_manager.is_account_rented(name):
+            next_run_str = "出租中"
+            tag = "rented"
         # 检查账号暂停状态（独立于冷却暂停）；连续失败自动暂停 → 标黄
-        if cooldown_manager.is_account_paused(name):
+        elif cooldown_manager.is_account_paused(name):
             if cooldown_manager.is_auto_paused(name):
                 next_run_str = "连续失败已暂停"
                 tag = "auto_paused"
@@ -623,7 +637,7 @@ def refresh_account_tree(app):
                     pass
         app.account_tree.insert("", tk.END, values=(display_name, asset, next_run_str, note_text), tags=(tag,))
         # 插入分隔行（最后一行不插入）
-        if i < len(app.qq_account_images) - 1:
+        if i < len(ordered) - 1:
             app.account_tree.insert("", tk.END, values=("", "", "", ""), tags=("separator",))
     # 恢复选中（按账号名称匹配）
     if selected_name:
@@ -672,13 +686,38 @@ def double_click_column(app, event):
     if not item or "separator" in app.account_tree.item(item, "tags"):
         return
     app.account_tree.selection_set(item)
-    if column == "#2":      # 现有资产
+    if column == "#1":      # QQ账号列：切换「出租中」
+        toggle_account_rented(app)
+    elif column == "#2":    # 现有资产
         show_asset_history(app)
     elif column == "#3":    # 下次运行时间
         custom_cooldown_time(app)
     elif column == "#4":    # 名称/备注
         show_account_note(app)
-    # #1 名称列双击不做动作
+
+
+def toggle_account_rented(app):
+    """双击 QQ账号列：进入/退出「出租中」（≈暂停：运行时跳过；显示「出租中」黄色，不下沉）"""
+    import cooldown_manager
+    sel = app.account_tree.selection()
+    if not sel:
+        return
+    item = sel[0]
+    if "separator" in app.account_tree.item(item, "tags"):
+        return
+    idx = _tree_idx_to_account_idx(app, item)
+    if idx >= len(app.qq_account_images):
+        return
+    account_name = _account_key_from_path(app.qq_account_images[idx])
+    rented = cooldown_manager.is_account_rented(account_name)
+    cooldown_manager.set_account_rented(account_name, not rented)
+    if not rented:
+        messagebox.showinfo("设为出租中",
+                            f"「{account_name}」已设为出租中：运行时将跳过该账号（再次双击此列可结束出租）。",
+                            parent=app.root)
+    else:
+        messagebox.showinfo("结束出租", f"「{account_name}」已结束出租，恢复正常运行。", parent=app.root)
+    refresh_account_tree(app)
 
 
 def reset_selected_cooldown(app):
@@ -1068,8 +1107,9 @@ def show_asset_history(app):
 
     history = app._asset_history.get(account_name, [])
     if not history:
-        messagebox.showinfo("资产记录", f"账号 {account_name} 暂无资产记录", parent=app.root)
-        return
+        # 无记录也允许打开窗口（可手动添加），先补一个空列表引用
+        history = []
+        app._asset_history.setdefault(account_name, history)
 
     # 创建弹窗
     win = tk.Toplevel(app.root)
@@ -1237,8 +1277,60 @@ def show_asset_history(app):
         messagebox.showinfo("已清除", f"账号「{account_name}」的资产记录已清空。", parent=win)
         win.destroy()
 
-    ttk.Button(bottom_frame, text="清除记录资产", style='Danger.TButton',
-               command=_clear_asset_records, width=14).pack(side=tk.RIGHT)
+    def _reload_asset_tree():
+        """重建资产列表（新增/编辑后刷新）"""
+        tree.delete(*tree.get_children())
+        for i in range(len(history) - 1, -1, -1):
+            entry = history[i]
+            t = _strip_year(entry.get("time", ""))
+            v = entry.get("value", "0")
+            ds = "—"
+            if i > 0:
+                try:
+                    pv = _parse_asset_value(history[i - 1].get("value", "0"))
+                    cv = _parse_asset_value(v)
+                    d = cv - pv
+                    ds = f"+{_format_asset_num(d)}" if d > 0 else (f"{_format_asset_num(d)}" if d < 0 else "—")
+                except Exception:
+                    ds = "—"
+            tree.insert("", tk.END, values=(t, v, ds))
+
+    def _manual_add():
+        """手动添加一笔资产记录"""
+        import datetime as _dt
+        from tkinter import simpledialog
+        val = simpledialog.askstring(
+            "手动添加资产",
+            f"输入账号「{account_name}」当前资产数值：\n\n可填如  78500  或  78.5K  或  78.39M",
+            parent=win)
+        if val is None:
+            return
+        val = val.strip()
+        if not val:
+            return
+        try:
+            asset_db.record_asset(account_name, val)
+        except Exception as e:
+            messagebox.showerror("添加失败", f"写入失败：{e}", parent=win)
+            return
+        # 更新内存（history 与 app._asset_history 指向同一列表）
+        app._asset_history.setdefault(account_name, history)
+        history.append({"time": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "value": val})
+        app._account_assets[account_name] = val
+        _reload_asset_tree()
+        refresh_account_tree(app)
+        if hasattr(app, '_asset_monitor_refresh') and app._asset_monitor_refresh:
+            try:
+                app._asset_monitor_refresh()
+            except Exception:
+                pass
+        print(f"✅ 手动添加资产：{account_name} = {val}")
+
+    # 按钮：手动添加 在 清除记录 左侧
+    ttk.Button(bottom_frame, text="清除记录", style='Danger.TButton',
+               command=_clear_asset_records, width=12).pack(side=tk.RIGHT, padx=(0, 4))
+    ttk.Button(bottom_frame, text="手动添加", style='Accent.TButton',
+               command=_manual_add, width=10).pack(side=tk.RIGHT)
 
     # 底部统计（后 pack，占用左侧剩余空间；expand 让文本截断而非挤掉按钮）
     if len(history) >= 2:

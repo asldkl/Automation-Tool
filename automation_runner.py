@@ -199,6 +199,10 @@ def start_single_account_run(app, img_path):
     if app.running:
         return
     file_name = _get_cooldown_key(img_path)
+    # 出租中账号不能运行（含手动单账号）
+    if cooldown_manager.is_account_rented(file_name):
+        messagebox.showinfo("不可运行", f"账号「{file_name}」正在出租中，不能运行。", parent=app.root)
+        return
     # 记录暂停状态（运行完后恢复），但不阻止运行
     was_paused = cooldown_manager.is_account_paused(file_name)
     app._single_account_mode = True
@@ -1151,12 +1155,13 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
     now = datetime.datetime.now()
     expired = []
     for name, entry in all_cooldowns.items():
-        # 检查暂停状态（兼容多种 key 格式）
-        if entry.get("account_paused") or entry.get("paused"):
+        # 跳过：暂停/出租中（兼容多 key 与短名）
+        if (entry.get("account_paused") or entry.get("rented") or entry.get("paused")
+                or cooldown_manager.is_account_skipped(name)):
             continue
         # 用短名称再检查一次暂停状态（防止多 key 导致漏检）
         short_name = name.split(":")[-1] if ":" in name else name
-        if short_name != name and cooldown_manager.is_account_paused(short_name):
+        if short_name != name and cooldown_manager.is_account_skipped(short_name):
             continue
         next_run_str = entry.get("next_run_time", "")
         if not next_run_str:
@@ -1211,7 +1216,7 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
                 continue
             # 用短名称再检查一次暂停状态
             short_name = name.split(":")[-1] if ":" in name else name
-            if short_name != name and cooldown_manager.is_account_paused(short_name):
+            if short_name != name and cooldown_manager.is_account_skipped(short_name):
                 continue
             next_run_str = entry.get("next_run_time", "")
             if not next_run_str:
@@ -1384,7 +1389,7 @@ def run_script_main(app):
             remaining_runnable = 0
             for j in range(i + 1, total):
                 nm = _get_cooldown_key(app.qq_account_images[j])
-                if cooldown_manager.is_account_paused(nm):
+                if cooldown_manager.is_account_skipped(nm):
                     continue
                 if app.settings.get("enable_cooldown", False) and cooldown_manager.is_cooling_down(nm)[0]:
                     continue
@@ -1429,9 +1434,10 @@ def run_script_main(app):
             app._last_account_error = ""  # 每个账号开始前清除上一个账号的错误
             utils.cancel_shutdown()  # 取消待执行的关机计划，防止账号运行中关机
 
-            if cooldown_manager.is_account_paused(file_name):
-                print(f"⏸️ 账号 {file_name} 已暂停，跳过。")
-                processed_accounts.append(f"{file_name} (已暂停)")
+            if cooldown_manager.is_account_skipped(file_name):
+                _skip_note = "出租中" if cooldown_manager.is_account_rented(file_name) else "已暂停"
+                print(f"⏸️ 账号 {file_name} {_skip_note}，跳过。")
+                processed_accounts.append(f"{file_name} ({_skip_note})")
                 server_client.update_account_status(app, file_name, "idle")
                 continue
 
@@ -1728,6 +1734,8 @@ def get_account_next_run(app, account_name):
     """获取账号的下次运行时间描述"""
     if not app.settings.get("enable_cooldown", False):
         return "未启用"
+    if cooldown_manager.is_account_rented(account_name):
+        return "出租中"
     if cooldown_manager.is_account_paused(account_name):
         return "待定"
     _, next_time = cooldown_manager.is_cooling_down(account_name)

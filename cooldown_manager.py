@@ -290,8 +290,9 @@ def reset_all_cooldowns():
     """重置所有账号的冷却（保留暂停状态和游戏失败状态的账号）"""
     with _lock:
         data = _load_data()
-        # 保留暂停状态和游戏失败状态的账号
-        preserved = {k: v for k, v in data.items() if v.get("account_paused") or v.get("game_failed")}
+        # 保留暂停状态、出租中和游戏失败状态的账号
+        preserved = {k: v for k, v in data.items()
+                     if v.get("account_paused") or v.get("rented") or v.get("game_failed")}
         _save_data(preserved)
 
 
@@ -406,29 +407,75 @@ def is_auto_paused(account_name):
         return bool(data[account_name].get("auto_paused"))
 
 
-def extend_all_cooldowns(hours=0.5):
-    """给所有冷却中的账号延长冷却时间，不影响暂停账号
-    只延长 next_run_time 还在未来（冷却中）的账号
+def set_account_rented(account_name, rented):
+    """设置账号是否「出租中」（≈暂停：运行时跳过；仅显示为出租中(黄)、不下沉）"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            data[account_name] = {}
+        data[account_name]["rented"] = bool(rented)
+        _save_data(data)
+        return True
+
+
+def is_account_rented(account_name):
+    """检查账号是否处于「出租中」"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        return bool(data[account_name].get("rented"))
+
+
+def is_account_skipped(account_name):
+    """运行时是否应跳过该账号：手动暂停 / 连续失败自动暂停 / 出租中"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        e = data[account_name]
+        return bool(e.get("account_paused") or e.get("auto_paused") or e.get("rented"))
+
+
+def extend_all_cooldowns(hours=0.5, all_accounts=None):
+    """给所有账号延长冷却：冷却中的往后推；已就绪（无冷却/冷却已完）的从现在起进入冷却
+    不影响暂停/自动暂停/出租中账号
+    all_accounts: 可选账号名列表（主界面全体延时+ 会传入，从而也能把「已冷却就绪」的账号一并延后）
     返回被延长的账号名称列表
     """
     with _lock:
         data = _load_data()
         now = datetime.datetime.now()
+        delta = datetime.timedelta(hours=hours)
         extended = []
-        for name, entry in data.items():
-            # 跳过暂停账号
-            if entry.get("account_paused"):
+        names = list(all_accounts) if all_accounts else list(data.keys())
+        for name in names:
+            entry = data.get(name)
+            if entry is None:
+                entry = {}
+                data[name] = entry
+            # 跳过暂停 / 自动暂停 / 出租中
+            if entry.get("account_paused") or entry.get("auto_paused") or entry.get("rented"):
                 continue
             next_run_str = entry.get("next_run_time", "")
-            if not next_run_str:
-                continue
-            try:
-                next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
-                if next_run > now:  # 仅冷却中的账号
-                    entry["next_run_time"] = (next_run + datetime.timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
-                    extended.append(name)
-            except Exception:
-                continue
+            if next_run_str:
+                try:
+                    next_run = datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                    if next_run > now:
+                        # 冷却中 → 往后推
+                        entry["next_run_time"] = (next_run + delta).strftime("%Y-%m-%d %H:%M:%S")
+                        extended.append(name)
+                        continue
+                except Exception:
+                    pass
+            # 已就绪（无未来冷却）：从现在起进入冷却 hours 小时
+            if entry.get("last_run_time") is None:
+                entry["last_run_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
+            entry["next_run_time"] = (now + delta).strftime("%Y-%m-%d %H:%M:%S")
+            entry.pop("paused", None)
+            entry.pop("paused_remaining", None)
+            entry.pop("paused_at", None)
+            extended.append(name)
         if extended:
             _save_data(data)
         return extended
@@ -509,10 +556,11 @@ def remove_expired_cooldowns():
         cleared_paused = False
         for name, entry in list(data.items()):
             paused = entry.get("account_paused")
+            rented = entry.get("rented")
             next_run_str = entry.get("next_run_time", "")
             if not next_run_str:
-                # 无冷却记录：暂停账号仅保留暂停标记（不动），其余视为残留可移除
-                if not paused:
+                # 无冷却记录：暂停/出租中账号仅保留标记（不动），其余视为残留可移除
+                if not (paused or rented):
                     removed.append(name)
                 continue
             try:
@@ -523,8 +571,8 @@ def remove_expired_cooldowns():
                 removed.append(name)
                 continue
             # 冷却已到期
-            if paused:
-                # 暂停账号：仅清除冷却字段，保留 account_paused 标记
+            if paused or rented:
+                # 暂停/出租中账号：仅清除冷却字段，保留 account_paused/rented 标记
                 for key in ("next_run_time", "last_run_time", "paused", "paused_remaining", "paused_at"):
                     entry.pop(key, None)
                 cleared_paused = True
