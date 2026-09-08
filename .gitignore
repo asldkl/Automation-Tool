@@ -51,3 +51,6 @@ yolo_train/
 
 # 滑块 YOLO 权重（用户自训练，体积大不入库；spec 打包时需放在项目根目录）
 best.onnx
+
+# ZCode 运行目录（工具/插件运行时，不入库）
+.zcode/
