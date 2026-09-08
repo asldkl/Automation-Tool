@@ -1760,8 +1760,9 @@ def build_accounts_html(app, processed_accounts):
     """构建已处理账号列表的 HTML 表格（账号前加备注 + 状态 + 资产 + 下次运行）"""
     if not processed_accounts:
         return ""
-    items = []
-    for idx, acc in enumerate(processed_accounts):
+    from collections import OrderedDict
+    groups = OrderedDict()   # status -> [rowHTML,...]，保持出现顺序
+    for acc in processed_accounts:
         # acc 格式: "xxx (成功)" 或 "xxx (失败)" 或 "xxx (冷却中)"
         # 用 rsplit 从右边分割，避免账号名中包含 ( 的情况
         account_name = acc.rsplit(" (", 1)[0] if " (" in acc else acc
@@ -1790,15 +1791,31 @@ def build_accounts_html(app, processed_accounts):
         if app.settings.get("enable_cooldown", False):
             next_run = get_account_next_run(app, account_name)
         next_run_display = html.escape(_email_next_run_display(next_run))
-        bg = "background:#f0f2f5;" if idx % 2 == 0 else ""
-        items.append(
-            f'<tr style="{bg}">'
+        row = (
+            f'<tr style="background:#f0f2f5;">'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{account_display}</td>'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(status)}</td>'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{asset_display}</td>'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{next_run_display}</td>'
             f'</tr>')
-    accounts_html = "".join(items)
+        groups.setdefault(status or "其他", []).append(row)
+
+    # 排序：成功 → 失败 → 其余按出现顺序
+    order = [st for st in ("成功", "失败") if st in groups]
+    order += [st for st in groups if st not in order]
+
+    parts = []
+    for gi, st in enumerate(order):
+        rows = groups[st]
+        if gi > 0:
+            # 不同状态之间留空行间隔
+            parts.append('<tr><td colspan="4" style="height:6px;padding:0;border:none;"></td></tr>')
+        parts.append(
+            f'<tr style="background:#edf2f7;"><td colspan="4" '
+            f'style="padding:5px 10px;font-size:12px;font-weight:bold;color:#2c3e50;">'
+            f'{html.escape(st)}（{len(rows)}）</td></tr>')
+        parts.extend(rows)
+    accounts_html = "".join(parts)
     return f"""
 <tr><td colspan="4" style="padding:10px 10px 5px;font-size:15px;font-weight:bold;color:#2c3e50;">已处理账号</td></tr>
 <tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">账号</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">状态</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">资产</td><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">下次运行</td></tr>

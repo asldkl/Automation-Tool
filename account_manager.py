@@ -519,9 +519,12 @@ def move_down(app):
 
 
 def _tree_idx_to_account_idx(app, tree_item):
-    """将 Treeview 项目 ID 转换为账号列表索引（跳过分隔行）"""
+    """将 Treeview 项目 ID 转换为账号列表索引（优先用行映射；回退按位置跳过分隔行）"""
+    # 暂停下沉后显示顺序 ≠ 账号列表顺序，须用刷新时建立的行→下标映射定位正确账号
+    _m = getattr(app, '_account_row_pos', None)
+    if _m and tree_item in _m:
+        return _m[tree_item]
     tree_idx = app.account_tree.index(tree_item)
-    # 计算该位置之前有多少个分隔行
     children = app.account_tree.get_children()
     separator_count = 0
     for i in range(tree_idx):
@@ -543,6 +546,8 @@ def refresh_account_tree(app):
     # 清空并重新填充
     for item in app.account_tree.get_children():
         app.account_tree.delete(item)
+    # 行→账号下标映射（暂停下沉后显示顺序≠账号顺序，供双击/右键定位账号）
+    app._account_row_pos = {}
     all_cooldowns = cooldown_manager.get_all_cooldowns()
     # 仅手动暂停账号自动下沉到底部；连续失败自动暂停、出租中保持原位
     _manual_paused = []
@@ -635,7 +640,11 @@ def refresh_account_tree(app):
                         next_run_str = "已到期"
                 except Exception:
                     pass
-        app.account_tree.insert("", tk.END, values=(display_name, asset, next_run_str, note_text), tags=(tag,))
+        _iid = app.account_tree.insert("", tk.END, values=(display_name, asset, next_run_str, note_text), tags=(tag,))
+        try:
+            app._account_row_pos[_iid] = app.qq_account_images.index(p)
+        except Exception:
+            pass
         # 插入分隔行（最后一行不插入）
         if i < len(ordered) - 1:
             app.account_tree.insert("", tk.END, values=("", "", "", ""), tags=("separator",))
