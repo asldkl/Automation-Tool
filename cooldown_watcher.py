@@ -140,11 +140,14 @@ def check_any_account_ready(app):
     for img_path in app.qq_account_images:
         cd_name = cooldown_manager.normalize_key(img_path)
         info = all_cooldowns.get(cd_name)
+        # 出租/暂停/自动暂停 一律不算就绪（get_all_cooldowns 不含 rented 字段，须查管理器）
+        if cooldown_manager.is_account_skipped(cd_name):
+            continue
         if info is None:
             # 没有冷却记录，视为就绪
             ready_accounts.append(cd_name)
             continue
-        if info.get("paused") or info.get("account_paused") or info.get("rented"):
+        if info.get("paused") or info.get("account_paused"):
             continue
         # 检查冷却状态
         next_run_str = info.get("next_run_time", "")
