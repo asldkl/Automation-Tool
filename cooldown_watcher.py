@@ -73,35 +73,45 @@ def cooldown_watcher_loop(app):
                         has_ready = check_any_account_ready(app)
                         if has_ready:
                             last_trigger_minute = current_minute
-                            print("🔔 检测到账号冷却到期，自动执行任务...")
-
-                            # 直接设置标志位并安全调用 start()
-                            app._ignore_cooldown_this_run = True
-                            utils.prevent_sleep()
-
-                            print("🚀 冷却到期，正在启动自动任务...")
-
-                            # 删除定时任务兜底（监听线程已成功触发，不需要定时任务了）
+                            # 二次校验：确实有“可运行”账号（未冷却/未暂停/未出租）才自动启动，
+                            # 防止全员冷却时误触发自动运行
                             try:
-                                utils.remove_cooldown_scheduled_task()
+                                from automation_runner import has_runnable_account as _has_run
+                                _runnable = _has_run(app)
                             except Exception:
-                                pass
+                                _runnable = True
+                            if not _runnable:
+                                print("ℹ️ 冷却监听检测到到期，但没有可运行账号（均在冷却/暂停/出租中），本次不自动运行")
+                            else:
+                                print("🔔 检测到账号冷却到期，自动执行任务...")
 
-                            # 直接在主线程调度 start()，这是最可靠的方式
-                            app.root.after(0, app.start)
+                                # 直接设置标志位并安全调用 start()
+                                app._ignore_cooldown_this_run = True
+                                utils.prevent_sleep()
 
-                            # 等待并验证任务是否成功启动
-                            time.sleep(3)
-                            if not app.running:
-                                print("⚠️ 首次启动未生效，正在进行二次重试...")
+                                print("🚀 冷却到期，正在启动自动任务...")
+
+                                # 删除定时任务兜底（监听线程已成功触发，不需要定时任务了）
+                                try:
+                                    utils.remove_cooldown_scheduled_task()
+                                except Exception:
+                                    pass
+
+                                # 直接在主线程调度 start()，这是最可靠的方式
                                 app.root.after(0, app.start)
+
+                                # 等待并验证任务是否成功启动
                                 time.sleep(3)
                                 if not app.running:
-                                    print("❌ 自动启动失败，请检查程序状态或手动按 F1")
+                                    print("⚠️ 首次启动未生效，正在进行二次重试...")
+                                    app.root.after(0, app.start)
+                                    time.sleep(3)
+                                    if not app.running:
+                                        print("❌ 自动启动失败，请检查程序状态或手动按 F1")
+                                    else:
+                                        print("✅ 二次重试成功，任务已启动")
                                 else:
-                                    print("✅ 二次重试成功，任务已启动")
-                            else:
-                                print("✅ 自动任务已成功启动")
+                                    print("✅ 自动任务已成功启动")
 
             except Exception as inner_e:
                 print(f"⚠️ 冷却监听异常（将继续运行）: {inner_e}")

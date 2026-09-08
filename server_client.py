@@ -117,6 +117,14 @@ def send_heartbeat(app, server_url, client_key, machine_id):
     for cmd in commands:
         action = cmd.get("action")
         if action == "run" and not app.running:
+            # 保护：全员冷却/暂停/出租时不自动运行
+            try:
+                from automation_runner import has_runnable_account
+                if not has_runnable_account(app):
+                    print("📡 收到远程执行指令，但无就绪账号（均在冷却/暂停/出租中），本次忽略")
+                    continue
+            except Exception:
+                pass
             print("📡 收到远程执行指令，正在启动任务...")
             import utils
             utils.prevent_sleep()

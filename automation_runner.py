@@ -130,6 +130,20 @@ def _format_asset_display(raw_number, suffix):
         return f"{raw_number}{suffix}"
 
 
+def has_runnable_account(app):
+    """是否存在真正可运行的账号（未冷却 / 未暂停/自动暂停 / 未出租）"""
+    import cooldown_manager as _cm
+    _en = app.settings.get("enable_cooldown", True)
+    for _p in app.qq_account_images:
+        _k = _cm.normalize_key(_p)
+        if _cm.is_account_skipped(_k):
+            continue
+        if _en and _cm.is_cooling_down(_k)[0]:
+            continue
+        return True
+    return False
+
+
 def start_run(app):
     """启动自动化任务"""
     print(f"🔵 start() 被调用，self.running={app.running}，账号数={len(app.qq_account_images)}，boot_startup={app._is_boot_startup}")

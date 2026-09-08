@@ -668,10 +668,20 @@ class App:
             self._is_boot_startup = True
             self._hide_to_tray()
             if self.settings.get("run_on_startup", False) and self.qq_account_images:
-                print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
-                self.root.after(2000, self.start)
-                self._tray_notify("三角洲行动自动化",
-                                  f"开机自启已启动，2 秒后自动运行 {len(self.qq_account_images)} 个账号")
+                # 开机自启自动运行：仅在存在真正可运行账号（未冷却/未暂停/未出租）时启动
+                try:
+                    from automation_runner import has_runnable_account as _h
+                    _runable = _h(self)
+                except Exception:
+                    _runable = True
+                if _runable:
+                    print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
+                    self.root.after(2000, self.start)
+                    self._tray_notify("三角洲行动自动化",
+                                      f"开机自启已启动，2 秒后自动运行 {len(self.qq_account_images)} 个账号")
+                else:
+                    print("ℹ️ 开机立即运行：当前无可运行账号（均在冷却/暂停/出租中），本次不自动运行，驻留托盘等待冷却")
+                    self._tray_notify("三角洲行动自动化", "开机自启：当前无就绪账号，已驻留托盘等待冷却")
             else:
                 print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
                       f"账号数={len(self.qq_account_images)})")
@@ -1314,8 +1324,17 @@ class App:
                     # 检查是否有非暂停的账号就绪
                     has_ready = cooldown_watcher.check_any_account_ready(self)
                     if has_ready:
-                        print("📡 检测到冷却触发信号，自动执行任务...")
-                        self.start()
+                        # 二次校验真正可运行（防全员冷却误触发）
+                        try:
+                            from automation_runner import has_runnable_account as _h
+                            _runable = _h(self)
+                        except Exception:
+                            _runable = True
+                        if _runable:
+                            print("📡 检测到冷却触发信号，自动执行任务...")
+                            self.start()
+                        else:
+                            print("📡 检测到冷却触发信号，但无真正可运行账号（均冷却/暂停/出租），忽略")
                     else:
                         print("📡 检测到冷却触发信号，但所有账号都暂停或冷却中，忽略")
                 else:
