@@ -32,11 +32,28 @@ RETRY_BACKOFF_SECONDS = 5.0
 JPEG_QUALITIES = (90, 85, 80, 75, 70, 65, 60, 55)
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
+# 模型返回坐标的空间：
+#   normalized = 0-1000 归一化（国内视觉接口通行约定，glm-4.6v / doubao / qwen-vl 等均如此，
+#                提示词里写「像素」也无效，实测返回的仍是 0-1000）
+#   pixel      = 相对本图左上角的像素
+#   auto       = 按返回值的量级自动判定（见 _detect_coord_space）
+COORD_SPACE_AUTO = "auto"
+COORD_SPACE_NORMALIZED = "normalized"
+COORD_SPACE_PIXEL = "pixel"
+COORD_SPACE_LABELS = {
+    COORD_SPACE_AUTO: "自动判定（推荐）",
+    COORD_SPACE_NORMALIZED: "归一化 0-1000",
+    COORD_SPACE_PIXEL: "像素",
+}
+COORD_SPACE_BY_LABEL = {v: k for k, v in COORD_SPACE_LABELS.items()}
+
 # 供应商预设：切换时自动回填 base_url / model；CUSTOM 只用用户手填的值
 CUSTOM_PROVIDER = "自定义"
 PROVIDER_PRESETS = [
     {"name": "智谱GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4",
      "model": "glm-4.6v-flash", "note": "glm-4.6v-flash 免费"},
+    {"name": "DeepSeek", "base_url": "https://api.deepseek.com",
+     "model": "deepseek-flash", "note": "V4.1 Flash 原生多模态（若报模型不存在改填 deepseek-v4-flash）"},
     {"name": "阿里百炼", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
      "model": "qwen-vl-plus", "note": "qwen-vl-plus 价格低"},
     {"name": "月之暗面Kimi", "base_url": "https://api.moonshot.cn/v1",
@@ -94,6 +111,14 @@ def get_capture_region(settings):
     return (x, y, w, h)
 
 
+def get_coord_space(settings):
+    """读取「坐标空间」设置：auto / normalized / pixel（非法值按 auto）"""
+    value = str((settings or {}).get("ai_visual_captcha_coord_space", "") or "").strip()
+    if value in (COORD_SPACE_AUTO, COORD_SPACE_NORMALIZED, COORD_SPACE_PIXEL):
+        return value
+    return COORD_SPACE_AUTO
+
+
 def _build_prompt(width, height):
     return (
         "你是登录验证码识别助手。这是电脑屏幕截图，"
@@ -103,7 +128,11 @@ def _build_prompt(width, height):
         '"targets": [{"text": "要点击的目标文字或描述", "bbox": [x1,y1,x2,y2], "point": [x,y]}]}\n'
         "规则：\n"
         "- 点选类验证码：type=click，按题目要求的点击顺序排列 targets，每个 target 必须给 point（目标中心坐标）；可另给 bbox 作参考，但程序以 point 为准\n"
-        "- 坐标必须是【像素】，且【相对本张图片的左上角】（左上角为 0,0）；不要给归一化(0-1/0-1000)坐标\n"
+        "- 坐标一律用【0-1000 归一化整数】：本图左上角=(0,0)，右下角=(1000,1000)；不要给像素坐标\n"
+        "- 只点击清晰、颜色鲜明、显示完整的目标字符；忽略半透明水印、背景底纹、被遮挡或残缺的字符\n"
+        "- 图片点选类（从一组图片里选出所有符合某特征的图，如「请选择所有包含红绿灯的图片」）："
+        "同样用 type=click，每一个符合要求的图片各给一个 target（text 写图片描述，必须给 point），"
+        "程序会把所有 target 依次点一遍；不符合要求的图片不要输出\n"
         "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"targets\": []}\n"
         "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"targets\": []}\n"
         "- 找不准目标就不要给坐标，宁可输出找不到"
@@ -182,58 +211,117 @@ def _to_pixel_coord(value, max_size, scale):
     return int(round(v))
 
 
-def _target_center(target, screen_w, screen_h):
-    """从 target 提取坐标（单位：像素，相对"发送给模型的这张图"的左上角）。
-    直接取原始数值，不做任何归一化/缩放换算；调用方再统一加上识别区域左上角偏移。
+def _raw_target_values(target):
+    """收集 target 里所有坐标原始数值（point/bbox/x1..y2），供坐标空间判定"""
+    values = []
+    if not isinstance(target, dict):
+        return values
+    for key in ("point", "bbox"):
+        seq = target.get(key)
+        if isinstance(seq, (list, tuple)):
+            for v in seq:
+                n = _to_number(v)
+                if n is not None:
+                    values.append(abs(n))
+    for key in ("x", "y", "x1", "y1", "x2", "y2"):
+        n = _to_number(target.get(key))
+        if n is not None:
+            values.append(abs(n))
+    return values
+
+
+def _detect_coord_space(raw_targets, setting=COORD_SPACE_AUTO):
+    """判定模型返回坐标的空间。
+
+    auto：出现 >1000 的坐标说明模型给的是像素（归一化不可能超过 1000），否则按
+          0-1000 归一化处理 —— 国内视觉接口（智谱/豆包/百炼等）默认就是归一化，
+          提示词里要求「像素」也不会改变，实测 glm-4.6v 返回的正是 0-1000。
+    若供应商确实返回像素坐标（例如图中目标在左上角、数值刚好都不超过 1000 时无法自动区分），
+    可在设置里把「坐标空间」改成「像素」强制指定。"""
+    if setting in (COORD_SPACE_NORMALIZED, COORD_SPACE_PIXEL):
+        return setting
+    values = []
+    for t in raw_targets or []:
+        values.extend(_raw_target_values(t))
+    if values and max(values) > 1000:
+        return COORD_SPACE_PIXEL
+    return COORD_SPACE_NORMALIZED
+
+
+def _to_px(v, dim, scale):
+    """单个坐标 → 像素：scale=1000/1024 按比例放大，scale=1（0-1 浮点）乘边长，0=原样像素"""
+    n = _to_number(v)
+    if n is None:
+        return None
+    if scale in (1000, 1024):
+        return int(round(n / float(scale) * dim))
+    if scale == 1:
+        return int(round(n * dim)) if 0 <= n <= 1 else int(round(n))
+    return int(round(n))
+
+
+def _target_scale(target, space):
+    """该 target 的换算系数：模型显式给了 scale 就以其为准，否则用判定出的全局空间"""
+    explicit = _scale_factor((target or {}).get("scale"))
+    if explicit:
+        return explicit
+    return 1000 if space == COORD_SPACE_NORMALIZED else 0
+
+
+def _target_center(target, screen_w, screen_h, space=COORD_SPACE_NORMALIZED):
+    """从 target 提取坐标（像素，相对"发送给模型的这张图"的左上角）。
+    按 space（像素/归一化）换算后返回；调用方再统一加上识别区域左上角偏移。
     优先 point（模型自报的目标点），无 point 才用 bbox 中心。返回 (x, y) 或 None"""
     if not isinstance(target, dict):
         return None
+    scale = _target_scale(target, space)
 
-    def _px(v):
-        try:
-            return int(round(float(str(v).strip())))
-        except (TypeError, ValueError):
-            return None
+    def _px(v, dim):
+        return _to_px(v, dim, scale)
 
     point = target.get("point")
     if isinstance(point, (list, tuple)) and len(point) >= 2:
-        x, y = _px(point[0]), _px(point[1])
+        x, y = _px(point[0], screen_w), _px(point[1], screen_h)
         if x is not None and y is not None:
             return (x, y)
     bbox = target.get("bbox")
     if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
-        x1, y1, x2, y2 = _px(bbox[0]), _px(bbox[1]), _px(bbox[2]), _px(bbox[3])
+        x1, y1 = _px(bbox[0], screen_w), _px(bbox[1], screen_h)
+        x2, y2 = _px(bbox[2], screen_w), _px(bbox[3], screen_h)
         if None not in (x1, y1, x2, y2) and x2 >= x1 and y2 >= y1:
             return (int((x1 + x2) / 2), int((y1 + y2) / 2))
     # 兜底：x1/y1/x2/y2 平铺字段
-    xs = [_px(target.get(k)) for k in ("x1", "x2")]
-    ys = [_px(target.get(k)) for k in ("y1", "y2")]
+    xs = [_px(target.get(k), screen_w) for k in ("x1", "x2")]
+    ys = [_px(target.get(k), screen_h) for k in ("y1", "y2")]
     if all(v is not None for v in xs + ys):
         return (int((xs[0] + xs[1]) / 2), int((ys[0] + ys[1]) / 2))
-    xy = (_px(target.get("x")), _px(target.get("y")))
+    xy = (_px(target.get("x"), screen_w), _px(target.get("y"), screen_h))
     if None not in xy:
         return xy
     return None
 
 
-def parse_model_response(text, screen_w, screen_h):
-    """解析模型回复 → {"status": "click"/"slider"/"none"/"invalid", "points": [(x,y),...], "labels": [...]}"""
+def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO):
+    """解析模型回复 → {"status": "click"/"slider"/"none"/"invalid",
+                      "points": [(x,y),...], "labels": [...], "space": "normalized"/"pixel"}
+    points 为相对「发送给模型的这张图」左上角的像素坐标（已按坐标空间换算）。"""
     data = _extract_json(text)
     if not isinstance(data, dict):
-        return {"status": "invalid", "points": [], "labels": []}
+        return {"status": "invalid", "points": [], "labels": [], "space": coord_space}
     captcha = bool(data.get("captcha"))
     ctype = str(data.get("type") or "").strip().lower()
     targets = data.get("targets")
     if not isinstance(targets, list):
         targets = []
+    space = _detect_coord_space(targets, coord_space)
     if not captcha or ctype in ("none", "no", "false"):
-        return {"status": "none", "points": [], "labels": []}
+        return {"status": "none", "points": [], "labels": [], "space": space}
     if ctype in ("slider", "slide", "drag", "puzzle"):
-        return {"status": "slider", "points": [], "labels": []}
+        return {"status": "slider", "points": [], "labels": [], "space": space}
     points = []
     labels = []
     for t in targets:
-        center = _target_center(t, screen_w, screen_h)
+        center = _target_center(t, screen_w, screen_h, space)
         if center is None:
             continue
         points.append(center)
@@ -242,8 +330,8 @@ def parse_model_response(text, screen_w, screen_h):
             label = str(t.get("text") or "").strip()
         labels.append(label)
     if not points:
-        return {"status": "invalid", "points": [], "labels": []}
-    return {"status": "click", "points": points, "labels": labels}
+        return {"status": "invalid", "points": [], "labels": [], "space": space}
+    return {"status": "click", "points": points, "labels": labels, "space": space}
 
 
 def _capture_screen_jpeg(region=None):
@@ -355,9 +443,11 @@ def _show_overlay(need_restore):
             pass
 
 
-def save_debug_annotation(region, points_screen, labels=None, raw_content="", settings=None):
-    """把本次 AI 识别结果标注到当前屏幕截图上并保存到「日志目录/日期/图片/」（并尝试打开）。
-    points_screen: 已换算到全屏的点击坐标 [(x,y),...]；region: 识别区域或 None。
+def save_debug_annotation(region, points_screen, labels=None, raw_content="",
+                          settings=None, space=None, crop_size=None):
+    """把本次 AI 识别结果标注到当前屏幕截图上并保存到「日志目录/图片/」（并尝试打开）。
+    points_screen: 已换算到全屏的点击坐标 [(x,y),...]；region: 识别区域或 None；
+    space: 本次判定的坐标空间（normalized/pixel）；crop_size: 发给模型的图尺寸 (w,h)。
     用于人工判断：是 AI 定位错，还是坐标换算错。返回保存路径或 None"""
     try:
         import datetime
@@ -390,30 +480,43 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
             except Exception:
                 pass
 
-        # ① AI 在【标注框内】的原始位置（绿）：AI 坐标是相对"区域裁剪图"的，
-        #    加上标注框左上角 (region.x, region.y) 才是它在全屏上的位置
-        #    —— 绿圈若正好落在目标上 → AI 定位对（那红圈偏就是换算错）；绿圈偏 → AI 定位错
+        # ① AI 在【标注框内】的原始位置
+        #    绿圈 = 把模型返回的数值当像素直读（旧算法会点这里）
+        #    蓝圈 = 按本次判定的坐标空间换算（0-1000 归一化 → 像素）后的位置
+        #    —— 蓝圈落在目标上 → 换算正确；蓝圈也偏 → 模型本身定位错
         _ox, _oy = (int(region[0]), int(region[1])) if region else (0, 0)
+        _space = space or _detect_coord_space(raw_targets)
+        _cw, _ch = crop_size if crop_size else (arr.shape[1], arr.shape[0])
         for i, t in enumerate(raw_targets):
-            _scale = _scale_factor(t.get("scale"))
+            _scale = _target_scale(t, _space)
             pt = t.get("point")
             if isinstance(pt, (list, tuple)) and len(pt) >= 2:
                 try:
                     raw_x, raw_y = int(float(pt[0])), int(float(pt[1]))
                     gx, gy = raw_x + _ox, raw_y + _oy
                     cv2.circle(arr, (gx, gy), 16, (0, 200, 0), 3)
-                    _tag = f"AI框内({raw_x},{raw_y})" + ("" if not _scale else f"[scale{_scale}]")
-                    cv2.putText(arr, _tag, (gx + 20, gy + 30),
+                    cv2.putText(arr, f"AI原始({raw_x},{raw_y})", (gx + 20, gy + 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
+                except Exception:
+                    pass
+                try:
+                    cx = _to_px(pt[0], _cw, _scale) + _ox
+                    cy = _to_px(pt[1], _ch, _scale) + _oy
+                    if None not in (cx, cy):
+                        cv2.circle(arr, (cx, cy), 10, (255, 120, 0), 3)
+                        cv2.putText(arr, f"换算[{_space}]({cx - _ox},{cy - _oy})",
+                                    (cx + 14, cy - 12),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 120, 0), 2)
                 except Exception:
                     pass
             bb = t.get("bbox")
             if isinstance(bb, (list, tuple)) and len(bb) >= 4:
                 try:
-                    cv2.rectangle(arr,
-                                  (int(float(bb[0])) + _ox, int(float(bb[1])) + _oy),
-                                  (int(float(bb[2])) + _ox, int(float(bb[3])) + _oy),
-                                  (0, 200, 0), 1)
+                    _b = [_to_px(v, _cw if k % 2 == 0 else _ch, _scale)
+                          for k, v in enumerate(bb[:4])]
+                    if None not in _b:
+                        cv2.rectangle(arr, (_b[0] + _ox, _b[1] + _oy),
+                                      (_b[2] + _ox, _b[3] + _oy), (255, 120, 0), 1)
                 except Exception:
                     pass
 
@@ -440,8 +543,8 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                 disp = cv2.resize(crop, (disp_w, max(1, int(rh * ratio))))
                 hh, ww = disp.shape[:2]
                 cv2.rectangle(disp, (0, 0), (ww - 1, hh - 1), (0, 165, 255), 2)
-                cv2.putText(disp, "crop: green=AI raw(in box), red=converted", (6, 16),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+                cv2.putText(disp, f"crop: green=raw as pixel, blue=converted[{_space}], red=click",
+                            (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
                 for pt in (points_screen or []):
                     try:
                         cv2.circle(disp, (int((int(pt[0]) - rx) * ratio),
@@ -454,6 +557,15 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                         try:
                             cv2.circle(disp, (int(float(_pt[0]) * ratio),
                                               int(float(_pt[1]) * ratio)), 7, (0, 200, 0), 2)
+                        except Exception:
+                            pass
+                        try:
+                            _s2 = _target_scale(t, _space)
+                            _bx = _to_px(_pt[0], _cw, _s2)
+                            _by = _to_px(_pt[1], _ch, _s2)
+                            if None not in (_bx, _by):
+                                cv2.circle(disp, (int(_bx * ratio), int(_by * ratio)),
+                                           5, (255, 120, 0), 2)
                         except Exception:
                             pass
                 x0 = max(0, arr.shape[1] - ww - 10)
@@ -494,7 +606,14 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                     _box = (int(float(_p[0])) + _rox, int(float(_p[1])) + _roy)
                 except Exception:
                     _box = None
-                print(f"🖼️ 目标{i + 1}: AI原始 point={_p} scale={_s} → 框内屏幕={_box}(绿) → 换算点击={_cv}(红)")
+                _conv = None
+                try:
+                    _s2 = _target_scale(t, _space)
+                    _conv = (_to_px(_p[0], _cw, _s2), _to_px(_p[1], _ch, _s2))
+                except Exception:
+                    _conv = None
+                print(f"🖼️ 目标{i + 1}: AI原始 point={_p}（scale={_s}，坐标空间={_space}）"
+                      f" → 框内原始直读={_box}(绿) → 换算后框内={_conv}(蓝) → 实际点击={_cv}(红)")
         except Exception:
             pass
         try:
@@ -530,8 +649,14 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
     # 识别区域（与滑块共用）：只截图该区域发给模型，识别到的坐标换算回全屏再点击
     region = get_capture_region(settings)
     offset_x, offset_y = (region[0], region[1]) if region else (0, 0)
+    coord_space = get_coord_space(settings)
     if region:
         print(f"🤖 AI视觉验证：使用识别区域 {region}（坐标已自动换算全屏）")
+    try:
+        import pyautogui as _pag
+        screen_size = tuple(_pag.size())
+    except Exception:
+        screen_size = None
 
     overlay_hidden = _hide_overlay()
     try:
@@ -553,22 +678,27 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                 return False, f"AI接口HTTP错误 {e.code}：{body or e.reason}"
             except Exception as e:
                 return False, f"AI接口调用失败：{e}"
-            parsed = parse_model_response(content, w, h)
-            # 诊断日志：核对换算（模型原始回复 / 图像尺寸 / 区域偏移 / 解析出的坐标）
+            parsed = parse_model_response(content, w, h, coord_space)
+            # 诊断日志：核对换算（模型原始回复 / 图像尺寸 / 坐标空间 / 区域偏移 / 解析出的坐标）
             try:
                 print(f"🤖 AI原始回复：{str(content)[:300]}")
-                print(f"🤖 图像 {w}x{h}，区域偏移 ({offset_x},{offset_y})，解析坐标：{parsed.get('points')}")
+                _sp = parsed.get("space")
+                print(f"🤖 图像 {w}x{h}，坐标空间={_sp}"
+                      f"{'（已按 0-1000 归一化换算成像素）' if _sp == COORD_SPACE_NORMALIZED else '（按像素直读）'}，"
+                      f"区域偏移 ({offset_x},{offset_y})，框内像素坐标：{parsed.get('points')}")
             except Exception:
                 pass
             status = parsed["status"]
             if status == "none":
                 print("🤖 AI视觉验证：未检测到验证码")
                 if save_debug:
-                    save_debug_annotation(region, [], [], content, settings=settings)
+                    save_debug_annotation(region, [], [], content, settings=settings,
+                                        space=parsed.get("space"), crop_size=(w, h))
                 return True, f"第{round_index}轮未检测到验证码"
             if status == "slider":
                 if save_debug:
-                    save_debug_annotation(region, [], [], content, settings=settings)
+                    save_debug_annotation(region, [], [], content, settings=settings,
+                                        space=parsed.get("space"), crop_size=(w, h))
                 # 滑块验证：委托本地 YOLO 模块处理（未启用且非 force 则提示手动）
                 slider_module = None
                 try:
@@ -590,7 +720,8 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             if status == "invalid":
                 print(f"⚠️ AI视觉验证：模型未返回有效坐标（回复：{content[:120]}）")
                 if save_debug:
-                    save_debug_annotation(region, [], [], content, settings=settings)
+                    save_debug_annotation(region, [], [], content, settings=settings,
+                                        space=parsed.get("space"), crop_size=(w, h))
                 return False, "模型未返回有效坐标"
             # click：按顺序拟人点击（截图带区域时坐标需加区域偏移换算回全屏）
             labels = parsed["labels"]
@@ -598,13 +729,20 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                 save_debug_annotation(
                     region,
                     [(int(px) + offset_x, int(py) + offset_y) for (px, py) in parsed["points"]],
-                    labels, content, settings=settings)
+                    labels, content, settings=settings,
+                    space=parsed.get("space"), crop_size=(w, h))
             for i, (x, y) in enumerate(parsed["points"]):
                 if stop_event is not None and stop_event.is_set():
                     return False, "已停止"
                 screen_x = x + offset_x
                 screen_y = y + offset_y
                 label = labels[i] if i < len(labels) and labels[i] else f"目标{i + 1}"
+                if screen_size and not (0 <= screen_x < screen_size[0]
+                                        and 0 <= screen_y < screen_size[1]):
+                    # 换算后落到屏幕外：坐标空间判错或模型给的是无效值，点下去只会误触
+                    print(f"⚠️ AI视觉验证：目标「{label}」换算后坐标 ("
+                          f"{screen_x},{screen_y}) 超出屏幕 {screen_size[0]}x{screen_size[1]}，跳过本次点击")
+                    return False, f"坐标超出屏幕：{label}({screen_x},{screen_y})"
                 print(f"🤖 AI视觉验证：点击「{label}」（{screen_x},{screen_y}）")
                 try:
                     utils.smooth_move_to(screen_x, screen_y)

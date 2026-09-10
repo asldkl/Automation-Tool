@@ -602,37 +602,60 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(r["status"], "slider")
 
     def test_parse_response_click_bbox_and_point(self):
-        """click：坐标为【像素】直接取用（不做归一化换算）；point 优先，bbox 中心兜底"""
+        """click：0-1000 归一化坐标换算成像素；point 优先，bbox 中心兜底"""
         import ai_visual_captcha as avc
-        # bbox 像素 (100,200,200,300) → 中心 (150,250)
+        # 归一化 bbox (100,200,200,300) → 像素 (77,106)-(154,160) → 中心 (115,133)
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
-            '{"text": "塔", "bbox": [100, 200, 200, 300]}]}', 1920, 1080)
+            '{"text": "塔", "bbox": [100, 200, 200, 300]}]}', 770, 532)
         self.assertEqual(r["status"], "click")
-        self.assertEqual(r["points"], [(150, 250)])
+        self.assertEqual(r["space"], "normalized")
+        self.assertEqual(r["points"], [(115, 133)])
         self.assertEqual(r["labels"], ["塔"])
-        # point 直接用像素（无论是否带 scale 字段都不再换算）
+        # 真实数据回归：crop 770x532，模型报 桦 point=[710,261] → 像素 (547,139)
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
-            '{"text": "字", "point": [500, 400], "scale": 1000}]}', 1920, 1080)
-        self.assertEqual(r["points"], [(500, 400)])
+            '{"text": "桦", "bbox": [621, 210, 782, 345], "point": [710, 261]}]}', 770, 532)
+        self.assertEqual(r["points"], [(547, 139)])
         # bbox 与 point 同时给出时以 point 为准（bbox 常偏大，中心会偏）
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
-            '{"bbox": [0, 0, 10, 10], "point": [999, 999]}]}', 1000, 1000)
-        self.assertEqual(r["points"], [(999, 999)])
+            '{"bbox": [0, 0, 10, 10], "point": [500, 500]}]}', 1000, 1000)
+        self.assertEqual(r["points"], [(500, 500)])
 
-    def test_parse_response_point_pixels_passthrough(self):
-        """point 一律按像素取整直用（不做 0-1/0-1000 归一化换算）"""
+    def test_coord_space_detection(self):
+        """坐标空间判定：>1000 → 像素；否则按 0-1000 归一化；显式 scale 优先"""
+        import ai_visual_captcha as avc
+        # 出现 >1000 的坐标 → 模型给的是像素，原样使用
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"point": [1500, 900]}]}', 1920, 1080)
+        self.assertEqual(r["space"], "pixel")
+        self.assertEqual(r["points"], [(1500, 900)])
+        # 设置里强制「像素」时不做归一化换算
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"point": [710, 261]}]}', 770, 532, avc.COORD_SPACE_PIXEL)
+        self.assertEqual(r["space"], "pixel")
+        self.assertEqual(r["points"], [(710, 261)])
+        # 设置里强制「归一化」时即使数值很小也按 0-1000 换算
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"point": [100, 400]}]}', 1000, 800, avc.COORD_SPACE_NORMALIZED)
+        self.assertEqual(r["points"], [(100, 320)])
+        # target 自带 scale 时以 scale 为准（覆盖全局判定）
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": ['
+            '{"point": [0.5, 0.25], "scale": 1}]}', 1000, 800)
+        self.assertEqual(r["points"], [(500, 200)])
+
+    def test_parse_response_point_rounding(self):
+        """归一化坐标取整：500.6/1000*1000=501，250.2/1000*800=200"""
         import ai_visual_captcha as avc
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
-            '{"point": [100, 400]}]}', 1920, 1080)
-        self.assertEqual(r["points"], [(100, 400)])
-        r = avc.parse_model_response(
-            '{"captcha": true, "type": "click", "targets": ['
             '{"point": [500.6, 250.2]}]}', 1000, 800)
-        self.assertEqual(r["points"], [(501, 250)])
+        self.assertEqual(r["points"], [(501, 200)])
 
     def test_parse_response_invalid(self):
         """非 JSON / 有验证码但无有效坐标 → invalid"""

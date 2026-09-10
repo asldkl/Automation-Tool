@@ -1095,7 +1095,23 @@ class SettingsWindow:
         self._aiv_rounds_var = tk.IntVar(value=stored_rounds)
         ttk.Spinbox(aiv_row4, from_=1, to=10, increment=1,
                     textvariable=self._aiv_rounds_var, width=4).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(aiv_row4, text="轮（每轮截图-识别-点击-复核）", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+        ttk.Label(aiv_row4, text="轮", style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 12))
+        # 坐标空间：国内视觉接口（智谱/豆包/百炼）返回的是 0-1000 归一化坐标，
+        # 提示词里写「像素」也不会变，所以默认自动判定，必要时可手动强制
+        ttk.Label(aiv_row4, text="坐标空间：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        _space_key = _aiv_module.get_coord_space(s)
+        self._aiv_coord_space_var = tk.StringVar(
+            value=_aiv_module.COORD_SPACE_LABELS.get(_space_key,
+                                                     _aiv_module.COORD_SPACE_LABELS["auto"]))
+        ttk.Combobox(aiv_row4, textvariable=self._aiv_coord_space_var,
+                     values=[_aiv_module.COORD_SPACE_LABELS[k] for k in
+                             (_aiv_module.COORD_SPACE_AUTO, _aiv_module.COORD_SPACE_NORMALIZED,
+                              _aiv_module.COORD_SPACE_PIXEL)],
+                     state="readonly", width=18).pack(side=tk.LEFT)
+        ttk.Label(frame_aiv, text="模型返回的坐标默认按 0-1000 归一化换算（智谱/豆包/百炼等国内接口均如此）；"
+                                  "若某供应商确实返回像素坐标而点击总是偏移，把「坐标空间」改成「像素」",
+                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(
+                      anchor='w', pady=(4, 0))
 
         def _on_aiv_provider_changed(*_args):
             name = self._aiv_provider_var.get()
@@ -1409,6 +1425,9 @@ class SettingsWindow:
             target["ai_visual_captcha_max_rounds"] = max(1, min(10, int(self._aiv_rounds_var.get())))
         except (TypeError, ValueError):
             target["ai_visual_captcha_max_rounds"] = 5
+        import ai_visual_captcha as _aiv_m
+        target["ai_visual_captcha_coord_space"] = _aiv_m.COORD_SPACE_BY_LABEL.get(
+            self._aiv_coord_space_var.get().strip(), _aiv_m.COORD_SPACE_AUTO)
 
     def _apply_slider_yolo_settings_to(self, target):
         """把滑块 YOLO 设置写入 target 字典（保存与测试按钮共用）"""

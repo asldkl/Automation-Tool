@@ -246,6 +246,7 @@ DEFAULT_SETTINGS = {
     "ai_visual_captcha_api_key": "",             # API Key
     "ai_visual_captcha_model": "",               # 视觉模型名称
     "ai_visual_captcha_max_rounds": 5,           # 最大处理轮次（每轮截图-识别-点击-复核）
+    "ai_visual_captcha_coord_space": "auto",     # 模型返回坐标空间：auto/normalized(0-1000)/pixel
     # 滑块验证（YOLO 缺口定位，权重 best.onnx）
     "slider_yolo_enabled": False,                # 是否启用滑块 YOLO 自动拖动
     "slider_yolo_confidence": 0.35,              # YOLO 检测置信度阈值
