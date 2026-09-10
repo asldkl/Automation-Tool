@@ -908,13 +908,12 @@ class SettingsWindow:
     def _open_captcha_settings(self):
         """打开「验证码设置」统一管理窗口：总开关 + OCR 判定关键词 + 滑块YOLO + AI视觉"""
         if getattr(self, "_captcha_win", None) is not None and self._captcha_win.winfo_exists():
-            # 重新打开：务必唤到最前并聚焦（否则可能被其它窗口挡住看不见）
+            # 重新打开：唤到最前并聚焦（不做置顶：置顶会让最小化后仍浮在最上层）
             try:
                 w = self._captcha_win
+                w.attributes('-topmost', False)
                 w.deiconify()
                 w.lift()
-                w.attributes('-topmost', True)
-                w.after(250, lambda: w.attributes('-topmost', False))
                 w.focus_force()
                 w.grab_set()
             except Exception:
@@ -1149,6 +1148,21 @@ class SettingsWindow:
             except Exception:
                 pass
         win.protocol("WM_DELETE_WINDOW", _on_close)
+        # 最小化时释放模态 grab（避免最小化后仍被 grab 影响），恢复时再抓取
+        def _on_unmap(_e=None):
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+
+        def _on_map(_e=None):
+            try:
+                win.grab_set()
+            except Exception:
+                pass
+
+        win.bind("<Unmap>", _on_unmap)
+        win.bind("<Map>", _on_map)
         # 用导航栈隐藏设置窗口（关闭验证码窗口时自动恢复），避免设置界面一直压在后面
         try:
             utils.nav_push(self.win, lambda: None)
@@ -1158,9 +1172,8 @@ class SettingsWindow:
             except Exception:
                 pass
         try:
+            win.attributes('-topmost', False)   # 不置顶（置顶会导致最小化后仍悬浮）
             win.lift()
-            win.attributes('-topmost', True)
-            win.after(250, lambda: win.attributes('-topmost', False))
             win.focus_force()
             win.grab_set()
         except Exception:
