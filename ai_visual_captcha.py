@@ -389,17 +389,20 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
             except Exception:
                 pass
 
-        # ① 模型返回的原始坐标（绿）：把 AI 给的数字【原封不动】标在屏幕上（不做任何加减/换算）
-        #    —— 绿圈就是"AI 说它看到的位置"；若绿圈偏离目标 → AI 识别错；若绿圈对、红圈偏 → 换算错
+        # ① AI 在【标注框内】的原始位置（绿）：AI 坐标是相对"区域裁剪图"的，
+        #    加上标注框左上角 (region.x, region.y) 才是它在全屏上的位置
+        #    —— 绿圈若正好落在目标上 → AI 定位对（那红圈偏就是换算错）；绿圈偏 → AI 定位错
+        _ox, _oy = (int(region[0]), int(region[1])) if region else (0, 0)
         for i, t in enumerate(raw_targets):
             _scale = _scale_factor(t.get("scale"))
             pt = t.get("point")
             if isinstance(pt, (list, tuple)) and len(pt) >= 2:
                 try:
                     raw_x, raw_y = int(float(pt[0])), int(float(pt[1]))
-                    cv2.circle(arr, (raw_x, raw_y), 16, (0, 200, 0), 3)
-                    _tag = f"AI原始({raw_x},{raw_y})" + ("" if not _scale else f"[scale{_scale}]")
-                    cv2.putText(arr, _tag, (raw_x + 20, raw_y + 30),
+                    gx, gy = raw_x + _ox, raw_y + _oy
+                    cv2.circle(arr, (gx, gy), 16, (0, 200, 0), 3)
+                    _tag = f"AI框内({raw_x},{raw_y})" + ("" if not _scale else f"[scale{_scale}]")
+                    cv2.putText(arr, _tag, (gx + 20, gy + 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
                 except Exception:
                     pass
@@ -407,8 +410,8 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
             if isinstance(bb, (list, tuple)) and len(bb) >= 4:
                 try:
                     cv2.rectangle(arr,
-                                  (int(float(bb[0])), int(float(bb[1]))),
-                                  (int(float(bb[2])), int(float(bb[3]))),
+                                  (int(float(bb[0])) + _ox, int(float(bb[1])) + _oy),
+                                  (int(float(bb[2])) + _ox, int(float(bb[3])) + _oy),
                                   (0, 200, 0), 1)
                 except Exception:
                     pass
@@ -436,7 +439,7 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                 disp = cv2.resize(crop, (disp_w, max(1, int(rh * ratio))))
                 hh, ww = disp.shape[:2]
                 cv2.rectangle(disp, (0, 0), (ww - 1, hh - 1), (0, 165, 255), 2)
-                cv2.putText(disp, "crop view (red=converted click)", (6, 16),
+                cv2.putText(disp, "crop: green=AI raw(in box), red=converted", (6, 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
                 for pt in (points_screen or []):
                     try:
@@ -444,6 +447,14 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                                           int((int(pt[1]) - ry) * ratio)), 9, (0, 0, 255), 2)
                     except Exception:
                         pass
+                for t in raw_targets:
+                    _pt = t.get("point")
+                    if isinstance(_pt, (list, tuple)) and len(_pt) >= 2:
+                        try:
+                            cv2.circle(disp, (int(float(_pt[0]) * ratio),
+                                              int(float(_pt[1]) * ratio)), 7, (0, 200, 0), 2)
+                        except Exception:
+                            pass
                 x0 = max(0, arr.shape[1] - ww - 10)
                 arr[10:10 + hh, x0:x0 + ww] = disp
             except Exception:
@@ -472,11 +483,17 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
         if raw_content:
             print(f"🖼️ 模型原始回复：{str(raw_content)[:200]}")
         try:
+            _rox, _roy = (int(region[0]), int(region[1])) if region else (0, 0)
             for i, t in enumerate(raw_targets):
                 _p = t.get("point")
                 _s = t.get("scale")
                 _cv = points_screen[i] if (points_screen and i < len(points_screen)) else None
-                print(f"🖼️ 目标{i + 1}: 原始 point={_p} scale={_s} → 换算点击={_cv}")
+                _box = None
+                try:
+                    _box = (int(float(_p[0])) + _rox, int(float(_p[1])) + _roy)
+                except Exception:
+                    _box = None
+                print(f"🖼️ 目标{i + 1}: AI原始 point={_p} scale={_s} → 框内屏幕={_box}(绿) → 换算点击={_cv}(红)")
         except Exception:
             pass
         try:
