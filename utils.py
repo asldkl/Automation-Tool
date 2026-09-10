@@ -338,6 +338,35 @@ def find_image_on_screen(img_path, timeout=2, confidence=None, region=None, stop
     return False
 
 
+# ==================== 日志遮罩避让钩子（点击点被遮罩覆盖时临时移开） ====================
+_overlay_avoid_fn = None      # avoid_fn(x, y) -> token|None（返回原角落等用于复原）
+_overlay_restore_fn = None    # restore_fn(token)
+
+
+def set_overlay_avoid_hooks(avoid_fn, restore_fn):
+    """注册遮罩避让回调（由 gui_app 调用，避免循环导入）"""
+    global _overlay_avoid_fn, _overlay_restore_fn
+    _overlay_avoid_fn = avoid_fn
+    _overlay_restore_fn = restore_fn
+
+
+def _avoid_overlay_for_point(x, y):
+    if _overlay_avoid_fn:
+        try:
+            return _overlay_avoid_fn(x, y)
+        except Exception:
+            return None
+    return None
+
+
+def _restore_overlay_after_click(token):
+    if token is not None and _overlay_restore_fn:
+        try:
+            _overlay_restore_fn(token)
+        except Exception:
+            pass
+
+
 def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0,
                          multiscale=False, return_pos=False, stop_event=None):
@@ -397,14 +426,24 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                 # 限制在屏幕范围内，避免偏移到边缘外
                 x = max(margin, min(x, screen_w - margin))
                 y = max(margin, min(y, screen_h - margin))
+            # 点击点若被日志遮罩覆盖，临时移开遮罩（点完复原）
+            _avoid_token = _avoid_overlay_for_point(x, y)
             try:
                 smooth_move_to(x, y, duration=0.2)
                 human_click_delay()  # 点击前微量随机延时（拟人化）
                 pyautogui.click(clicks=clicks)
             except pyautogui.FailSafeException:
+                _restore_overlay_after_click(_avoid_token)
                 print(f"⚠️ 鼠标触碰屏幕角落，安全机制触发，跳过点击")
                 time.sleep(0.5)
                 continue
+            _restore_overlay_after_click(_avoid_token)
+            # 记录成功点击坐标（模板设置窗口显示「｜坐标 x,y」；也供遮罩避让参考）
+            try:
+                import template_click_coords as _tcc
+                _tcc.set_coord(resolved, x, y)
+            except Exception:
+                pass
             # 点击日志：显示中文步骤名 + 坐标（如「启动游戏按钮（123，123）」）
             _cn = _template_cn(resolved)
             _label = _cn if _cn else os.path.splitext(os.path.basename(str(img_path)))[0]

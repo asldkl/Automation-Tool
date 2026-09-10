@@ -463,6 +463,16 @@ class TemplateCaptureWizard:
         info_text = f"来源：{source_text}"
         if orig_w and orig_h:
             info_text += f"  |  尺寸：{orig_w}x{orig_h}"
+        # 最近一次成功点击坐标（运行成功后记录，供遮罩避让参考）
+        try:
+            import template_click_coords as _tcc
+            _coord = _tcc.get_coord(rel_path)
+        except Exception:
+            _coord = None
+        if _coord:
+            info_text += f"  ｜坐标 {_coord[0]},{_coord[1]}"
+        else:
+            info_text += "  ｜坐标 未记录"
         ttk.Label(win, text=info_text, font=('Microsoft YaHei UI', 9),
                   foreground='#7f8c8d').pack(padx=10, pady=(0, 8))
 

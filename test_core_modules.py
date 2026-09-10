@@ -356,6 +356,68 @@ class TestAssetValueParsing(unittest.TestCase):
             self.assertEqual(parse_asset_value(val), account_manager._parse_asset_value(val))
 
 
+# ==================== 未售累加 / 未验证状态 ====================
+class TestSellPendingAndUnverified(unittest.TestCase):
+    """测试 sell_pending 累加清零、模板点击坐标、未验证状态=跳过"""
+
+    def setUp(self):
+        import sell_pending
+        import template_click_coords
+        self._orig_p = sell_pending.PENDING_JSON
+        self._orig_c = template_click_coords.COORDS_JSON
+        sell_pending.PENDING_JSON = os.path.join(TEST_DIR, "test_pending.json")
+        template_click_coords.COORDS_JSON = os.path.join(TEST_DIR, "test_coords.json")
+        sell_pending._cache = None
+        template_click_coords._cache = None
+        for p in (sell_pending.PENDING_JSON, template_click_coords.COORDS_JSON):
+            if os.path.exists(p):
+                os.remove(p)
+
+    def tearDown(self):
+        import sell_pending
+        import template_click_coords
+        sell_pending.PENDING_JSON = self._orig_p
+        template_click_coords.COORDS_JSON = self._orig_c
+        sell_pending._cache = None
+        template_click_coords._cache = None
+
+    def test_sell_pending_accumulate_and_clear(self):
+        import sell_pending as sp
+        self.assertEqual(sp.get_pending("acc1"), 0)
+        sp.add_pending("acc1", 1)
+        sp.add_pending("acc1", 2)
+        self.assertEqual(sp.get_pending("acc1"), 3)
+        sp.clear_pending("acc1")
+        self.assertEqual(sp.get_pending("acc1"), 0)
+
+    def test_template_click_coord_store(self):
+        import template_click_coords as tcc
+        self.assertIsNone(tcc.get_coord("picture/Navigation/hazard.png"))
+        tcc.set_coord("picture/Navigation/hazard.png", 123, 456)
+        self.assertEqual(tcc.get_coord("picture/Navigation/hazard.png"), (123, 456))
+
+    def test_unverified_equals_skipped(self):
+        import cooldown_manager as cm
+        orig_path, orig_bak = cm.COOLDOWN_JSON_PATH, cm.COOLDOWN_JSON_BACKUP
+        cm.COOLDOWN_JSON_PATH = os.path.join(TEST_DIR, "test_unver.json")
+        cm.COOLDOWN_JSON_BACKUP = cm.COOLDOWN_JSON_PATH + ".bak"
+        cm._cache = None
+        cm._cache_mtime = 0.0
+        cm._load_corrupt = False
+        try:
+            self.assertFalse(cm.is_account_skipped("accX"))
+            cm.set_unverified("accX", True)
+            self.assertTrue(cm.is_unverified("accX"))
+            self.assertTrue(cm.is_account_skipped("accX"))
+            cm.set_unverified("accX", False)
+            self.assertFalse(cm.is_account_skipped("accX"))
+        finally:
+            cm.COOLDOWN_JSON_PATH, cm.COOLDOWN_JSON_BACKUP = orig_path, orig_bak
+            cm._cache = None
+            cm._cache_mtime = 0.0
+            cm._load_corrupt = False
+
+
 # ==================== 公告（每天一次 / 永久关闭） ====================
 class TestAnnouncements(unittest.TestCase):
     """测试公告的展示判定与状态存储（独立文件，不弹真实窗口）"""

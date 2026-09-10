@@ -105,6 +105,44 @@ def _ai_module_state(settings, force=False):
 
 
 def route_and_solve(app, stop_event=None, screen_text=None, force=False):
+    """对外入口：先判定并处理验证；若失败且启用「刷新重试」，点击刷新坐标后再试。
+
+    总开关未启用且非 force 时返回 (False, "总开关未启用")（调用方不应触发）。"""
+    settings = getattr(app, "settings", None) or {}
+    if not settings.get("captcha_auto_enabled", False) and not force:
+        return False, "总开关未启用"
+    res = _route_once(app, stop_event=stop_event, screen_text=screen_text, force=force)
+    if res and res[0]:
+        return res
+    # 失败 → 刷新重试
+    try:
+        enabled = bool(settings.get("captcha_refresh_enabled", False))
+        pt = settings.get("captcha_refresh_point", [0, 0])
+        times = int(settings.get("captcha_refresh_max", 2) or 2)
+        x, y = int(pt[0]), int(pt[1])
+    except Exception:
+        return res
+    if not (enabled and x > 0 and y > 0 and times > 0):
+        return res
+    import time as _t
+    import pyautogui
+    for i in range(1, times + 1):
+        if stop_event is not None and stop_event.is_set():
+            return res
+        print(f"🔄 验证未通过，点击刷新坐标 ({x},{y}) 后重试（{i}/{times}）")
+        try:
+            pyautogui.click(x, y)
+        except Exception:
+            pass
+        _t.sleep(2.5)
+        res = _route_once(app, stop_event=stop_event, screen_text=None, force=force)
+        if res and res[0]:
+            print("✅ 刷新后验证通过")
+            return res
+    return res
+
+
+def _route_once(app, stop_event=None, screen_text=None, force=False):
     """OCR 判定验证类型并分发处理。
 
     force=True 时跳过总开关与各子开关校验（设置窗口「测试完整流程」用，

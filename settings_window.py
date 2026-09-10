@@ -973,6 +973,41 @@ class SettingsWindow:
         ttk.Button(region_row, text="框选区域", style='TButton',
                    command=self._select_captcha_region, width=10).pack(side=tk.LEFT)
 
+        # 人工验证等待 + 多次不过自动刷新重试
+        _hsep = ttk.Separator(frame_ocr, orient='horizontal'); _hsep.pack(fill=tk.X, pady=(8, 6))
+        _hrow = ttk.Frame(frame_ocr, style='SettingsInner.TFrame'); _hrow.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(_hrow, text="等待人工验证(秒)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        try:
+            _mw = max(5, min(600, int(s.get("captcha_manual_wait_seconds", 60) or 60)))
+        except (TypeError, ValueError):
+            _mw = 60
+        self._cap_manual_wait_var = tk.IntVar(value=_mw)
+        ttk.Spinbox(_hrow, from_=5, to=600, increment=5,
+                    textvariable=self._cap_manual_wait_var, width=6).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(_hrow, text="超时→账号标记「未验证通过」并跳过（≈暂停）",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+
+        _rrow = ttk.Frame(frame_ocr, style='SettingsInner.TFrame'); _rrow.pack(fill=tk.X)
+        self._cap_refresh_enabled_var = tk.BooleanVar(value=s.get("captcha_refresh_enabled", False))
+        ttk.Checkbutton(_rrow, text="多次不过自动点刷新重试", variable=self._cap_refresh_enabled_var,
+                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(_rrow, text="刷新坐标：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        _rp = s.get("captcha_refresh_point", [0, 0]) or [0, 0]
+        self._cap_refresh_x_var = tk.StringVar(value=str(_rp[0]))
+        self._cap_refresh_y_var = tk.StringVar(value=str(_rp[1] if len(_rp) > 1 else 0))
+        ttk.Entry(_rrow, textvariable=self._cap_refresh_x_var, width=6).pack(side=tk.LEFT)
+        ttk.Label(_rrow, text=",").pack(side=tk.LEFT)
+        ttk.Entry(_rrow, textvariable=self._cap_refresh_y_var, width=6).pack(side=tk.LEFT)
+        ttk.Button(_rrow, text="取点", width=6,
+                   command=self._pick_refresh_point).pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(_rrow, text="次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        try:
+            _rm = max(1, min(5, int(s.get("captcha_refresh_max", 2) or 2)))
+        except (TypeError, ValueError):
+            _rm = 2
+        self._cap_refresh_max_var = tk.IntVar(value=_rm)
+        ttk.Spinbox(_rrow, from_=1, to=5, textvariable=self._cap_refresh_max_var, width=4).pack(side=tk.LEFT)
+
         # ----- 滑块验证（YOLO） -----
         frame_slider = ttk.LabelFrame(body, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
         frame_slider.pack(fill=tk.X, pady=(0, 8))
@@ -1115,9 +1150,18 @@ class SettingsWindow:
             except Exception:
                 pass
 
+        # 释放模态 grab（验证码窗口常带 grab_set；不释放则全屏遮罩收不到鼠标 → 无法框选）
+        for w in (getattr(self, "_captcha_win", None), self.win):
+            try:
+                if w is not None and w.winfo_exists():
+                    w.grab_release()
+            except Exception:
+                pass
+
         def _show_overlay():
             import tkinter as tk_overlay
-            overlay = tk_overlay.Toplevel()
+            _parent = getattr(self, "_captcha_win", None) or self.win
+            overlay = tk_overlay.Toplevel(_parent)
             overlay.attributes('-fullscreen', True)
             overlay.attributes('-alpha', 0.3)
             overlay.attributes('-topmost', True)
@@ -1163,15 +1207,33 @@ class SettingsWindow:
                 utils.set_window_icon(overlay)
             except Exception:
                 pass
+            # 让全屏遮罩自己抓取输入（否则点击落到别的窗口），并置前
+            try:
+                overlay.grab_set()
+                overlay.lift()
+                overlay.focus_force()
+            except Exception:
+                pass
             # 模态框选结束后恢复窗口
             try:
                 overlay.wait_window()
             finally:
+                try:
+                    overlay.grab_release()
+                except Exception:
+                    pass
                 for w in hiding:
                     try:
                         w.deiconify()
                     except Exception:
                         pass
+                # 恢复验证码窗口的模态
+                try:
+                    cw = getattr(self, "_captcha_win", None)
+                    if cw is not None and cw.winfo_exists():
+                        cw.grab_set()
+                except Exception:
+                    pass
             if result:
                 self._cap_region_var.set(str(result))
                 self._cap_region_enabled_var.set(True)
@@ -1179,6 +1241,73 @@ class SettingsWindow:
         # 延迟到 withdraw 生效后再显示全屏遮罩（资产识别同款做法）
         try:
             self.win.after(300, _show_overlay)
+        except Exception:
+            pass
+
+    def _pick_refresh_point(self):
+        """屏幕取点：单击选择「刷新」按钮坐标（验证码多次不过时点击用）"""
+        hiding = []
+        for w in (getattr(self, "_captcha_win", None), self.win):
+            try:
+                if w is not None and w.winfo_exists():
+                    w.grab_release()
+                    w.withdraw()
+                    hiding.append(w)
+            except Exception:
+                pass
+
+        def _show():
+            import tkinter as tk_overlay
+            _parent = getattr(self, "_captcha_win", None) or self.win
+            ov = tk_overlay.Toplevel(_parent)
+            ov.attributes('-fullscreen', True)
+            ov.attributes('-alpha', 0.3)
+            ov.attributes('-topmost', True)
+            ov.configure(bg='black')
+            ov.config(cursor='crosshair')
+            cv = tk_overlay.Canvas(ov, highlightthickness=0, bg='black')
+            cv.pack(fill=tk.BOTH, expand=True)
+            tk_overlay.Label(ov, text="单击「刷新」按钮位置（Esc 取消）",
+                             font=('Microsoft YaHei UI', 14, 'bold'),
+                             fg='white', bg='black').place(relx=0.5, rely=0.05, anchor='center')
+
+            def _click(e):
+                try:
+                    self._cap_refresh_x_var.set(str(int(e.x)))
+                    self._cap_refresh_y_var.set(str(int(e.y)))
+                except Exception:
+                    pass
+                ov.destroy()
+
+            cv.bind('<Button-1>', _click)
+            ov.bind('<Escape>', lambda e: ov.destroy())
+            try:
+                ov.grab_set()
+                ov.lift()
+                ov.focus_force()
+            except Exception:
+                pass
+            try:
+                ov.wait_window()
+            finally:
+                try:
+                    ov.grab_release()
+                except Exception:
+                    pass
+                for w in hiding:
+                    try:
+                        w.deiconify()
+                    except Exception:
+                        pass
+                try:
+                    cw = getattr(self, "_captcha_win", None)
+                    if cw is not None and cw.winfo_exists():
+                        cw.grab_set()
+                except Exception:
+                    pass
+
+        try:
+            self.win.after(300, _show)
         except Exception:
             pass
 
@@ -1198,6 +1327,22 @@ class SettingsWindow:
                 target["captcha_region_enabled"] = False
         except Exception:
             target["captcha_region_enabled"] = False
+        # 人工验证等待 + 刷新重试
+        try:
+            target["captcha_manual_wait_seconds"] = max(5, min(600, int(self._cap_manual_wait_var.get())))
+        except Exception:
+            target["captcha_manual_wait_seconds"] = 60
+        target["captcha_refresh_enabled"] = self._cap_refresh_enabled_var.get()
+        try:
+            _rx = int(float(self._cap_refresh_x_var.get() or 0))
+            _ry = int(float(self._cap_refresh_y_var.get() or 0))
+            target["captcha_refresh_point"] = [max(0, _rx), max(0, _ry)]
+        except Exception:
+            target["captcha_refresh_point"] = [0, 0]
+        try:
+            target["captcha_refresh_max"] = max(1, min(5, int(self._cap_refresh_max_var.get())))
+        except Exception:
+            target["captcha_refresh_max"] = 2
         self._apply_ai_visual_settings_to(target)
         self._apply_slider_yolo_settings_to(target)
         config.save_settings(target)

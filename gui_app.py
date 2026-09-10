@@ -259,6 +259,74 @@ def _set_overlay_visible(visible):
         pass
 
 
+def _run_on_main(fn, timeout=2.0):
+    """worker 线程安全执行 fn（主线程直接执行；否则经 _app_root.after 转发并等待）"""
+    if threading.current_thread() is threading.main_thread():
+        try:
+            fn()
+        except Exception:
+            pass
+        return
+    if _app_root is None:
+        return
+    wait = threading.Event()
+    try:
+        _app_root.after(0, lambda: (fn(), wait.set()))
+        wait.wait(timeout=timeout)
+    except Exception:
+        pass
+
+
+def _overlay_avoid(x, y):
+    """点击点若被日志遮罩覆盖，则临时把遮罩移到不遮挡的角落。
+    返回原角落索引 token（供点完复原）；无需避让返回 None。线程安全"""
+    if _qt_overlay is None:
+        return None
+    token = {'v': None}
+
+    def _do():
+        try:
+            if not _qt_overlay.isVisible():
+                return
+            g = _qt_overlay.geometry()
+            if not (g.x() <= x <= g.x() + g.width() and g.y() <= y <= g.y() + g.height()):
+                return   # 未覆盖，无需避让
+            from PyQt6.QtWidgets import QApplication
+            scr = QApplication.primaryScreen().availableGeometry()
+            cur = _qt_overlay.corner_index
+            for idx in range(4):
+                if idx == cur:
+                    continue
+                px, py = _qt_overlay._corner_pos(scr, idx)
+                if not (px <= x <= px + _qt_overlay.width()
+                        and py <= y <= py + _qt_overlay.height()):
+                    _qt_overlay.cycle_corner(idx)
+                    token['v'] = cur
+                    break
+        except Exception:
+            pass
+
+    _run_on_main(_do)
+    return token['v']
+
+
+def _overlay_restore(token):
+    """把遮罩移回避让前的角落"""
+    if token is None or _qt_overlay is None:
+        return
+
+    def _do():
+        try:
+            _qt_overlay.cycle_corner(int(token))
+        except Exception:
+            pass
+
+    _run_on_main(_do)
+
+
+# 注册日志遮罩避让钩子（点击点被遮罩覆盖时临时移开，点完复原）
+utils.set_overlay_avoid_hooks(_overlay_avoid, _overlay_restore)
+
 
 def _overlay_status_text(app):
     """生成遮罩顶行文本（正在运行第x个账号 / 运行时长）"""
