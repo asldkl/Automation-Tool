@@ -919,7 +919,7 @@ class SettingsWindow:
         self._captcha_win = win
         win.title("验证码设置")
         win.minsize(520, 560)
-        win.transient(self.win)
+        # 不使用 transient：父设置窗口会被导航栈隐藏（withdraw），transient 子窗口会随之消失
         try:
             utils.set_window_icon(win)
         except Exception:
@@ -1131,26 +1131,28 @@ class SettingsWindow:
                 win.grab_release()
             except Exception:
                 pass
-            win.destroy()
-            # 恢复设置窗口（打开验证码窗口时被隐藏）并交回模态
             try:
                 self._captcha_win = None
             except Exception:
                 pass
+            # 导航栈恢复设置窗口（nav_pop 内部 destroy 子窗并 deiconify 父窗）
+            utils.nav_pop(win)
             try:
                 if self.win is not None and self.win.winfo_exists():
-                    self.win.deiconify()
                     self.win.lift()
-                    self.win.grab_set()
             except Exception:
                 pass
         win.protocol("WM_DELETE_WINDOW", _on_close)
-        # 打开验证码窗口时隐藏设置窗口（关闭时恢复），避免设置界面一直压在后面
+        # 用导航栈隐藏设置窗口（关闭验证码窗口时自动恢复），避免设置界面一直压在后面
         try:
-            self.win.withdraw()
+            utils.nav_push(self.win, lambda: None)
         except Exception:
-            pass
+            try:
+                self.win.withdraw()
+            except Exception:
+                pass
         try:
+            win.lift()
             win.grab_set()
         except Exception:
             pass

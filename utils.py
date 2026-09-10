@@ -1040,11 +1040,14 @@ _AUTOSTART_VALUE = "DeltaAutoTool"
 
 
 def _autostart_cmd(run_on_startup=False):
-    """构造自启命令行；源码方式优先 pythonw.exe（无控制台窗口，避免开机闪黑框）"""
+    """构造自启命令行；源码方式优先 pythonw.exe（无控制台窗口，避免开机闪黑框）。
+    无法构造出有效命令（如脚本路径不存在）时返回 None（调用方应放弃写入，避免改坏启动项）"""
     import sys as _sys
     flags = "--auto-start" + (" --run-on-startup" if run_on_startup else "")
     if getattr(_sys, 'frozen', False):
-        return f'"{_sys.executable}" {flags}'
+        if _sys.executable and os.path.exists(_sys.executable):
+            return f'"{_sys.executable}" {flags}'
+        return None
     py = _sys.executable
     try:
         if py.lower().endswith("python.exe"):
@@ -1054,6 +1057,9 @@ def _autostart_cmd(run_on_startup=False):
     except Exception:
         pass
     script = os.path.abspath(_sys.argv[0]) if _sys.argv and _sys.argv[0] else ""
+    # 源码方式必须脚本路径真实存在，否则开机项无效（宁可不写）
+    if not script or not script.lower().endswith(".py") or not os.path.exists(script):
+        return None
     return f'"{py}" "{script}" {flags}'
 
 
@@ -1070,8 +1076,11 @@ def set_autostart_registry(enable, run_on_startup=False):
         return False
     try:
         if enable:
-            winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ,
-                              _autostart_cmd(run_on_startup))
+            cmd = _autostart_cmd(run_on_startup)
+            if not cmd:
+                print("⚠️ 无法构造有效的开机自启命令（脚本/exe 路径不存在），已跳过写入")
+                return False
+            winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ, cmd)
         else:
             try:
                 winreg.DeleteValue(key, _AUTOSTART_VALUE)
@@ -1106,10 +1115,14 @@ def fix_autostart_pythonw():
             return
         v = str(val or "")
         if "python.exe" not in v.lower():
-            return
+            return   # 已经是 pythonw 或 exe：不动
         run_on_startup = "--run-on-startup" in v
-        winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ,
-                          _autostart_cmd(run_on_startup))
+        new_cmd = _autostart_cmd(run_on_startup)
+        # 仅在能构造出有效命令、且确实改用 pythonw 时才覆盖；否则保持原值（不破坏启动项）
+        if not new_cmd or "pythonw" not in new_cmd.lower():
+            print("⏭️ 无法构造有效启动命令，保持原开机自启项不变")
+            return
+        winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ, new_cmd)
         print("🔧 已把开机自启项修正为 pythonw（无控制台窗口）")
     except Exception:
         pass
