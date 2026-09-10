@@ -370,6 +370,15 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                 shot.close()
             except Exception:
                 pass
+        # 取模型原始 targets（用于标注「AI 在框内识别到的位置」）
+        raw_targets = []
+        try:
+            _data = _extract_json(raw_content) if raw_content else None
+            if isinstance(_data, dict) and isinstance(_data.get("targets"), list):
+                raw_targets = [t for t in _data["targets"] if isinstance(t, dict)]
+        except Exception:
+            raw_targets = []
+
         # 识别区域框（橙）
         if region:
             try:
@@ -379,7 +388,35 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
             except Exception:
                 pass
-        # 点击点（红圈 + 十字 + 标签坐标）
+
+        # ① 模型原始识别位置（绿）：把模型给的数值【原封不动】当"图片内像素"标注（不做 scale/区域换算）
+        #    —— 若绿圈落在目标上，说明 AI 定位对、是换算错；若绿圈就偏，说明 AI 本身就识别错了
+        for i, t in enumerate(raw_targets):
+            _scale = _scale_factor(t.get("scale"))
+            pt = t.get("point")
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                try:
+                    raw_x, raw_y = int(float(pt[0])), int(float(pt[1]))
+                    gx = raw_x + (region[0] if region else 0)
+                    gy = raw_y + (region[1] if region else 0)
+                    cv2.circle(arr, (gx, gy), 16, (0, 200, 0), 3)
+                    _tag = f"AI原图({raw_x},{raw_y})" + ("" if not _scale else f"[scale{_scale}]")
+                    cv2.putText(arr, _tag, (gx + 20, gy + 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
+                except Exception:
+                    pass
+            bb = t.get("bbox")
+            if isinstance(bb, (list, tuple)) and len(bb) >= 4:
+                try:
+                    _ox, _oy = (region[0], region[1]) if region else (0, 0)
+                    cv2.rectangle(arr,
+                                  (int(float(bb[0])) + _ox, int(float(bb[1])) + _oy),
+                                  (int(float(bb[2])) + _ox, int(float(bb[3])) + _oy),
+                                  (0, 200, 0), 1)
+                except Exception:
+                    pass
+
+        # ② 换算后点击位置（红圈 + 十字）
         for i, pt in enumerate(points_screen or []):
             try:
                 px, py = int(pt[0]), int(pt[1])
@@ -391,6 +428,37 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
             text = f"{labels[i] if i < len(labels) else ''}({px},{py})"
             cv2.putText(arr, text, (px + 28, py - 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+
+        # ③ 右上角"框内视图"：区域裁剪 + 框内原始(绿)/换算(红)位置，直接看 AI 在框内认到哪
+        if region:
+            try:
+                rx, ry, rw, rh = [int(v) for v in region]
+                crop = arr[ry:ry + rh, rx:rx + rw].copy()
+                disp_w = min(420, max(200, rw))
+                ratio = disp_w / max(1, rw)
+                disp = cv2.resize(crop, (disp_w, max(1, int(rh * ratio))))
+                hh, ww = disp.shape[:2]
+                cv2.rectangle(disp, (0, 0), (ww - 1, hh - 1), (0, 165, 255), 2)
+                cv2.putText(disp, "crop: green=AI raw, red=converted", (6, 16),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+                for pt in (points_screen or []):
+                    try:
+                        cv2.circle(disp, (int((int(pt[0]) - rx) * ratio),
+                                          int((int(pt[1]) - ry) * ratio)), 9, (0, 0, 255), 2)
+                    except Exception:
+                        pass
+                for t in raw_targets:
+                    pt = t.get("point")
+                    if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                        try:
+                            cv2.circle(disp, (int(float(pt[0]) * ratio),
+                                              int(float(pt[1]) * ratio)), 7, (0, 200, 0), 2)
+                        except Exception:
+                            pass
+                x0 = max(0, arr.shape[1] - ww - 10)
+                arr[10:10 + hh, x0:x0 + ww] = disp
+            except Exception:
+                pass
         # 保存到「日志/截图保存目录/日期/图片/」（与日志同日期，图片独立子文件夹）
         base_dir = ""
         try:
@@ -414,6 +482,14 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content="", se
         print(f"🖼️ 已保存 AI 位置标注图：{path}")
         if raw_content:
             print(f"🖼️ 模型原始回复：{str(raw_content)[:200]}")
+        try:
+            for i, t in enumerate(raw_targets):
+                _p = t.get("point")
+                _s = t.get("scale")
+                _cv = points_screen[i] if (points_screen and i < len(points_screen)) else None
+                print(f"🖼️ 目标{i + 1}: 原始 point={_p} scale={_s} → 换算点击={_cv}")
+        except Exception:
+            pass
         try:
             os.startfile(path)   # 自动打开图片便于查看
         except Exception:

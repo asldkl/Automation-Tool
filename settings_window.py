@@ -1132,7 +1132,24 @@ class SettingsWindow:
             except Exception:
                 pass
             win.destroy()
+            # 恢复设置窗口（打开验证码窗口时被隐藏）并交回模态
+            try:
+                self._captcha_win = None
+            except Exception:
+                pass
+            try:
+                if self.win is not None and self.win.winfo_exists():
+                    self.win.deiconify()
+                    self.win.lift()
+                    self.win.grab_set()
+            except Exception:
+                pass
         win.protocol("WM_DELETE_WINDOW", _on_close)
+        # 打开验证码窗口时隐藏设置窗口（关闭时恢复），避免设置界面一直压在后面
+        try:
+            self.win.withdraw()
+        except Exception:
+            pass
         try:
             win.grab_set()
         except Exception:
@@ -1434,9 +1451,7 @@ class SettingsWindow:
         self._save_captcha_settings(silent=True)
         self._iconify_for_captcha_test()
         ai_visual_captcha.test_captcha(self.app)
-        messagebox.showinfo("测试已启动",
-                            "3 秒后开始截图识别（可在测试画面上放一张验证码图），\n结果与点击过程见主界面日志。",
-                            parent=self._captcha_parent())
+        # 不弹窗：3 秒后自动开始，结果与标注图见主界面日志
 
     def _test_captcha_router(self):
         """测试完整流程：OCR 判定类型 → 对应处理（与登录时链路一致）。
@@ -2323,33 +2338,12 @@ class SettingsWindow:
             return False
 
     def _set_autostart(self, enable, run_on_startup=False):
+        """写入/删除 开机自启（HKCU Run）；源码方式优先 pythonw 避免开机闪黑框。
+        具体实现见 utils.set_autostart_registry"""
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
-                                 0, winreg.KEY_SET_VALUE | winreg.KEY_READ)
-        except (FileNotFoundError, PermissionError):
-            return
-        try:
-            if enable:
-                flags = "--auto-start"
-                if run_on_startup:
-                    flags += " --run-on-startup"
-                if getattr(sys, 'frozen', False):
-                    exe_path = sys.executable
-                    # 确保路径用双引号包裹，正确处理中文路径和空格
-                    reg_value = f'"{exe_path}" {flags}'
-                else:
-                    python_exe = sys.executable
-                    script_path = os.path.abspath(sys.argv[0])
-                    reg_value = f'"{python_exe}" "{script_path}" {flags}'
-                winreg.SetValueEx(key, "DeltaAutoTool", 0, winreg.REG_SZ, reg_value)
-            else:
-                try:
-                    winreg.DeleteValue(key, "DeltaAutoTool")
-                except FileNotFoundError:
-                    pass
-        finally:
-            winreg.CloseKey(key)
+            utils.set_autostart_registry(enable, run_on_startup)
+        except Exception:
+            pass
 
     def _on_group_run_toggle(self):
         """勾选/取消「分组运行」：勾选后若冷却检测等待 <10 自动改为 15（勾选框即时反馈）"""

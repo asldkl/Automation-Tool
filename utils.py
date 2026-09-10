@@ -1034,6 +1034,92 @@ def remove_cooldown_scheduled_task():
         return False
 
 
+# ==================== 开机自启（HKCU Run） ====================
+_AUTOSTART_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_AUTOSTART_VALUE = "DeltaAutoTool"
+
+
+def _autostart_cmd(run_on_startup=False):
+    """构造自启命令行；源码方式优先 pythonw.exe（无控制台窗口，避免开机闪黑框）"""
+    import sys as _sys
+    flags = "--auto-start" + (" --run-on-startup" if run_on_startup else "")
+    if getattr(_sys, 'frozen', False):
+        return f'"{_sys.executable}" {flags}'
+    py = _sys.executable
+    try:
+        if py.lower().endswith("python.exe"):
+            cand = py[: -len("python.exe")] + "pythonw.exe"
+            if os.path.exists(cand):
+                py = cand
+    except Exception:
+        pass
+    script = os.path.abspath(_sys.argv[0]) if _sys.argv and _sys.argv[0] else ""
+    return f'"{py}" "{script}" {flags}'
+
+
+def set_autostart_registry(enable, run_on_startup=False):
+    """写入/删除 开机自启注册表项。返回是否成功"""
+    try:
+        import winreg
+    except Exception:
+        return False
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_RUN_KEY, 0,
+                             winreg.KEY_SET_VALUE | winreg.KEY_READ)
+    except (FileNotFoundError, PermissionError):
+        return False
+    try:
+        if enable:
+            winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ,
+                              _autostart_cmd(run_on_startup))
+        else:
+            try:
+                winreg.DeleteValue(key, _AUTOSTART_VALUE)
+            except FileNotFoundError:
+                pass
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+
+
+def fix_autostart_pythonw():
+    """把已有的开机自启项里带控制台的 python.exe 改成 pythonw.exe（避免开机闪黑框）。
+    仅源码运行时需要；无该项或已是 pythonw 则不动"""
+    try:
+        import sys as _sys
+        import winreg
+        if getattr(_sys, 'frozen', False):
+            return
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_RUN_KEY, 0,
+                             winreg.KEY_READ | winreg.KEY_SET_VALUE)
+    except Exception:
+        return
+    try:
+        try:
+            val, _ = winreg.QueryValueEx(key, _AUTOSTART_VALUE)
+        except FileNotFoundError:
+            return
+        v = str(val or "")
+        if "python.exe" not in v.lower():
+            return
+        run_on_startup = "--run-on-startup" in v
+        winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ,
+                          _autostart_cmd(run_on_startup))
+        print("🔧 已把开机自启项修正为 pythonw（无控制台窗口）")
+    except Exception:
+        pass
+    finally:
+        try:
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+
+
 # ==================== 窗口导航栈 ====================
 _nav_stack = []  # [(parent_win, restore_callback), ...]
 

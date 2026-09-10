@@ -1742,6 +1742,12 @@ def main():
     import utils
     threading.Thread(target=utils.init_ocr_engine, daemon=True).start()
 
+    # 修正已有的开机自启项（把带控制台的 python.exe 改成 pythonw.exe，避免开机闪黑框）
+    try:
+        utils.fix_autostart_pythonw()
+    except Exception:
+        pass
+
     root = tk.Tk()
     root.title("三角洲行动自动化工具")
     root.resizable(True, True)
