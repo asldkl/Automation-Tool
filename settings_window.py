@@ -908,9 +908,15 @@ class SettingsWindow:
     def _open_captcha_settings(self):
         """打开「验证码设置」统一管理窗口：总开关 + OCR 判定关键词 + 滑块YOLO + AI视觉"""
         if getattr(self, "_captcha_win", None) is not None and self._captcha_win.winfo_exists():
+            # 重新打开：务必唤到最前并聚焦（否则可能被其它窗口挡住看不见）
             try:
-                self._captcha_win.deiconify()
-                self._captcha_win.lift()
+                w = self._captcha_win
+                w.deiconify()
+                w.lift()
+                w.attributes('-topmost', True)
+                w.after(250, lambda: w.attributes('-topmost', False))
+                w.focus_force()
+                w.grab_set()
             except Exception:
                 pass
             return
@@ -1153,6 +1159,9 @@ class SettingsWindow:
                 pass
         try:
             win.lift()
+            win.attributes('-topmost', True)
+            win.after(250, lambda: win.attributes('-topmost', False))
+            win.focus_force()
             win.grab_set()
         except Exception:
             pass

@@ -102,8 +102,8 @@ def _build_prompt(width, height):
         '{"captcha": true/false, "type": "click"/"slider"/"none", '
         '"targets": [{"text": "要点击的目标文字或描述", "bbox": [x1,y1,x2,y2], "point": [x,y]}]}\n'
         "规则：\n"
-        "- 点选类验证码：type=click，按题目要求的点击顺序排列 targets，每个 target 必须给 point（目标中心像素坐标）；可另给 bbox 作参考，但程序以 point 为准\n"
-        "- 坐标用像素；若你只能给归一化坐标（0-1000 / 0-1024 / 0-1），在该 target 里加 \"scale\": 1000 / 1024 / 1\n"
+        "- 点选类验证码：type=click，按题目要求的点击顺序排列 targets，每个 target 必须给 point（目标中心坐标）；可另给 bbox 作参考，但程序以 point 为准\n"
+        "- 坐标必须是【像素】，且【相对本张图片的左上角】（左上角为 0,0）；不要给归一化(0-1/0-1000)坐标\n"
         "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"targets\": []}\n"
         "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"targets\": []}\n"
         "- 找不准目标就不要给坐标，宁可输出找不到"
@@ -183,33 +183,34 @@ def _to_pixel_coord(value, max_size, scale):
 
 
 def _target_center(target, screen_w, screen_h):
-    """从 target 提取像素中心点。
-    优先用模型给的 point（更准，模型自报的目标点）；无 point 才用 bbox 中心
-    （bbox 常偏大、把整块背景框进去，中心会偏 → 这是此前坐标偏大的原因）；返回 (x, y) 或 None"""
+    """从 target 提取坐标（单位：像素，相对"发送给模型的这张图"的左上角）。
+    直接取原始数值，不做任何归一化/缩放换算；调用方再统一加上识别区域左上角偏移。
+    优先 point（模型自报的目标点），无 point 才用 bbox 中心。返回 (x, y) 或 None"""
     if not isinstance(target, dict):
         return None
-    scale = _scale_factor(target.get("scale"))
+
+    def _px(v):
+        try:
+            return int(round(float(str(v).strip())))
+        except (TypeError, ValueError):
+            return None
+
     point = target.get("point")
     if isinstance(point, (list, tuple)) and len(point) >= 2:
-        x = _to_pixel_coord(point[0], screen_w, scale)
-        y = _to_pixel_coord(point[1], screen_h, scale)
-        if None not in (x, y):
+        x, y = _px(point[0]), _px(point[1])
+        if x is not None and y is not None:
             return (x, y)
     bbox = target.get("bbox")
     if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
-        x1 = _to_pixel_coord(bbox[0], screen_w, scale)
-        y1 = _to_pixel_coord(bbox[1], screen_h, scale)
-        x2 = _to_pixel_coord(bbox[2], screen_w, scale)
-        y2 = _to_pixel_coord(bbox[3], screen_h, scale)
+        x1, y1, x2, y2 = _px(bbox[0]), _px(bbox[1]), _px(bbox[2]), _px(bbox[3])
         if None not in (x1, y1, x2, y2) and x2 >= x1 and y2 >= y1:
             return (int((x1 + x2) / 2), int((y1 + y2) / 2))
     # 兜底：x1/y1/x2/y2 平铺字段
-    xs = [_to_pixel_coord(target.get(k), screen_w, scale) for k in ("x1", "x2")]
-    ys = [_to_pixel_coord(target.get(k), screen_h, scale) for k in ("y1", "y2")]
+    xs = [_px(target.get(k)) for k in ("x1", "x2")]
+    ys = [_px(target.get(k)) for k in ("y1", "y2")]
     if all(v is not None for v in xs + ys):
         return (int((xs[0] + xs[1]) / 2), int((ys[0] + ys[1]) / 2))
-    xy = (_to_pixel_coord(target.get("x"), screen_w, scale),
-          _to_pixel_coord(target.get("y"), screen_h, scale))
+    xy = (_px(target.get("x")), _px(target.get("y")))
     if None not in xy:
         return xy
     return None

@@ -602,7 +602,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(r["status"], "slider")
 
     def test_parse_response_click_bbox_and_point(self):
-        """click：bbox 中心优先；point 兜底；scale=1000 归一化换算"""
+        """click：坐标为【像素】直接取用（不做归一化换算）；point 优先，bbox 中心兜底"""
         import ai_visual_captcha as avc
         # bbox 像素 (100,200,200,300) → 中心 (150,250)
         r = avc.parse_model_response(
@@ -611,28 +611,28 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(r["status"], "click")
         self.assertEqual(r["points"], [(150, 250)])
         self.assertEqual(r["labels"], ["塔"])
-        # point + scale 1000：(500,400)/1000 × (1920,1080) → (960,432)
+        # point 直接用像素（无论是否带 scale 字段都不再换算）
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
             '{"text": "字", "point": [500, 400], "scale": 1000}]}', 1920, 1080)
-        self.assertEqual(r["points"], [(960, 432)])
+        self.assertEqual(r["points"], [(500, 400)])
         # bbox 与 point 同时给出时以 point 为准（bbox 常偏大，中心会偏）
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
             '{"bbox": [0, 0, 10, 10], "point": [999, 999]}]}', 1000, 1000)
         self.assertEqual(r["points"], [(999, 999)])
 
-    def test_parse_response_zero_to_one_float_scale(self):
-        """scale=1（0-1 浮点）按比例换算；>1 的值按像素处理"""
+    def test_parse_response_point_pixels_passthrough(self):
+        """point 一律按像素取整直用（不做 0-1/0-1000 归一化换算）"""
         import ai_visual_captcha as avc
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
-            '{"point": [0.5, 0.25], "scale": 1}]}', 1000, 800)
-        self.assertEqual(r["points"], [(500, 200)])
+            '{"point": [100, 400]}]}', 1920, 1080)
+        self.assertEqual(r["points"], [(100, 400)])
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
-            '{"point": [500, 250], "scale": 1}]}', 1000, 800)
-        self.assertEqual(r["points"], [(500, 250)])
+            '{"point": [500.6, 250.2]}]}', 1000, 800)
+        self.assertEqual(r["points"], [(501, 250)])
 
     def test_parse_response_invalid(self):
         """非 JSON / 有验证码但无有效坐标 → invalid"""
