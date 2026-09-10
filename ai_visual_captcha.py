@@ -101,7 +101,7 @@ def _build_prompt(width, height):
         '{"captcha": true/false, "type": "click"/"slider"/"none", '
         '"targets": [{"text": "要点击的目标文字或描述", "bbox": [x1,y1,x2,y2], "point": [x,y]}]}\n'
         "规则：\n"
-        "- 点选类验证码：type=click，按题目要求的点击顺序排列 targets，每个 target 优先给 bbox，给不准再给 point\n"
+        "- 点选类验证码：type=click，按题目要求的点击顺序排列 targets，每个 target 必须给 point（目标中心像素坐标）；可另给 bbox 作参考，但程序以 point 为准\n"
         "- 坐标用像素；若你只能给归一化坐标（0-1000 / 0-1024 / 0-1），在该 target 里加 \"scale\": 1000 / 1024 / 1\n"
         "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"targets\": []}\n"
         "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"targets\": []}\n"
@@ -182,10 +182,18 @@ def _to_pixel_coord(value, max_size, scale):
 
 
 def _target_center(target, screen_w, screen_h):
-    """从 target 提取像素中心点：bbox 中心优先，point 兜底；返回 (x, y) 或 None"""
+    """从 target 提取像素中心点。
+    优先用模型给的 point（更准，模型自报的目标点）；无 point 才用 bbox 中心
+    （bbox 常偏大、把整块背景框进去，中心会偏 → 这是此前坐标偏大的原因）；返回 (x, y) 或 None"""
     if not isinstance(target, dict):
         return None
     scale = _scale_factor(target.get("scale"))
+    point = target.get("point")
+    if isinstance(point, (list, tuple)) and len(point) >= 2:
+        x = _to_pixel_coord(point[0], screen_w, scale)
+        y = _to_pixel_coord(point[1], screen_h, scale)
+        if None not in (x, y):
+            return (x, y)
     bbox = target.get("bbox")
     if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
         x1 = _to_pixel_coord(bbox[0], screen_w, scale)
@@ -194,12 +202,6 @@ def _target_center(target, screen_w, screen_h):
         y2 = _to_pixel_coord(bbox[3], screen_h, scale)
         if None not in (x1, y1, x2, y2) and x2 >= x1 and y2 >= y1:
             return (int((x1 + x2) / 2), int((y1 + y2) / 2))
-    point = target.get("point")
-    if isinstance(point, (list, tuple)) and len(point) >= 2:
-        x = _to_pixel_coord(point[0], screen_w, scale)
-        y = _to_pixel_coord(point[1], screen_h, scale)
-        if None not in (x, y):
-            return (x, y)
     # 兜底：x1/y1/x2/y2 平铺字段
     xs = [_to_pixel_coord(target.get(k), screen_w, scale) for k in ("x1", "x2")]
     ys = [_to_pixel_coord(target.get(k), screen_h, scale) for k in ("y1", "y2")]
@@ -398,6 +400,12 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False):
             except Exception as e:
                 return False, f"AI接口调用失败：{e}"
             parsed = parse_model_response(content, w, h)
+            # 诊断日志：核对换算（模型原始回复 / 图像尺寸 / 区域偏移 / 解析出的坐标）
+            try:
+                print(f"🤖 AI原始回复：{str(content)[:300]}")
+                print(f"🤖 图像 {w}x{h}，区域偏移 ({offset_x},{offset_y})，解析坐标：{parsed.get('points')}")
+            except Exception:
+                pass
             status = parsed["status"]
             if status == "none":
                 print("🤖 AI视觉验证：未检测到验证码")
