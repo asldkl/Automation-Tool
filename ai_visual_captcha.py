@@ -10,6 +10,7 @@ AI 视觉验证码处理（WeGame 登录点击式图片验证）
 """
 import base64
 import json
+import os
 import random
 import re
 import time
@@ -353,8 +354,8 @@ def _show_overlay(need_restore):
             pass
 
 
-def save_debug_annotation(region, points_screen, labels=None, raw_content=""):
-    """把本次 AI 识别结果标注到当前屏幕截图上并保存（并尝试打开）。
+def save_debug_annotation(region, points_screen, labels=None, raw_content="", settings=None):
+    """把本次 AI 识别结果标注到当前屏幕截图上并保存到「日志目录/日期/图片/」（并尝试打开）。
     points_screen: 已换算到全屏的点击坐标 [(x,y),...]；region: 识别区域或 None。
     用于人工判断：是 AI 定位错，还是坐标换算错。返回保存路径或 None"""
     try:
@@ -390,12 +391,25 @@ def save_debug_annotation(region, points_screen, labels=None, raw_content=""):
             text = f"{labels[i] if i < len(labels) else ''}({px},{py})"
             cv2.putText(arr, text, (px + 28, py - 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
-        out_dir = os.path.join(config.APP_DATA_DIR, "captcha_debug")
+        # 保存到「日志/截图保存目录/日期/图片/」（与日志同日期，图片独立子文件夹）
+        base_dir = ""
+        try:
+            if settings:
+                base_dir = (settings.get("log_save_path", "") or "").strip()
+            if not base_dir:
+                import config as _cfg
+                base_dir = _cfg.APP_DATA_DIR
+        except Exception:
+            base_dir = ""
+        try:
+            out_dir = os.path.join(base_dir, utils.date_folder_name(), "图片")
+        except Exception:
+            out_dir = base_dir or "."
         try:
             os.makedirs(out_dir, exist_ok=True)
         except Exception:
             pass
-        path = os.path.join(out_dir, "AI_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".png")
+        path = os.path.join(out_dir, "AI验证_" + datetime.datetime.now().strftime("%H%M%S") + ".png")
         cv2.imencode(".png", arr)[1].tofile(path)
         print(f"🖼️ 已保存 AI 位置标注图：{path}")
         if raw_content:
@@ -467,11 +481,11 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             if status == "none":
                 print("🤖 AI视觉验证：未检测到验证码")
                 if save_debug:
-                    save_debug_annotation(region, [], [], content)
+                    save_debug_annotation(region, [], [], content, settings=settings)
                 return True, f"第{round_index}轮未检测到验证码"
             if status == "slider":
                 if save_debug:
-                    save_debug_annotation(region, [], [], content)
+                    save_debug_annotation(region, [], [], content, settings=settings)
                 # 滑块验证：委托本地 YOLO 模块处理（未启用且非 force 则提示手动）
                 slider_module = None
                 try:
@@ -493,7 +507,7 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             if status == "invalid":
                 print(f"⚠️ AI视觉验证：模型未返回有效坐标（回复：{content[:120]}）")
                 if save_debug:
-                    save_debug_annotation(region, [], [], content)
+                    save_debug_annotation(region, [], [], content, settings=settings)
                 return False, "模型未返回有效坐标"
             # click：按顺序拟人点击（截图带区域时坐标需加区域偏移换算回全屏）
             labels = parsed["labels"]
@@ -501,7 +515,7 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                 save_debug_annotation(
                     region,
                     [(int(px) + offset_x, int(py) + offset_y) for (px, py) in parsed["points"]],
-                    labels, content)
+                    labels, content, settings=settings)
             for i, (x, y) in enumerate(parsed["points"]):
                 if stop_event is not None and stop_event.is_set():
                     return False, "已停止"
