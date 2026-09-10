@@ -353,7 +353,64 @@ def _show_overlay(need_restore):
             pass
 
 
-def solve_captcha(app, stop_event=None, max_rounds=None, force=False):
+def save_debug_annotation(region, points_screen, labels=None, raw_content=""):
+    """把本次 AI 识别结果标注到当前屏幕截图上并保存（并尝试打开）。
+    points_screen: 已换算到全屏的点击坐标 [(x,y),...]；region: 识别区域或 None。
+    用于人工判断：是 AI 定位错，还是坐标换算错。返回保存路径或 None"""
+    try:
+        import datetime
+        import pyautogui
+        labels = labels or []
+        shot = pyautogui.screenshot()
+        try:
+            arr = cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2BGR)
+        finally:
+            try:
+                shot.close()
+            except Exception:
+                pass
+        # 识别区域框（橙）
+        if region:
+            try:
+                rx, ry, rw, rh = [int(v) for v in region]
+                cv2.rectangle(arr, (rx, ry), (rx + rw, ry + rh), (0, 165, 255), 2)
+                cv2.putText(arr, f"region [{rx},{ry},{rw},{rh}]", (rx, max(20, ry - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+            except Exception:
+                pass
+        # 点击点（红圈 + 十字 + 标签坐标）
+        for i, pt in enumerate(points_screen or []):
+            try:
+                px, py = int(pt[0]), int(pt[1])
+            except Exception:
+                continue
+            cv2.circle(arr, (px, py), 24, (0, 0, 255), 3)
+            cv2.line(arr, (px - 34, py), (px + 34, py), (0, 0, 255), 2)
+            cv2.line(arr, (px, py - 34), (px, py + 34), (0, 0, 255), 2)
+            text = f"{labels[i] if i < len(labels) else ''}({px},{py})"
+            cv2.putText(arr, text, (px + 28, py - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+        out_dir = os.path.join(config.APP_DATA_DIR, "captcha_debug")
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            pass
+        path = os.path.join(out_dir, "AI_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".png")
+        cv2.imencode(".png", arr)[1].tofile(path)
+        print(f"🖼️ 已保存 AI 位置标注图：{path}")
+        if raw_content:
+            print(f"🖼️ 模型原始回复：{str(raw_content)[:200]}")
+        try:
+            os.startfile(path)   # 自动打开图片便于查看
+        except Exception:
+            pass
+        return path
+    except Exception as e:
+        print(f"⚠️ 保存 AI 标注图失败：{e}")
+        return None
+
+
+def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug=False):
     """检测并处理屏幕上的点击式验证码（供登录流程/测试调用）。
 
     force=True 时跳过启用开关校验（设置窗口「仅测试AI」用，只需供应商配置完整）。
@@ -409,8 +466,12 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False):
             status = parsed["status"]
             if status == "none":
                 print("🤖 AI视觉验证：未检测到验证码")
+                if save_debug:
+                    save_debug_annotation(region, [], [], content)
                 return True, f"第{round_index}轮未检测到验证码"
             if status == "slider":
+                if save_debug:
+                    save_debug_annotation(region, [], [], content)
                 # 滑块验证：委托本地 YOLO 模块处理（未启用且非 force 则提示手动）
                 slider_module = None
                 try:
@@ -431,9 +492,16 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False):
                 return False, "检测到滑块验证，需手动处理"
             if status == "invalid":
                 print(f"⚠️ AI视觉验证：模型未返回有效坐标（回复：{content[:120]}）")
+                if save_debug:
+                    save_debug_annotation(region, [], [], content)
                 return False, "模型未返回有效坐标"
             # click：按顺序拟人点击（截图带区域时坐标需加区域偏移换算回全屏）
             labels = parsed["labels"]
+            if save_debug:
+                save_debug_annotation(
+                    region,
+                    [(int(px) + offset_x, int(py) + offset_y) for (px, py) in parsed["points"]],
+                    labels, content)
             for i, (x, y) in enumerate(parsed["points"]):
                 if stop_event is not None and stop_event.is_set():
                     return False, "已停止"
@@ -465,7 +533,8 @@ def test_captcha(app):
     def _run():
         print("🤖 AI视觉验证测试开始（3秒后截图，请把测试画面摆在前台）...")
         time.sleep(3)
-        ok, detail = solve_captcha(app, stop_event=stop_event, force=True)
+        ok, detail = solve_captcha(app, stop_event=stop_event, force=True, save_debug=True)
         print(f"{'✅' if ok else '❌'} AI视觉验证测试结束：{detail}")
+        print("🖼️ 本次已在 %APPDATA%\\DeltaAutoTool\\captcha_debug\\ 生成带标注的截图（红圈=AI定位点）")
 
     threading.Thread(target=_run, daemon=True).start()

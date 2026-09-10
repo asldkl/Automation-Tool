@@ -168,7 +168,7 @@ def _route_once(app, stop_event=None, screen_text=None, force=False):
         if not ai_on:
             print(f"🛡️ {reason}，但 AI 视觉验证未启用/未配置，无法处理")
             return False, f"{reason}：AI视觉验证未配置"
-        ok, detail = ai_mod.solve_captcha(app, stop_event=stop_event)
+        ok, detail = ai_mod.solve_captcha(app, stop_event=stop_event, save_debug=force)
         return ok, detail
 
     # 1) 滑块关键词优先（两类词同时命中时按滑块处理，YOLO 未检出会落 AI 兜底）

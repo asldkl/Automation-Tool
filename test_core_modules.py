@@ -616,11 +616,11 @@ class TestAiVisualCaptcha(unittest.TestCase):
             '{"captcha": true, "type": "click", "targets": ['
             '{"text": "字", "point": [500, 400], "scale": 1000}]}', 1920, 1080)
         self.assertEqual(r["points"], [(960, 432)])
-        # bbox 与 point 同时给出时用 bbox 中心
+        # bbox 与 point 同时给出时以 point 为准（bbox 常偏大，中心会偏）
         r = avc.parse_model_response(
             '{"captcha": true, "type": "click", "targets": ['
             '{"bbox": [0, 0, 10, 10], "point": [999, 999]}]}', 1000, 1000)
-        self.assertEqual(r["points"], [(5, 5)])
+        self.assertEqual(r["points"], [(999, 999)])
 
     def test_parse_response_zero_to_one_float_scale(self):
         """scale=1（0-1 浮点）按比例换算；>1 的值按像素处理"""
@@ -947,7 +947,7 @@ class TestCaptchaRouter(unittest.TestCase):
         ai_calls = {}
         original_ai = ai_visual_captcha.solve_captcha
 
-        def _mock_ai(app, stop_event=None):
+        def _mock_ai(app, stop_event=None, save_debug=False, **kwargs):
             ai_calls["called"] = True
             return True, "AI判定无验证码"
 
