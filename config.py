@@ -235,6 +235,7 @@ DEFAULT_SETTINGS = {
     "captcha_click_keywords": "依次点击,请点击,按顺序点击,点选,点击下列",  # OCR 点击式验证关键词
     "captcha_region_enabled": False,            # 启用验证码识别区域（只截图区域内容，提升识别率）
     "captcha_region": [0, 0, 0, 0],             # 识别区域 [x, y, w, h]（滑块YOLO与AI视觉共用）
+    "captcha_manual_wait_seconds": 60,          # 登录验证：等人工处理秒数（超时→账号标记「未验证通过」并跳过）
     # AI 视觉验证（WeGame 登录点击式验证码，配置完整才生效）
     "ai_visual_captcha_enabled": False,          # 是否启用 AI 视觉验证处理
     "ai_visual_captcha_provider": "",            # 供应商预设名（智谱GLM/阿里百炼/月之暗面Kimi/豆包（火山方舟）/硅基流动/自定义）

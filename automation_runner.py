@@ -761,22 +761,61 @@ def _login_account(app, account_name, i, total, processed_accounts):
                     print(f"📋 屏幕文字: {screen_text}")
             except Exception:
                 pass
-            handled = False
-            if _captcha_auto_enabled:
-                # 登录验证码自动处理：OCR 判定类型 → 滑块YOLO / AI视觉 分发（captcha_router）
-                try:
-                    import captcha_router
-                    captcha_ok, captcha_detail = captcha_router.route_and_solve(
-                        app, stop_event=app._stop_event, screen_text=screen_text)
-                except Exception as e:
-                    print(f"⚠️ 登录验证码处理异常：{e}")
-                    captcha_ok, captcha_detail = False, f"调度异常：{e}"
-                print(f"🛡️ 登录验证码处理{'通过' if captcha_ok else '未通过'}：{captcha_detail}")
-                login_ok = captcha_ok
-                handled = True
-            if not handled:
-                # 总开关关闭：按原逻辑假设登录成功（真实状态由 _launch_game 兜底判断）
+            # 无论是否勾选验证码总开关，都先按「验证码识别区域」做 OCR 判定是否需要验证
+            _region_text = screen_text or ""
+            _need_verify = False
+            try:
+                import captcha_router as _cr
+                _rt = _cr.gather_region_text(app.settings)
+                if _rt:
+                    _region_text = _rt
+                    print(f"📋 验证码区域文字: {_rt}")
+                _need_verify = _cr.needs_verification(app.settings, _region_text)
+            except Exception as e:
+                print(f"⚠️ 区域OCR判定异常，退回全屏判断：{e}")
+                _need_verify = bool(_region_text)
+            if not _need_verify:
+                # 未检测到验证：按登录成功处理（真实状态由 _launch_game 兜底判断）
                 login_ok = True
+            else:
+                print("🛡️ 检测到需要验证")
+                # 先尝试自动处理（仅当总开关开启且已配置对应能力）
+                if _captcha_auto_enabled:
+                    try:
+                        import captcha_router
+                        captcha_ok, captcha_detail = captcha_router.route_and_solve(
+                            app, stop_event=app._stop_event, screen_text=_region_text)
+                    except Exception as e:
+                        print(f"⚠️ 登录验证码处理异常：{e}")
+                        captcha_ok, captcha_detail = False, f"调度异常：{e}"
+                    print(f"🛡️ 自动验证码处理{'通过' if captcha_ok else '未通过'}：{captcha_detail}")
+                    if captcha_ok:
+                        login_ok = True
+                # 未自动通过/未开启自动：等待人工验证（判定通过 = 成功识别到三角洲图标）
+                if not login_ok:
+                    _wait_sec = 60
+                    try:
+                        _wait_sec = int(app.settings.get("captcha_manual_wait_seconds", 60) or 60)
+                    except Exception:
+                        _wait_sec = 60
+                    print(f"⏳ 请手动完成验证（最长等待 {_wait_sec} 秒，完成后自动继续）...")
+                    if _wait_manual_verify(app, _wait_sec):
+                        print("✅ 人工验证已通过（识别到三角洲图标）")
+                        login_ok = True
+                    else:
+                        # 超时/停止：标记「未验证通过」（≈暂停）并跳过该账号
+                        try:
+                            import cooldown_manager as _cm
+                            _cm.set_unverified(account_name, True)
+                        except Exception:
+                            pass
+                        app._last_account_error = "未验证通过（人工验证超时）"
+                        print("❌ 超时仍未通过验证，账号标记为「未验证通过」并跳过")
+                        try:
+                            processed_accounts.append(f"{account_name} (未验证通过)")
+                        except Exception:
+                            pass
+                        return False
 
         if not login_ok:
             continue
@@ -1089,6 +1128,23 @@ def _cleanup_account_processes(app):
     utils.kill_process(config.WEGAME_PROCESS, wait_exit=True, max_wait=10)
     utils.kill_process(config.QQ_PROCESS, wait_exit=True, max_wait=10)
     time.sleep(2)
+
+
+def _wait_manual_verify(app, timeout_sec):
+    """等待人工完成登录验证：期间轮询是否识别到三角洲图标（判定通过）。
+    返回 True=已通过；False=超时或被停止"""
+    end = time.time() + max(1, int(timeout_sec or 60))
+    while time.time() < end:
+        if app._stop_event.is_set():
+            return False
+        try:
+            if utils.find_image_on_screen(config.DELTA_GAME_ICON, timeout=2,
+                                          stop_event=app._stop_event):
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
 
 
 def _ocr_capture_screen_text():
@@ -1594,7 +1650,8 @@ def game_operations_wrapper(app):
             on_hub_entered=lambda: _hub_asset_check(app),
             observe_mode=observe_mode,
             hazard_retry=hazard_retry,
-            run_insert=_make_run_insert(app))
+            run_insert=_make_run_insert(app),
+            account_name=account_name)
     finally:
         utils.set_click_jitter(False)
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)

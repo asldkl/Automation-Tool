@@ -109,16 +109,36 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     return True
 
 
-def sell_operations(settings, stop_event, set_operation, run_insert=None):
+def _in_sell_window(settings):
+    """当前是否在售卖时间区间内；未启用时间限制或格式错误视为在区间内"""
+    if not settings.get("sell_time_enabled", False):
+        return True
+    try:
+        now = datetime.datetime.now().time()
+        start_time = datetime.datetime.strptime(settings.get("sell_time_start", "08:00"), "%H:%M").time()
+        end_time = datetime.datetime.strptime(settings.get("sell_time_end", "22:00"), "%H:%M").time()
+        return start_time <= now <= end_time
+    except Exception:
+        return True
+
+
+def sell_operations(settings, stop_event, set_operation, run_insert=None, extra_rounds=0):
     """
     一键出售流程：打开仓库，遍历售卖物品执行出售
     run_insert: 插入步骤执行回调 ri(var_name, timing)
+    extra_rounds: 之前因不在售卖时段被跳过的轮次（补卖：每件物品数量×(1+extra_rounds)）
     返回 (success: bool, stats: dict)
     stats: {"total": N, "sold": N, "not_found": N, "failed": N}
     """
     sell_stats = {"total": 0, "sold": 0, "not_found": 0, "failed": 0}
     print("\n--- 一键出售 ---")
     set_operation("一键出售")
+    try:
+        extra_rounds = max(0, int(extra_rounds or 0))
+    except Exception:
+        extra_rounds = 0
+    if extra_rounds > 0:
+        print(f"🔁 检测到之前有 {extra_rounds} 次未售，本次补卖（每件物品多卖 {extra_rounds} 轮）")
 
     # 未配置任何售卖物品时完全跳过售卖（不进入仓库）
     items_meta = config.load_sell_items_meta()
@@ -128,19 +148,11 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
         return False, sell_stats
 
     # 检查售卖时间区间
-    if settings.get("sell_time_enabled", False):
-        now = datetime.datetime.now().time()
-        start_str = settings.get("sell_time_start", "08:00")
-        end_str = settings.get("sell_time_end", "22:00")
-        try:
-            start_time = datetime.datetime.strptime(start_str, "%H:%M").time()
-            end_time = datetime.datetime.strptime(end_str, "%H:%M").time()
-            if not (start_time <= now <= end_time):
-                print(f"⏰ 当前时间 {now.strftime('%H:%M')} 不在售卖区间 "
-                      f"{start_str}-{end_str} 内，跳过售卖")
-                return False, sell_stats
-        except ValueError:
-            print("⚠️ 售卖时间格式错误，跳过时间区间检查")
+    if not _in_sell_window(settings):
+        now = datetime.datetime.now()
+        print(f"⏰ 当前时间 {now.strftime('%H:%M')} 不在售卖区间 "
+              f"{settings.get('sell_time_start', '08:00')}-{settings.get('sell_time_end', '22:00')} 内，跳过售卖")
+        return False, sell_stats
 
     # 清除模板缓存，确保使用最新模板
     utils.clear_template_cache()
@@ -168,7 +180,7 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
 
         item_name = item.get("name", item_filename)
         discount_times = item.get("discount_times", 0)
-        quantity = item.get("quantity", 1)
+        quantity = item.get("quantity", 1) * (1 + extra_rounds)   # 补卖：把之前跳过的轮次补上
 
         print(f"📦 出售物品：{item_name}（数量：{quantity}，降价：{discount_times}次）")
         sell_stats["total"] += quantity
@@ -247,7 +259,7 @@ def _ensure_game_focused():
 
 
 def game_operations(settings, stop_event, set_operation, update_ui_callback=None, on_hub_entered=None,
-                    observe_mode=False, hazard_retry=5, run_insert=None):
+                    observe_mode=False, hazard_retry=5, run_insert=None, account_name=""):
     """
     执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
     on_hub_entered: 进入大厅（空格Tab后、特勤处前）的回调，用于资产识别
@@ -389,18 +401,53 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
 
     # 主流程完成后执行一键出售
     sell_stats = None
+    sell_skipped_by_time = False
     if settings.get("enable_sell_after_run", False):
         print("\n--- 主流程完成，执行一键出售 ---")
         pyautogui.press("esc")
         time.sleep(1)
-        _, sell_stats = sell_operations(settings, stop_event, set_operation, run_insert=run_insert)
-        # 出售完成：关闭仓库回到主界面（若接下来走邮箱流程，其开头会再 esc，无需重复）
-        if not settings.get("enable_email_currency", False):
-            pyautogui.press("esc")
-            time.sleep(0.8)
+        _acc_key = ""
+        try:
+            import cooldown_manager as _cm
+            _acc_key = _cm.normalize_key(account_name) if account_name else ""
+        except Exception:
+            _acc_key = account_name or ""
+        if not _in_sell_window(settings):
+            # 不在售卖时段：跳过售卖（并跳过邮箱领取），累加未售次数待下次补卖
+            sell_skipped_by_time = True
+            print("⏰ 不在售卖时间区间：本次跳过一键出售（邮箱领取也一并跳过）")
+            try:
+                import sell_pending as _sp
+                if _acc_key:
+                    _n = _sp.add_pending(_acc_key, 1)
+                    print(f"📦 账号 {_acc_key} 未售次数累加为 {_n}（进入售卖时段后会一起补卖）")
+            except Exception as _e:
+                print(f"⚠️ 未售次数累加失败：{_e}")
+        else:
+            _pend = 0
+            try:
+                import sell_pending as _sp
+                _pend = _sp.get_pending(_acc_key) if _acc_key else 0
+            except Exception:
+                _pend = 0
+            _, sell_stats = sell_operations(settings, stop_event, set_operation,
+                                            run_insert=run_insert, extra_rounds=_pend)
+            if _acc_key and _pend > 0:
+                try:
+                    import sell_pending as _sp
+                    _sp.clear_pending(_acc_key)
+                    print(f"✅ 账号 {_acc_key} 已补卖完毕，未售次数清零")
+                except Exception:
+                    pass
+            # 出售完成：关闭仓库回到主界面（若接下来走邮箱流程，其开头会再 esc，无需重复）
+            if not settings.get("enable_email_currency", False):
+                pyautogui.press("esc")
+                time.sleep(0.8)
 
-    # --- 邮箱货币领取（出售完成后） ---
-    if settings.get("enable_email_currency", False):
+    # --- 邮箱货币领取（出售完成后；若因不在售卖时段跳过了售卖，则本次也不领取） ---
+    if settings.get("enable_email_currency", False) and sell_skipped_by_time:
+        print("ℹ️ 因跳过售卖（不在售卖时段），本次不领取邮箱货币")
+    elif settings.get("enable_email_currency", False):
         print("\n--- 检查邮箱货币 ---")
         set_operation("领取邮箱货币")
         # 确保回到主界面（若此前已不在二级界面，esc 会打开系统菜单，由下方补按一次 esc 纠正）

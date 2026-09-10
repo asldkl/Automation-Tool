@@ -290,9 +290,9 @@ def reset_all_cooldowns():
     """重置所有账号的冷却（保留暂停状态和游戏失败状态的账号）"""
     with _lock:
         data = _load_data()
-        # 保留暂停状态、出租中和游戏失败状态的账号
+        # 保留暂停状态、出租中、未验证通过和游戏失败状态的账号
         preserved = {k: v for k, v in data.items()
-                     if v.get("account_paused") or v.get("rented") or v.get("game_failed")}
+                     if v.get("account_paused") or v.get("rented") or v.get("unverified") or v.get("game_failed")}
         _save_data(preserved)
 
 
@@ -427,14 +427,35 @@ def is_account_rented(account_name):
         return bool(data[account_name].get("rented"))
 
 
+def set_unverified(account_name, unverified):
+    """设置账号「未验证通过」（登录验证人工超时；≈暂停：运行时跳过，仅名称不同）"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            data[account_name] = {}
+        data[account_name]["unverified"] = bool(unverified)
+        _save_data(data)
+        return True
+
+
+def is_unverified(account_name):
+    """检查账号是否处于「未验证通过」状态"""
+    with _lock:
+        data = _load_data()
+        if account_name not in data:
+            return False
+        return bool(data[account_name].get("unverified"))
+
+
 def is_account_skipped(account_name):
-    """运行时是否应跳过该账号：手动暂停 / 连续失败自动暂停 / 出租中"""
+    """运行时是否应跳过该账号：手动暂停 / 连续失败自动暂停 / 出租中 / 未验证通过"""
     with _lock:
         data = _load_data()
         if account_name not in data:
             return False
         e = data[account_name]
-        return bool(e.get("account_paused") or e.get("auto_paused") or e.get("rented"))
+        return bool(e.get("account_paused") or e.get("auto_paused")
+                    or e.get("rented") or e.get("unverified"))
 
 
 def extend_all_cooldowns(hours=0.5, all_accounts=None):
@@ -557,10 +578,11 @@ def remove_expired_cooldowns():
         for name, entry in list(data.items()):
             paused = entry.get("account_paused")
             rented = entry.get("rented")
+            unverified = entry.get("unverified")
             next_run_str = entry.get("next_run_time", "")
             if not next_run_str:
-                # 无冷却记录：暂停/出租中账号仅保留标记（不动），其余视为残留可移除
-                if not (paused or rented):
+                # 无冷却记录：暂停/出租中/未验证账号仅保留标记（不动），其余视为残留可移除
+                if not (paused or rented or unverified):
                     removed.append(name)
                 continue
             try:
@@ -571,8 +593,8 @@ def remove_expired_cooldowns():
                 removed.append(name)
                 continue
             # 冷却已到期
-            if paused or rented:
-                # 暂停/出租中账号：仅清除冷却字段，保留 account_paused/rented 标记
+            if paused or rented or unverified:
+                # 暂停/出租中/未验证账号：仅清除冷却字段，保留标记
                 for key in ("next_run_time", "last_run_time", "paused", "paused_remaining", "paused_at"):
                     entry.pop(key, None)
                 cleared_paused = True

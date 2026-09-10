@@ -45,6 +45,48 @@ def gather_screen_text():
     return "".join(parts)
 
 
+def gather_region_text(settings=None):
+    """按「验证码识别区域」做 OCR 并合并文本；未设区域则全屏。失败返回空串"""
+    region = None
+    try:
+        if settings:
+            import ai_visual_captcha
+            region = ai_visual_captcha.get_capture_region(settings)
+    except Exception:
+        region = None
+    try:
+        results = utils.ocr_recognize(region)
+    except Exception:
+        return ""
+    parts = []
+    for item in (results or []):
+        try:
+            text = str(item[0]).strip()
+            conf = float(item[1]) if len(item) > 1 and item[1] is not None else 1.0
+        except Exception:
+            continue
+        if text and conf >= 0.5:
+            parts.append(text)
+    return "".join(parts)
+
+
+# 未配置关键词时的兜底验证特征词
+_DEFAULT_VERIFY_KEYWORDS = ("验证", "滑块", "拼图", "拖动", "滑动")
+
+
+def needs_verification(settings, screen_text):
+    """根据（区域）OCR 文本判断是否出现需要人工处理的登录验证。
+    命中滑块/点击关键词，或兜底特征词 → True"""
+    text = str(screen_text or "")
+    if not text:
+        return False
+    kws = _parse_keywords(settings.get("captcha_slider_keywords")) + \
+        _parse_keywords(settings.get("captcha_click_keywords"))
+    if not kws:
+        kws = list(_DEFAULT_VERIFY_KEYWORDS)
+    return any(k in text for k in kws)
+
+
 def _slider_module_state(settings, force=False):
     """(模块可用, 是否启用)；force=True 时视为已启用（测试按钮绕过开关）"""
     try:

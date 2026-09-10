@@ -549,16 +549,8 @@ def refresh_account_tree(app):
     # 行→账号下标映射（暂停下沉后显示顺序≠账号顺序，供双击/右键定位账号）
     app._account_row_pos = {}
     all_cooldowns = cooldown_manager.get_all_cooldowns()
-    # 仅手动暂停账号自动下沉到底部；连续失败自动暂停、出租中保持原位
-    _manual_paused = []
-    _normal = []
-    for _p in app.qq_account_images:
-        _nm = _account_key_from_path(_p)
-        if cooldown_manager.is_account_paused(_nm) and not cooldown_manager.is_auto_paused(_nm):
-            _manual_paused.append(_p)
-        else:
-            _normal.append(_p)
-    ordered = _normal + _manual_paused
+    # 保持账号原始顺序（暂停不再下沉；仅出租中显示不同但同样原位）
+    ordered = list(app.qq_account_images)
     seq = 0
     for i, p in enumerate(ordered):
         name = _account_key_from_path(p)
@@ -595,8 +587,12 @@ def refresh_account_tree(app):
         # 计算下次运行时间（合并冷却剩余和下次运行）
         next_run_str = ""
         tag = "runnable"  # 默认可运行
+        # 未验证通过（登录人工验证超时；≈暂停）
+        if cooldown_manager.is_unverified(name):
+            next_run_str = "未验证通过"
+            tag = "unverified"
         # 出租中（≈暂停：显示「出租中」黄色、不下沉）
-        if cooldown_manager.is_account_rented(name):
+        elif cooldown_manager.is_account_rented(name):
             next_run_str = "出租中"
             tag = "rented"
         # 检查账号暂停状态（独立于冷却暂停）；连续失败自动暂停 → 标黄
