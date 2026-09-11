@@ -990,6 +990,10 @@ def test_captcha(app):
         time.sleep(3)
         ok, detail = solve_captcha(app, stop_event=stop_event, force=True, save_debug=True)
         print(f"{'✅' if ok else '❌'} AI视觉验证测试结束：{detail}")
+        if not ok and ("复核" in str(detail) or "仍在" in str(detail)):
+            print("ℹ️ 说明：如果这次是对着【静态图片】（截图/照片/示例图）测试的，验证码不会真的消失，"
+                  "复核必然判定「未通过」——这是正常的，不代表识别失败；"
+                  "判断识别是否准确看标注图上的红/蓝圈有没有落在目标上即可")
         print("🖼️ 本次已在「日志目录/日期/图片/」生成带标注的截图并自动打开"
               "（绿=AI原始值直读，蓝=按坐标空间换算，红=实际点击）")
 
