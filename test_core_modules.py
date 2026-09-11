@@ -709,6 +709,46 @@ class TestAiVisualCaptcha(unittest.TestCase):
             1000, 800)
         self.assertEqual(r["mode"], "")
 
+    def test_solve_captcha_retries_when_coords_missing(self):
+        """模型「确认有验证码但 targets 为空」→ 自动重问，不直接判失败（实测间歇性出现）"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+        }, _stop_event=None)
+        empty = '{"captcha": true, "type": "click", "mode": "image", "targets": []}'
+        good = '{"captcha": true, "type": "click", "mode": "image", "targets": [{"point": [500, 500]}]}'
+        none = '{"captcha": false, "type": "none", "targets": []}'
+        clicks = []
+        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", side_effect=[empty, empty, good, none]) as m, \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertTrue(ok, detail)
+        self.assertEqual(clicks, [(500, 400)])
+        self.assertEqual(m.call_count, 4)      # 空答复重问了 2 次后才拿到坐标
+        # 一直拿不到坐标 → 重试耗尽后仍判失败（不会死循环）
+        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", return_value=empty), \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point"), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertFalse(ok)
+        self.assertIn("未返回有效坐标", detail)
+
     def test_solve_captcha_refuses_absurd_target_count(self):
         """目标数超过单轮上限（图片选择题被当成逐字点选的典型症状）→ 一个都不点，直接判失败"""
         import types

@@ -53,6 +53,11 @@ COORD_SPACE_BY_LABEL = {v: k for k, v in COORD_SPACE_LABELS.items()}
 # 一口气给出十几个坐标。这种情况下乱点会把整页文字都点一遍，宁可判失败也不点。
 MAX_CLICK_TARGETS = 10
 
+# 模型「确认有验证码但没给出坐标」（invalid）时的自动重问次数。
+# 实测同一张图同一模型，间歇性会返回 "targets": []，换个时刻再问就有坐标了——
+# 这种情况直接判失败太浪费，重问几次显著提高成功率（只在拿不到坐标时才会多花调用）
+COORD_RETRIES = 2
+
 # 供应商预设：切换时自动回填 base_url / model；CUSTOM 只用用户手填的值
 CUSTOM_PROVIDER = "自定义"
 PROVIDER_PRESETS = [
@@ -220,6 +225,11 @@ def _build_prompt(width, height):
         "- 题目里带文字要求时（如「包含文字：\"川\"」），要看的是图片内容里是否真的出现了该文字"
         "（可能是藏在景物里的字形、半透明水印等，不要因为不显眼就忽略）\n"
         "- mode=image 时 bbox 要紧贴该图片的四条边（不要跨到相邻图片），point 取该图片矩形的中心\n"
+        "【必做】先逐张检查再作答：在 \"checks\" 数组里按从左到右、从上到下逐张写出判断结果，"
+        "如 [\"图1：草地树林，未见川字\", \"图2：峡谷三道纵纹，形似川字 → 是\"]，"
+        "然后据此给出 targets。这些图里往往只有一两张、最多几张符合要求，不要因为不确定就跳过\n"
+        "- 【重要】只要 captcha=true，targets 就不能是空数组："
+        "至少要给出你认为最可能的目标；拿不准也要选出最像的那一张，不要把答案留空\n"
         "- text 字段用简短描述即可，不要包含英文引号（\"），以免 JSON 出错\n"
         "- 按题目顺序排列 targets（图片选择题无顺序要求时按从左到右、从上到下排）\n"
         "- 坐标一律用【0-1000 归一化整数】：本图左上角=(0,0)，右下角=(1000,1000)；不要给像素坐标\n"
@@ -227,7 +237,8 @@ def _build_prompt(width, height):
         "（例外：题目明确要求找「包含文字X」的图片时，图里的文字即使不显眼也要算）\n"
         "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"mode\": \"\", \"targets\": []}\n"
         "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"mode\": \"\", \"targets\": []}\n"
-        "- 找不准目标就不要给坐标，宁可输出找不到"
+        "- 图中确实没有验证码时：captcha 给 false（用于兜底判定，避免在游戏画面上乱点）；"
+        "确认有验证码只是拿不准位置时：仍要给最可能的 targets，不要留空"
     )
 
 
@@ -815,30 +826,42 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             verify_only = round_index > rounds
             if stop_event is not None and stop_event.is_set():
                 return False, "已停止"
-            image_b64, mime, w, h = _capture_screen_jpeg(region)
-            if not image_b64:
-                return False, "截图失败"
-            if verify_only:
-                print(f"🔍 AI视觉验证：复核验证码是否已消失（第{round_index - 1}次点击后）...")
-            else:
-                print(f"🤖 AI视觉验证 第{round_index}/{rounds}轮：请求 {model} 识别验证码...")
-            try:
-                content = _ask_model(base_url, api_key, model, image_b64, _build_prompt(w, h))
-            except urllib.error.HTTPError as e:
-                body = ""
+            # 截图-识别-解析：模型偶尔会「确认有验证码但 targets 为空」，重问几次再算数
+            content = None
+            parsed = None
+            w = h = 0
+            for _try in range(COORD_RETRIES + 1):
+                image_b64, mime, w, h = _capture_screen_jpeg(region)
+                if not image_b64:
+                    return False, "截图失败"
+                if verify_only:
+                    print(f"🔍 AI视觉验证：复核验证码是否已消失（第{round_index - 1}次点击后）...")
+                else:
+                    print(f"🤖 AI视觉验证 第{round_index}/{rounds}轮：请求 {model} 识别验证码..."
+                          + (f"（第 {_try + 1} 次尝试）" if _try else ""))
                 try:
-                    body = e.read().decode("utf-8", errors="replace")[:200]
-                except Exception:
-                    pass
-                return False, f"AI接口HTTP错误 {e.code}：{body or e.reason}"
-            except Exception as e:
-                return False, f"AI接口调用失败：{e}"
-            parsed = parse_model_response(content, w, h, coord_space)
+                    content = _ask_model(base_url, api_key, model, image_b64, _build_prompt(w, h))
+                except urllib.error.HTTPError as e:
+                    body = ""
+                    try:
+                        body = e.read().decode("utf-8", errors="replace")[:200]
+                    except Exception:
+                        pass
+                    return False, f"AI接口HTTP错误 {e.code}：{body or e.reason}"
+                except Exception as e:
+                    return False, f"AI接口调用失败：{e}"
+                parsed = parse_model_response(content, w, h, coord_space)
+                if parsed["status"] != "invalid":
+                    break
+                if _try < COORD_RETRIES:
+                    print(f"↻ 模型没给出可用坐标（题型={parsed.get('mode') or '未给'}），"
+                          f"重新识别一次（{_try + 1}/{COORD_RETRIES}）...")
+                    time.sleep(RECHECK_WAIT_SECONDS)
             # 诊断日志：核对换算（模型原始回复 / 图像尺寸 / 坐标空间 / 区域偏移 / 解析出的坐标）
             try:
                 print(f"🤖 AI原始回复：{str(content)[:300]}")
                 _sp = parsed.get("space")
-                if status == "invalid" and not parsed.get("points"):
+                if parsed["status"] == "invalid" and not parsed.get("points"):
                     # 解析失败（模型给了验证码但坐标没解出来）——多半是 JSON 格式问题
                     print(f"⚠️ 未能解析出坐标（图像 {w}x{h}，题型={parsed.get('mode') or '未给'}）"
                           f"，原始回复见上一行")
