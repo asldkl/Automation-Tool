@@ -562,6 +562,12 @@ class App:
         self.settings = config.APP_SETTINGS
         config.WEGAME_PATH = self.settings.get("wegame_path", "")
         config.CONFIDENCE = self.settings["confidence"]
+        # 一次性补充图片点选类验证码的 OCR 关键词（老配置没有，认不出这类验证码）
+        try:
+            if config.migrate_captcha_keywords(self.settings):
+                config.save_settings(self.settings)
+        except Exception as e:
+            print(f"⚠️ 补充验证码关键词失败：{e}")
 
         # 启动网络等待（校园网认证场景）：启动时连不上验证服务器则在后台自动重试
         self._silent_boot = '--auto-start' in sys.argv

@@ -417,6 +417,29 @@ class TestSellPendingAndUnverified(unittest.TestCase):
             cm._cache_mtime = 0.0
             cm._load_corrupt = False
 
+    def test_migrate_captcha_keywords(self):
+        """老配置自动补充图片点选关键词（只补一次、纯追加、去重、不覆盖用户自加的词）"""
+        import config
+        old = dict(config.DEFAULT_SETTINGS)
+        old["captcha_click_keywords"] = "依次点击,点选,自己加的词"
+        old.pop("captcha_kw_supplemented", None)
+        self.assertTrue(config.migrate_captcha_keywords(old))
+        kw = old["captcha_click_keywords"].split(",")
+        for k in ("依次点击", "点选", "自己加的词"):        # 原有词一个不少
+            self.assertIn(k, kw)
+        for k in ("请选择", "选择所有", "符合描述", "包含文字", "请验证"):   # 新增词已补上
+            self.assertIn(k, kw)
+        self.assertTrue(old["captcha_kw_supplemented"])
+        # 再跑一次不重复追加
+        before = old["captcha_click_keywords"]
+        self.assertFalse(config.migrate_captcha_keywords(old))
+        self.assertEqual(old["captcha_click_keywords"], before)
+        # 关键词要能命中真实验证码文案，且不误伤普通登录页
+        import captcha_router as cr
+        self.assertTrue(cr.needs_verification(old, "为了您的账号安全，请验证后登录。选择所有符合描述的图片包含文字：川"))
+        self.assertFalse(cr.needs_verification(old, "验证码登录"))
+        self.assertFalse(cr.needs_verification(old, "短信验证"))
+
     def test_restore_account_clears_unverified(self):
         """右键「恢复账号」要能解除「未验证通过」——否则账号永远恢复不了（用户实测的死锁）"""
         import types

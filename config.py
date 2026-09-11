@@ -232,7 +232,11 @@ DEFAULT_SETTINGS = {
     # 登录验证码自动处理（总开关 + OCR 类型判定，详见 captcha_router.py）
     "captcha_auto_enabled": False,              # 总开关：关闭时登录流程不做任何验证码处理
     "captcha_slider_keywords": "拖动,滑动,滑块,拖到,拼图",   # OCR 滑块验证关键词（逗号分隔）
-    "captcha_click_keywords": "依次点击,请点击,按顺序点击,点选,点击下列",  # OCR 点击式验证关键词
+    # OCR 点击式验证关键词：前 5 个是文字点选（「请依次点击：桦 离」），
+    # 后 6 个是图片点选（「请选择所有符合描述的图片 / 包含文字：川」这类）
+    "captcha_click_keywords": "依次点击,请点击,按顺序点击,点选,点击下列,"
+                              "请选择,选择所有,选出,符合描述,包含文字,点击图片,请验证",
+    "captcha_kw_supplemented": False,           # 关键词一次性补充标记（老配置升级用，勿手动改）
     "captcha_region_enabled": False,            # 启用验证码识别区域（只截图区域内容，提升识别率）
     "captcha_region": [0, 0, 0, 0],             # 识别区域 [x, y, w, h]（滑块YOLO与AI视觉共用）
     "captcha_manual_wait_seconds": 60,          # 登录验证：等人工处理秒数（超时→账号标记「未验证通过」并跳过）
@@ -288,6 +292,32 @@ def load_settings():
             _settings_cache = dict(DEFAULT_SETTINGS)
             _settings_cache_mtime = 0
             return dict(_settings_cache)
+
+# 图片点选类验证码的关键词：老配置里没有，OCR 就认不出「选择所有符合描述的图片」这类题目，
+# 会走到「未命中关键词」分支；有 AI 时还能靠兜底判定救回来，没配 AI 就直接放行了
+NEW_CLICK_KEYWORDS = ("请选择", "选择所有", "选出", "符合描述", "包含文字", "点击图片", "请验证")
+
+
+def migrate_captcha_keywords(settings):
+    """把新增的图片点选关键词并入用户配置（只做一次，已存在的跳过）。
+
+    纯追加、去重，不覆盖用户自己加的词；返回是否发生改动（调用方决定要不要落盘）"""
+    if settings.get("captcha_kw_supplemented"):
+        return False
+    cur = str(settings.get("captcha_click_keywords", "") or "")
+    parts = []
+    for p in cur.replace("，", ",").replace("、", ",").split(","):
+        p = p.strip()
+        if p and p not in parts:
+            parts.append(p)
+    added = [k for k in NEW_CLICK_KEYWORDS if k not in parts]
+    if added:
+        parts.extend(added)
+        settings["captcha_click_keywords"] = ",".join(parts)
+        print(f"🔑 已补充图片点选验证码关键词：{'、'.join(added)}")
+    settings["captcha_kw_supplemented"] = True
+    return True
+
 
 def save_settings(settings):
     """保存用户设置到 JSON 文件（原子写入，线程安全）"""
