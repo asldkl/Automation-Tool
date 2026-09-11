@@ -10,6 +10,7 @@
 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作。
 
 【版本历史】
+6.09.08 (2026-09-12e)：修复「未验证通过」账号无法恢复——右键「恢复账号」只清 account_paused/auto_paused 不碰 unverified（恢复后仍被 is_account_skipped 跳过）、菜单标签只看 is_account_paused（未验证账号显示成「暂停账号」，点了反而又加一道暂停）、「重置选中冷却」在无冷却记录时直接返回，三个出口全堵死。改法：菜单标签判定改为 is_account_paused or is_unverified；恢复分支同时 set_unverified(False) 并清零连续失败计数
 6.09.08 (2026-09-12d)：验证码设置窗口改版——原来 20 多个控件堆在一页太乱，改成 3 标签页（基本 / 点击式验证(AI) / 滑块验证）+ 固定底部栏（测试完整流程 + 立即保存），OCR 判定关键词收进「显示高级选项」默认隐藏，每个标签页自带纵向滚动（复用 _create_scrollable_tab），首次打开按内容自适应尺寸（winfo_reqwidth/reqheight，上限屏幕 85%——高分屏 DPI 缩放下写死像素会把右侧裁掉），尺寸记忆改用 captcha_window_geometry_v2；顺带精简说明文案、收窄输入框
 6.09.08 (2026-09-12c)：修复「模型返回空 targets 直接判失败」——deepseek-flash 认对题型（mode=image）却给 targets:[]，而旧代码 invalid 时立刻失败、一次都不重问（max_rounds=1 只有一次机会）。拿同一张裁剪图实测 4 种问法均能返回坐标（3/3 稳定），属间歇性空答复：新增 COORD_RETRIES=2，invalid 时自动重新截图再问（最多 2 次）才判失败；提示词加「必做 checks 逐张判断」（按从左到右从上到下逐张写结论再给 targets，同时让日志能看到判断依据）、「captcha=true 时 targets 不许为空」、「找不准不给坐标」改为仅用于确认无验证码的场景（captcha=false 兜底判定），确认有验证码但位置拿不准时仍要给最可能目标
 6.09.08 (2026-09-12b)：修复「模型给了坐标却被判成没给」——模型把画面题目原样写进 text 字段（"包含文字"川"的图片"）时串内引号未转义，JSON 非法 → json.loads 失败 → _extract_json 返回 None → points 全丢（模型其实连 mode=image 都答对了）。新增 _repair_unescaped_quotes（串内引号判定：其后首个非空白字符是 , } ] : 或结尾=串结束，否则转义为 \"），_extract_json 在解析失败后修复重试；invalid 分支日志区分「JSON 解析失败」与「答复里没有坐标」；提示词补充「包含文字X」题型说明（藏景物的字形/不显眼水印也要算，与「忽略半透明水印」的例外关系）、mode=image 的 bbox 紧贴/point 取中心、text 不要带英文引号

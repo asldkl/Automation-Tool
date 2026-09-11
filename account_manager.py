@@ -666,8 +666,11 @@ def show_account_menu(app, event):
     idx = _tree_idx_to_account_idx(app, item)
     if idx < len(app.qq_account_images):
         name = _account_key_from_path(app.qq_account_images[idx])
-        is_paused = cooldown_manager.is_account_paused(name)
-        new_label = "恢复账号" if is_paused else "暂停账号"
+        # 「未验证通过」也用「恢复账号」来解除（否则菜单会显示成「暂停账号」，
+        # 点下去只是又加了一道暂停，永远恢复不了）
+        need_restore = (cooldown_manager.is_account_paused(name)
+                        or cooldown_manager.is_unverified(name))
+        new_label = "恢复账号" if need_restore else "暂停账号"
         # 遍历菜单项找到"暂停账号"或"恢复账号"并更新
         for i in range(app.account_menu.index(tk.END) + 1):
             try:
@@ -851,13 +854,20 @@ def toggle_account_pause(app):
         return
     account_name = _account_key_from_path(app.qq_account_images[idx])
     is_paused = cooldown_manager.is_account_paused(account_name)
-    if is_paused:
+    # 「未验证通过」（登录人工验证超时）≈暂停：也算需要恢复的状态，
+    # 否则恢复后账号仍会被 is_account_skipped 跳过（等于没恢复）
+    is_unverified = cooldown_manager.is_unverified(account_name)
+    if is_paused or is_unverified:
         cooldown_manager.set_account_paused(account_name, False)
         cooldown_manager.set_auto_paused(account_name, False)
+        cooldown_manager.set_unverified(account_name, False)
         # 手动恢复时清零连续失败计数
         app._consecutive_failures.pop(account_name, None)
         refresh_account_tree(app)
-        messagebox.showinfo("已恢复", f"「{account_name}」已恢复，运行时将正常执行。", parent=app.root)
+        _msg = f"「{account_name}」已恢复，运行时将正常执行。"
+        if is_unverified:
+            _msg += "\n\n（已同时解除「未验证通过」标记）"
+        messagebox.showinfo("已恢复", _msg, parent=app.root)
     else:
         cooldown_manager.set_account_paused(account_name, True)
         cooldown_manager.set_auto_paused(account_name, False)

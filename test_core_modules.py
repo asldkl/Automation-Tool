@@ -417,6 +417,46 @@ class TestSellPendingAndUnverified(unittest.TestCase):
             cm._cache_mtime = 0.0
             cm._load_corrupt = False
 
+    def test_restore_account_clears_unverified(self):
+        """右键「恢复账号」要能解除「未验证通过」——否则账号永远恢复不了（用户实测的死锁）"""
+        import types
+        import unittest.mock as mock
+        import cooldown_manager as cm
+        import account_manager as am
+        orig_path, orig_bak = cm.COOLDOWN_JSON_PATH, cm.COOLDOWN_JSON_BACKUP
+        cm.COOLDOWN_JSON_PATH = os.path.join(TEST_DIR, "test_restore_unver.json")
+        cm.COOLDOWN_JSON_BACKUP = cm.COOLDOWN_JSON_PATH + ".bak"
+        cm._cache = None
+        cm._cache_mtime = 0.0
+        cm._load_corrupt = False
+        try:
+            # 账号标识由 _account_key_from_path 归一化（去掉扩展名）→ 冷却键是 "accU"
+            cm.set_unverified("accU", True)
+            self.assertTrue(cm.is_account_skipped("accU"))
+            tree = types.SimpleNamespace(
+                selection=lambda: ("iid0",),
+                item=lambda iid, key=None: (),
+            )
+            app = types.SimpleNamespace(
+                account_tree=tree,
+                qq_account_images=["accU.png"],
+                _account_row_pos={"iid0": 0},
+                _consecutive_failures={"accU": 3},
+                root=None,
+            )
+            with mock.patch.object(am, "refresh_account_tree"), \
+                 mock.patch.object(am.messagebox, "showinfo") as info:
+                am.toggle_account_pause(app)
+            self.assertFalse(cm.is_unverified("accU"))
+            self.assertFalse(cm.is_account_skipped("accU"))   # 恢复后不再被跳过
+            self.assertNotIn("accU", app._consecutive_failures)
+            self.assertIn("未验证通过", str(info.call_args))
+        finally:
+            cm.COOLDOWN_JSON_PATH, cm.COOLDOWN_JSON_BACKUP = orig_path, orig_bak
+            cm._cache = None
+            cm._cache_mtime = 0.0
+            cm._load_corrupt = False
+
 
 # ==================== 公告（每天一次 / 永久关闭） ====================
 class TestAnnouncements(unittest.TestCase):
