@@ -923,64 +923,76 @@ class SettingsWindow:
         win = tk.Toplevel(self.win)
         self._captcha_win = win
         win.title("验证码设置")
-        win.minsize(520, 560)
+        win.minsize(560, 470)
         # 不使用 transient：父设置窗口会被导航栈隐藏（withdraw），transient 子窗口会随之消失
         try:
             utils.set_window_icon(win)
         except Exception:
             pass
-        # 窗口大小位置记忆（关闭时保存，下次打开恢复；首次默认 600x680 居中）
-        utils.restore_window_geometry(win, "captcha_window_geometry",
-                                      default_size="600x680", min_size=(520, 560))
+        # 窗口大小位置记忆（关闭时保存，下次打开恢复）。
+        # 用 v2 键：窗口已改成标签页布局，旧的整页高窗口尺寸不再合适
+        _geo_restored = utils.restore_window_geometry(win, "captcha_window_geometry_v2",
+                                                      default_size="700x560", min_size=(520, 440))
 
-        body = ttk.Frame(win, style='SettingsInner.TFrame', padding=10)
+        # ===== 底部固定操作栏（先创建：始终贴在窗口底部，不随标签页切换）=====
+        btn_bar = ttk.Frame(win, style='SettingsInner.TFrame', padding=(10, 6))
+        btn_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Button(btn_bar, text="立即保存", style='Accent.TButton',
+                   command=self._save_captcha_settings, width=9).pack(side=tk.RIGHT)
+        ttk.Label(btn_bar, text="关闭窗口时自动保存", style='SettingsSmall.TLabel').pack(
+            side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(btn_bar, text="测试完整流程", style='TButton',
+                   command=self._test_captcha_router, width=12).pack(side=tk.LEFT)
+
+        # ===== 三个标签页：基本 / 点击式验证(AI) / 滑块验证 =====
+        body = ttk.Frame(win, style='SettingsInner.TFrame', padding=(10, 8))
         body.pack(fill=tk.BOTH, expand=True)
+        nb = ttk.Notebook(body)
+        nb.pack(fill=tk.BOTH, expand=True)
 
-        # ----- 总开关（唯一入口：每次打开窗口时从设置重新读取） -----
+        def _add_tab(label):
+            """加一个标签页，返回内部可放置内容的 Frame（自带纵向滚动，窗口再小也够用）"""
+            outer = ttk.Frame(nb, style='Settings.TFrame')
+            nb.add(outer, text=label)
+            return self._create_scrollable_tab(outer)
+
+        tab_basic = _add_tab("  基本  ")
+        tab_ai = _add_tab("  点击式验证（AI）  ")
+        tab_slider = _add_tab("  滑块验证  ")
+
+        # ---------- 基本①：总开关（唯一入口：每次打开窗口时从设置重新读取） ----------
         self._captcha_auto_var = tk.BooleanVar(value=s.get("captcha_auto_enabled", False))
-        frame_master = ttk.LabelFrame(body, text="  总开关  ", style='SettingsCard.TLabelframe', padding=8)
-        frame_master.pack(fill=tk.X, pady=(0, 8))
-        ttk.Checkbutton(frame_master, text="启用登录验证码自动处理（关闭后登录流程不做任何验证码处理）",
-                        variable=self._captcha_auto_var,
+        frame_master = ttk.LabelFrame(tab_basic, text="  总开关  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_master.pack(fill=tk.X, padx=10, pady=(10, 8))
+        ttk.Checkbutton(frame_master, text="启用登录验证码自动处理", variable=self._captcha_auto_var,
                         style='Settings.TCheckbutton').pack(anchor='w')
-
-        # ----- OCR 类型判定 -----
-        frame_ocr = ttk.LabelFrame(body, text="  OCR 类型判定  ", style='SettingsCard.TLabelframe', padding=8)
-        frame_ocr.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(frame_ocr, text="登录异常时先 OCR 识别屏幕文字：命中滑块关键词走 YOLO 拖动，命中点击关键词走 AI 视觉；都没命中时由 AI 视觉兜底判定（未配置 AI 则放行）",
-                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
-        ocr_row1 = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
-        ocr_row1.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(ocr_row1, text="滑块关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
-        self._cap_slider_kw_var = tk.StringVar(value=s.get("captcha_slider_keywords", ""))
-        ttk.Entry(ocr_row1, textvariable=self._cap_slider_kw_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ocr_row2 = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
-        ocr_row2.pack(fill=tk.X)
-        ttk.Label(ocr_row2, text="点击关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
-        self._cap_click_kw_var = tk.StringVar(value=s.get("captcha_click_keywords", ""))
-        ttk.Entry(ocr_row2, textvariable=self._cap_click_kw_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(frame_ocr, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击",
+        ttk.Label(frame_master, text="关闭后登录流程完全不做验证码处理（与旧版行为一致）",
                   style='SettingsSmall.TLabel').pack(anchor='w', pady=(4, 0))
 
-        # 识别区域（滑块YOLO与AI视觉共用，只截图该区域提升识别正确率）
-        region_sep = ttk.Separator(frame_ocr, orient='horizontal')
-        region_sep.pack(fill=tk.X, pady=(8, 6))
+        # ---------- 基本②：验证码识别区域（滑块YOLO与AI视觉共用） ----------
+        frame_region = ttk.LabelFrame(tab_basic, text="  验证码识别区域  ",
+                                      style='SettingsCard.TLabelframe', padding=8)
+        frame_region.pack(fill=tk.X, padx=10, pady=(0, 8))
         self._cap_region_enabled_var = tk.BooleanVar(value=s.get("captcha_region_enabled", False))
-        ttk.Checkbutton(frame_ocr, text="仅识别指定区域（验证码通常固定在窗口某处，只截该区域发给识别可提升正确率）",
+        ttk.Checkbutton(frame_region, text="仅识别指定区域（只截这块，识别更准）",
                         variable=self._cap_region_enabled_var,
                         style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 5))
-        region_row = ttk.Frame(frame_ocr, style='SettingsInner.TFrame')
+        region_row = ttk.Frame(frame_region, style='SettingsInner.TFrame')
         region_row.pack(fill=tk.X)
         ttk.Label(region_row, text="区域 (x, y, w, h)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
         stored_region = s.get("captcha_region", [0, 0, 0, 0])
         self._cap_region_var = tk.StringVar(value=str(stored_region))
-        ttk.Entry(region_row, textvariable=self._cap_region_var, width=22).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(region_row, textvariable=self._cap_region_var, width=16).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(region_row, text="框选区域", style='TButton',
                    command=self._select_captcha_region, width=10).pack(side=tk.LEFT)
+        ttk.Label(frame_region, text="把验证码弹窗完整框住（含题目文字和「确认」按钮）：AI 要靠题目文字才知道选什么",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(5, 0))
 
-        # 人工验证等待 + 多次不过自动刷新重试
-        _hsep = ttk.Separator(frame_ocr, orient='horizontal'); _hsep.pack(fill=tk.X, pady=(8, 6))
-        _hrow = ttk.Frame(frame_ocr, style='SettingsInner.TFrame'); _hrow.pack(fill=tk.X, pady=(0, 4))
+        # ---------- 基本③：自动处理没通过时的兜底 ----------
+        frame_fallback = ttk.LabelFrame(tab_basic, text="  自动处理没通过时的兜底  ",
+                                        style='SettingsCard.TLabelframe', padding=8)
+        frame_fallback.pack(fill=tk.X, padx=10, pady=(0, 8))
+        _hrow = ttk.Frame(frame_fallback, style='SettingsInner.TFrame'); _hrow.pack(fill=tk.X, pady=(0, 2))
         ttk.Label(_hrow, text="等待人工验证(秒)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         try:
             _mw = max(5, min(600, int(s.get("captcha_manual_wait_seconds", 60) or 60)))
@@ -988,22 +1000,22 @@ class SettingsWindow:
             _mw = 60
         self._cap_manual_wait_var = tk.IntVar(value=_mw)
         ttk.Spinbox(_hrow, from_=5, to=600, increment=5,
-                    textvariable=self._cap_manual_wait_var, width=6).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(_hrow, text="超时→账号标记「未验证通过」并跳过（≈暂停）",
-                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
+                    textvariable=self._cap_manual_wait_var, width=6).pack(side=tk.LEFT)
+        ttk.Label(frame_fallback, text="超时→账号标记「未验证通过」并跳过（≈暂停）",
+                  style='SettingsSmall.TLabel').pack(anchor='w', pady=(0, 4))
 
-        _rrow = ttk.Frame(frame_ocr, style='SettingsInner.TFrame'); _rrow.pack(fill=tk.X)
         self._cap_refresh_enabled_var = tk.BooleanVar(value=s.get("captcha_refresh_enabled", False))
-        ttk.Checkbutton(_rrow, text="多次不过自动点刷新重试", variable=self._cap_refresh_enabled_var,
-                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Checkbutton(frame_fallback, text="多次不过自动点刷新重试", variable=self._cap_refresh_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w')
+        _rrow = ttk.Frame(frame_fallback, style='SettingsInner.TFrame'); _rrow.pack(fill=tk.X)
         ttk.Label(_rrow, text="刷新坐标：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         _rp = s.get("captcha_refresh_point", [0, 0]) or [0, 0]
         self._cap_refresh_x_var = tk.StringVar(value=str(_rp[0]))
         self._cap_refresh_y_var = tk.StringVar(value=str(_rp[1] if len(_rp) > 1 else 0))
-        ttk.Entry(_rrow, textvariable=self._cap_refresh_x_var, width=6).pack(side=tk.LEFT)
+        ttk.Entry(_rrow, textvariable=self._cap_refresh_x_var, width=4).pack(side=tk.LEFT)
         ttk.Label(_rrow, text=",").pack(side=tk.LEFT)
-        ttk.Entry(_rrow, textvariable=self._cap_refresh_y_var, width=6).pack(side=tk.LEFT)
-        ttk.Button(_rrow, text="取点", width=6,
+        ttk.Entry(_rrow, textvariable=self._cap_refresh_y_var, width=4).pack(side=tk.LEFT)
+        ttk.Button(_rrow, text="取点", width=4,
                    command=self._pick_refresh_point).pack(side=tk.LEFT, padx=(4, 10))
         ttk.Label(_rrow, text="次数：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         try:
@@ -1013,30 +1025,40 @@ class SettingsWindow:
         self._cap_refresh_max_var = tk.IntVar(value=_rm)
         ttk.Spinbox(_rrow, from_=1, to=5, textvariable=self._cap_refresh_max_var, width=4).pack(side=tk.LEFT)
 
-        # 选图类验证码（选出所有符合描述的图片）：点完所有图后需再点一次「确认/提交」才生效
-        _crow = ttk.Frame(frame_ocr, style='SettingsInner.TFrame'); _crow.pack(fill=tk.X, pady=(4, 0))
-        self._cap_confirm_enabled_var = tk.BooleanVar(value=s.get("captcha_confirm_enabled", False))
-        ttk.Checkbutton(_crow, text="选图后点「确认」按钮", variable=self._cap_confirm_enabled_var,
-                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(_crow, text="确认坐标：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
-        _cp = s.get("captcha_confirm_point", [0, 0]) or [0, 0]
-        self._cap_confirm_x_var = tk.StringVar(value=str(_cp[0]))
-        self._cap_confirm_y_var = tk.StringVar(value=str(_cp[1] if len(_cp) > 1 else 0))
-        ttk.Entry(_crow, textvariable=self._cap_confirm_x_var, width=6).pack(side=tk.LEFT)
-        ttk.Label(_crow, text=",").pack(side=tk.LEFT)
-        ttk.Entry(_crow, textvariable=self._cap_confirm_y_var, width=6).pack(side=tk.LEFT)
-        ttk.Button(_crow, text="取点", width=6,
-                   command=self._pick_confirm_point).pack(side=tk.LEFT, padx=(4, 10))
-        ttk.Label(frame_ocr, text="「选出所有包含XX的图片」这类验证码：AI 点完所有目标图后，再点这个「确认/提交」"
-                                  "按钮才算完成；题目文字要落在识别区域内，否则 AI 看不到题",
-                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(
-                      anchor='w', pady=(2, 0))
+        # ---------- 基本④：高级选项（默认收起，避免主界面太乱） ----------
+        adv_box = ttk.LabelFrame(tab_basic, text="  OCR 判定关键词（一般不用改）  ",
+                                 style='SettingsCard.TLabelframe', padding=8)
+        ttk.Label(adv_box, text="登录异常时先 OCR 判定验证类型：命中滑块关键词→滑块 YOLO，命中点击关键词→AI 视觉，"
+                                "都没命中由 AI 兜底",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
+        ocr_row1 = ttk.Frame(adv_box, style='SettingsInner.TFrame')
+        ocr_row1.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(ocr_row1, text="滑块关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        self._cap_slider_kw_var = tk.StringVar(value=s.get("captcha_slider_keywords", ""))
+        ttk.Entry(ocr_row1, textvariable=self._cap_slider_kw_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ocr_row2 = ttk.Frame(adv_box, style='SettingsInner.TFrame')
+        ocr_row2.pack(fill=tk.X)
+        ttk.Label(ocr_row2, text="点击关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        self._cap_click_kw_var = tk.StringVar(value=s.get("captcha_click_keywords", ""))
+        ttk.Entry(ocr_row2, textvariable=self._cap_click_kw_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(adv_box, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击",
+                  style='SettingsSmall.TLabel').pack(anchor='w', pady=(4, 0))
 
-        # ----- 滑块验证（YOLO） -----
-        frame_slider = ttk.LabelFrame(body, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
-        frame_slider.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(frame_slider, text="滑块拼图验证用 YOLO 模型（best.onnx）整屏定位缺口并拟人拖动，无需框选区域",
-                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
+        def _toggle_adv():
+            if adv_var.get():
+                adv_box.pack(fill=tk.X, padx=10)
+            else:
+                adv_box.pack_forget()
+
+        adv_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(tab_basic, text="显示高级选项（OCR 判定关键词）", variable=adv_var,
+                        style='Settings.TCheckbutton', command=_toggle_adv).pack(anchor='w', padx=12, pady=(0, 10))
+
+        # ---------- 滑块验证（YOLO）—— 独立标签页 ----------
+        frame_slider = ttk.LabelFrame(tab_slider, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_slider.pack(fill=tk.X, padx=10, pady=(10, 8))
+        ttk.Label(frame_slider, text="整屏定位缺口并拟人拖动，无需框选区域",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
         self._slider_enabled_var = tk.BooleanVar(value=s.get("slider_yolo_enabled", False))
         ttk.Checkbutton(frame_slider, text="启用滑块自动拖动（需程序目录有 best.onnx）",
                         variable=self._slider_enabled_var,
@@ -1045,10 +1067,10 @@ class SettingsWindow:
         slider_row1.pack(fill=tk.X)
         ttk.Label(slider_row1, text="检测置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         self._slider_conf_var = tk.StringVar(value=str(s.get("slider_yolo_confidence", 0.35)))
-        ttk.Entry(slider_row1, textvariable=self._slider_conf_var, width=6).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Entry(slider_row1, textvariable=self._slider_conf_var, width=4).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(slider_row1, text="拖动微调(px)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         self._slider_offset_var = tk.StringVar(value=str(s.get("slider_yolo_drag_offset", 0)))
-        ttk.Entry(slider_row1, textvariable=self._slider_offset_var, width=6).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Entry(slider_row1, textvariable=self._slider_offset_var, width=4).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(slider_row1, text="最大尝试：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         try:
             stored_attempts = max(1, min(6, int(s.get("slider_yolo_max_attempts", 3) or 3)))
@@ -1057,14 +1079,16 @@ class SettingsWindow:
         self._slider_attempts_var = tk.IntVar(value=stored_attempts)
         ttk.Spinbox(slider_row1, from_=1, to=6, increment=1,
                     textvariable=self._slider_attempts_var, width=4).pack(side=tk.LEFT)
+        ttk.Button(tab_slider, text="仅测试滑块识别", style='TButton',
+                   command=self._test_slider_yolo, width=14).pack(anchor='w', padx=12, pady=(0, 10))
 
-        # ----- AI 视觉验证 -----
-        frame_aiv = ttk.LabelFrame(body, text="  AI 视觉验证（点击式验证码）  ", style='SettingsCard.TLabelframe', padding=8)
-        frame_aiv.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(frame_aiv, text="截图交由视觉模型定位验证目标并自动点击；国内供应商走 OpenAI 兼容接口。免费模型高峰期可能限流（429），程序会自动重试；持续失败可换其他供应商预设",
-                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
+        # ---------- 点击式验证（AI 视觉）—— 独立标签页 ----------
+        frame_aiv = ttk.LabelFrame(tab_ai, text="  AI 视觉验证（点击式 / 选图式验证码）  ", style='SettingsCard.TLabelframe', padding=8)
+        frame_aiv.pack(fill=tk.X, padx=10, pady=(10, 8))
+        ttk.Label(frame_aiv, text="截图交给视觉模型定位目标并自动点击；国内供应商走 OpenAI 兼容接口。免费模型高峰期限流（429）会自动重试",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
         self._aiv_enabled_var = tk.BooleanVar(value=s.get("ai_visual_captcha_enabled", False))
-        ttk.Checkbutton(frame_aiv, text="启用 AI 视觉验证（需下方供应商配置完整）",
+        ttk.Checkbutton(frame_aiv, text="启用 AI 视觉验证（需下方配置完整）",
                         variable=self._aiv_enabled_var,
                         style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 6))
 
@@ -1077,7 +1101,7 @@ class SettingsWindow:
             stored_provider = _aiv_module.PROVIDER_NAMES[0]
         self._aiv_provider_var = tk.StringVar(value=stored_provider)
         provider_combo = ttk.Combobox(aiv_row1, textvariable=self._aiv_provider_var,
-                                      values=_aiv_module.PROVIDER_NAMES, state="readonly", width=18)
+                                      values=_aiv_module.PROVIDER_NAMES, state="readonly", width=14)
         provider_combo.pack(side=tk.LEFT, padx=(0, 8))
         preset_note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS
                             if p["name"] == stored_provider), "")
@@ -1089,19 +1113,19 @@ class SettingsWindow:
         aiv_row2.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(aiv_row2, text="API地址：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         self._aiv_base_url_var = tk.StringVar(value=s.get("ai_visual_captcha_base_url", ""))
-        ttk.Entry(aiv_row2, textvariable=self._aiv_base_url_var, width=44).pack(
+        ttk.Entry(aiv_row2, textvariable=self._aiv_base_url_var, width=30).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
 
         aiv_row3 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
         aiv_row3.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(aiv_row3, text="API Key：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         self._aiv_api_key_var = tk.StringVar(value=s.get("ai_visual_captcha_api_key", ""))
-        ttk.Entry(aiv_row3, textvariable=self._aiv_api_key_var, width=28, show="*").pack(
+        ttk.Entry(aiv_row3, textvariable=self._aiv_api_key_var, width=20, show="*").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(aiv_row3, text="模型：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(10, 8))
         # 旧模型名（如已下线的 glm-4v-flash）显示时自动升级为当前替代
         self._aiv_model_var = tk.StringVar(value=_aiv_module.normalize_model(s.get("ai_visual_captcha_model", "")))
-        ttk.Entry(aiv_row3, textvariable=self._aiv_model_var, width=24).pack(
+        ttk.Entry(aiv_row3, textvariable=self._aiv_model_var, width=16).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
 
         aiv_row4 = ttk.Frame(frame_aiv, style='SettingsInner.TFrame')
@@ -1126,11 +1150,32 @@ class SettingsWindow:
                      values=[_aiv_module.COORD_SPACE_LABELS[k] for k in
                              (_aiv_module.COORD_SPACE_AUTO, _aiv_module.COORD_SPACE_NORMALIZED,
                               _aiv_module.COORD_SPACE_PIXEL)],
-                     state="readonly", width=18).pack(side=tk.LEFT)
-        ttk.Label(frame_aiv, text="模型返回的坐标默认按 0-1000 归一化换算（智谱/豆包/百炼等国内接口均如此）；"
-                                  "若某供应商确实返回像素坐标而点击总是偏移，把「坐标空间」改成「像素」",
-                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(
+                     state="readonly", width=14).pack(side=tk.LEFT)
+        ttk.Label(frame_aiv, text="国内接口返回的坐标默认按 0-1000 归一化换算；若点击总是偏移，把「坐标空间」改成「像素」",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(
                       anchor='w', pady=(4, 0))
+
+        # 选图类验证码（选出所有符合描述的图片）：点完所有图后需再点一次「确认/提交」才生效
+        _csep = ttk.Separator(frame_aiv, orient='horizontal'); _csep.pack(fill=tk.X, pady=(8, 6))
+        _crow = ttk.Frame(frame_aiv, style='SettingsInner.TFrame'); _crow.pack(fill=tk.X)
+        self._cap_confirm_enabled_var = tk.BooleanVar(value=s.get("captcha_confirm_enabled", False))
+        ttk.Checkbutton(_crow, text="选图后点「确认」按钮", variable=self._cap_confirm_enabled_var,
+                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(_crow, text="确认坐标：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        _cp = s.get("captcha_confirm_point", [0, 0]) or [0, 0]
+        self._cap_confirm_x_var = tk.StringVar(value=str(_cp[0]))
+        self._cap_confirm_y_var = tk.StringVar(value=str(_cp[1] if len(_cp) > 1 else 0))
+        ttk.Entry(_crow, textvariable=self._cap_confirm_x_var, width=4).pack(side=tk.LEFT)
+        ttk.Label(_crow, text=",").pack(side=tk.LEFT)
+        ttk.Entry(_crow, textvariable=self._cap_confirm_y_var, width=4).pack(side=tk.LEFT)
+        ttk.Button(_crow, text="取点", width=4,
+                   command=self._pick_confirm_point).pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(frame_aiv, text="选图类验证码（如「选择所有包含文字XX的图片」）：AI 点完目标图后还要再点「确认/提交」才完成；"
+                                  "题目文字必须在识别区域内，否则 AI 看不到题",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(
+                      anchor='w', pady=(4, 0))
+        ttk.Button(tab_ai, text="仅测试 AI 识别", style='TButton',
+                   command=self._test_ai_visual_captcha, width=14).pack(anchor='w', padx=12, pady=(0, 10))
 
         def _on_aiv_provider_changed(*_args, restore_saved=False):
             """供应商下拉变化。restore_saved=True 表示用户真的切换了（回填该供应商的
@@ -1169,19 +1214,27 @@ class SettingsWindow:
         if stored_provider != _aiv_module.CUSTOM_PROVIDER and not self._aiv_base_url_var.get().strip():
             _on_aiv_provider_changed()
 
-        # ----- 底部按钮：测试 + 保存 -----
-        btn_bar = ttk.Frame(body, style='SettingsInner.TFrame')
-        btn_bar.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(btn_bar, text="关闭窗口时自动保存（与其他设置页一致）",
-                  style='SettingsSmall.TLabel').pack(side=tk.LEFT)
-        ttk.Button(btn_bar, text="测试完整流程", style='TButton',
-                   command=self._test_captcha_router, width=12).pack(side=tk.LEFT, padx=(6, 6))
-        ttk.Button(btn_bar, text="仅测试滑块", style='TButton',
-                   command=self._test_slider_yolo, width=10).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_bar, text="仅测试AI", style='TButton',
-                   command=self._test_ai_visual_captcha, width=10).pack(side=tk.LEFT)
-        ttk.Button(btn_bar, text="立即保存", style='Accent.TButton',
-                   command=self._save_captcha_settings, width=8).pack(side=tk.RIGHT)
+
+        # 首次打开（没有记忆尺寸）：按内容自适应初始大小。
+        # 高 DPI 缩放下字号会成倍变大，写死的像素尺寸容易把右侧内容裁掉
+        if not _geo_restored:
+            def _fit_content():
+                try:
+                    win.update_idletasks()
+                    tabs = (tab_basic, tab_ai, tab_slider)
+                    inner_w = max(t.winfo_reqwidth() for t in tabs) + 44
+                    inner_h = max(t.winfo_reqheight() for t in tabs) + 70
+                    w = max(520, min(inner_w, int(win.winfo_screenwidth() * 0.85)))
+                    h = max(440, min(inner_h, int(win.winfo_screenheight() * 0.85)))
+                    x = max(0, (win.winfo_screenwidth() - w) // 2)
+                    y = max(0, (win.winfo_screenheight() - h) // 3)
+                    win.geometry(f"{w}x{h}+{x}+{y}")
+                except Exception:
+                    pass
+            try:
+                win.after(10, _fit_content)
+            except Exception:
+                pass
 
         def _on_close():
             # 与项目其他设置页一致：关闭时自动保存（避免改完忘点保存导致配置不生效）
@@ -1189,7 +1242,7 @@ class SettingsWindow:
                 self._save_captcha_settings(silent=True)
             except Exception:
                 pass
-            utils.save_window_geometry(win, "captcha_window_geometry")
+            utils.save_window_geometry(win, "captcha_window_geometry_v2")
             try:
                 win.grab_release()
             except Exception:
