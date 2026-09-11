@@ -717,9 +717,10 @@ class App:
         self.update_account_count()
         self._start_periodic_tree_refresh()
 
-        # 托盘
-        self.tray_icon = None
-        self._setup_tray()
+        # 托盘：等待网络期间可能已经创建过（_check_validate_result 里驻留托盘），
+        # 这里不能再清空重建——旧图标还在自己的线程里跑着，重建会让托盘出现两个图标
+        if getattr(self, 'tray_icon', None) is None:
+            self._setup_tray()
 
         # 单实例前台显示事件
         self._setup_show_event()
@@ -922,7 +923,9 @@ class App:
     # ==================== 托盘 ====================
     def _setup_tray(self):
         if getattr(self, 'tray_icon', None) is not None:
-            return  # 已创建（可能因等待网络提前创建），避免重复
+            # 已创建（可能因等待网络提前创建过）：直接复用，重建会让托盘出现两个图标
+            print("ℹ️ 托盘图标已存在，跳过重复创建")
+            return
         if not TRAY_AVAILABLE:
             print("⚠️ pystray 或 Pillow 未安装，托盘功能不可用")
             return

@@ -665,6 +665,81 @@ class TestAiVisualCaptcha(unittest.TestCase):
             '{"captcha": true, "type": "click", "targets": [{"text": "没有坐标"}]}', 1000, 800)
         self.assertEqual(r["status"], "invalid")
 
+    def test_parse_response_mode_text_and_image(self):
+        """mode 字段：文字点选=text / 图片选择=image，解析后原样带出"""
+        import ai_visual_captcha as avc
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "mode": "text", "targets": ['
+            '{"text": "桦", "point": [500, 500]}]}', 1000, 800)
+        self.assertEqual(r["mode"], "text")
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "mode": "image", "targets": ['
+            '{"text": "有狗的图片", "point": [200, 200]}]}', 1000, 800)
+        self.assertEqual(r["mode"], "image")
+        # 没给 mode / 非法值 → 空串（不报错）
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": [{"point": [1, 1]}]}', 1000, 800)
+        self.assertEqual(r["mode"], "")
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "mode": "XYZ", "targets": [{"point": [1, 1]}]}',
+            1000, 800)
+        self.assertEqual(r["mode"], "")
+
+    def test_solve_captcha_refuses_absurd_target_count(self):
+        """目标数超过单轮上限（图片选择题被当成逐字点选的典型症状）→ 一个都不点，直接判失败"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+        }, _stop_event=None)
+        many = ",".join('{"text": "字%d", "point": [%d, 100]}' % (i, i * 10)
+                        for i in range(avc.MAX_CLICK_TARGETS + 5))
+        reply = '{"captcha": true, "type": "click", "mode": "image", "targets": [%s]}' % many
+        clicks = []
+        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", return_value=reply), \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertFalse(ok)
+        self.assertIn("目标数异常", detail)
+        self.assertEqual(clicks, [])            # 一个都没点
+
+    def test_provider_config_store(self):
+        """供应商配置独立文件读写：切换预设时回填各供应商自己的地址/模型/Key"""
+        import ai_visual_captcha as avc
+        with tempfile.TemporaryDirectory(prefix="delta_provider_test_") as td:
+            path = os.path.join(td, "ai_provider_config.json")
+            with patch.object(avc, "_provider_store_path", return_value=path):
+                self.assertEqual(avc.get_provider_config("DeepSeek"), {})   # 没存过
+                self.assertTrue(avc.save_provider_config("DeepSeek", "sk-ds", "https://api.deepseek.com",
+                                                         "deepseek-flash"))
+                self.assertTrue(avc.save_provider_config("智谱GLM", "sk-zp", "https://open.bigmodel.cn/api/paas/v4",
+                                                         "glm-4.6v-flash"))
+                ds = avc.get_provider_config("DeepSeek")
+                self.assertEqual(ds["api_key"], "sk-ds")
+                self.assertEqual(ds["model"], "deepseek-flash")
+                self.assertEqual(avc.get_provider_config("智谱GLM")["api_key"], "sk-zp")
+                # 覆盖同一家不影响另一家
+                avc.save_provider_config("DeepSeek", "sk-ds2", "https://api.deepseek.com", "deepseek-flash")
+                self.assertEqual(avc.get_provider_config("DeepSeek")["api_key"], "sk-ds2")
+                self.assertEqual(avc.get_provider_config("智谱GLM")["api_key"], "sk-zp")
+                # 空名字不写
+                self.assertFalse(avc.save_provider_config("", "x"))
+                # 文件损坏 → 返回空而不抛
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("{不是json")
+                self.assertEqual(avc.get_provider_config("DeepSeek"), {})
+
     def test_get_preset(self):
         """供应商预设回填；自定义返回空"""
         import ai_visual_captcha as avc

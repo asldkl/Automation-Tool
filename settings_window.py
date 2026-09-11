@@ -1132,16 +1132,39 @@ class SettingsWindow:
                   style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(
                       anchor='w', pady=(4, 0))
 
-        def _on_aiv_provider_changed(*_args):
+        def _on_aiv_provider_changed(*_args, restore_saved=False):
+            """供应商下拉变化。restore_saved=True 表示用户真的切换了（回填该供应商的
+            地址/模型/Key）；首次打开只补空地址，不动 Key（Key 以 settings.json 为准）"""
             name = self._aiv_provider_var.get()
             preset = _aiv_module.get_preset(name)
             note = next((p["note"] for p in _aiv_module.PROVIDER_PRESETS if p["name"] == name), "")
             self._aiv_provider_note_var.set(note)
-            if name != _aiv_module.CUSTOM_PROVIDER and preset["base_url"]:
-                # 切换预设自动回填地址与模型（自定义不覆盖手填内容）
-                self._aiv_base_url_var.set(preset["base_url"])
-                self._aiv_model_var.set(preset["model"])
-        provider_combo.bind("<<ComboboxSelected>>", _on_aiv_provider_changed)
+            if not restore_saved:
+                # 首次打开：预设名有了但地址为空时补一次默认值，不覆盖已填内容
+                if name != _aiv_module.CUSTOM_PROVIDER and preset["base_url"] \
+                        and not self._aiv_base_url_var.get().strip():
+                    self._aiv_base_url_var.set(preset["base_url"])
+                    self._aiv_model_var.set(preset["model"])
+                return
+            saved = _aiv_module.get_provider_config(name)
+            if saved:
+                # 这家以前配过：回填它自己的地址/模型/Key
+                self._aiv_base_url_var.set(saved.get("base_url") or preset["base_url"])
+                self._aiv_model_var.set(saved.get("model") or preset["model"])
+                self._aiv_api_key_var.set(saved.get("api_key", ""))
+                print(f"🔑 已切换到供应商「{name}」，回填上次保存的配置"
+                      f"（Key {'已回填' if saved.get('api_key') else '为空'}）")
+            else:
+                # 没配过：填预设默认地址/模型，并清空 Key ——
+                # 否则会拿上一家的 Key 去请求新接口，报 401 还看不出原因
+                if name != _aiv_module.CUSTOM_PROVIDER and preset["base_url"]:
+                    self._aiv_base_url_var.set(preset["base_url"])
+                    self._aiv_model_var.set(preset["model"])
+                self._aiv_api_key_var.set("")
+                print(f"🔑 已切换到供应商「{name}」，该供应商尚未保存过配置，"
+                      f"请输入对应的 API Key")
+        provider_combo.bind("<<ComboboxSelected>>",
+                            lambda _e: _on_aiv_provider_changed(restore_saved=True))
         # 首次打开：存了预设名但地址为空时也回填一次
         if stored_provider != _aiv_module.CUSTOM_PROVIDER and not self._aiv_base_url_var.get().strip():
             _on_aiv_provider_changed()
@@ -1466,6 +1489,12 @@ class SettingsWindow:
         import ai_visual_captcha as _aiv_m
         target["ai_visual_captcha_coord_space"] = _aiv_m.COORD_SPACE_BY_LABEL.get(
             self._aiv_coord_space_var.get().strip(), _aiv_m.COORD_SPACE_AUTO)
+        # 记住当前供应商的地址/模型/Key（独立文件），下次切回这家时自动回填
+        _aiv_m.save_provider_config(
+            target["ai_visual_captcha_provider"],
+            target["ai_visual_captcha_api_key"],
+            target["ai_visual_captcha_base_url"],
+            target["ai_visual_captcha_model"])
 
     def _apply_slider_yolo_settings_to(self, target):
         """把滑块 YOLO 设置写入 target 字典（保存与测试按钮共用）"""

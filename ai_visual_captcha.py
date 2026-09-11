@@ -47,6 +47,12 @@ COORD_SPACE_LABELS = {
 }
 COORD_SPACE_BY_LABEL = {v: k for k, v in COORD_SPACE_LABELS.items()}
 
+# 单轮最多允许点击多少个目标：正常验证码远小于此值
+#（文字点选一般 2~6 个字，图片选择一般 1~4 张图）。
+# 超过说明模型判错了题型——典型是把「选出所有符合描述的图片」当成「把图里的字逐个点一遍」，
+# 一口气给出十几个坐标。这种情况下乱点会把整页文字都点一遍，宁可判失败也不点。
+MAX_CLICK_TARGETS = 10
+
 # 供应商预设：切换时自动回填 base_url / model；CUSTOM 只用用户手填的值
 CUSTOM_PROVIDER = "自定义"
 PROVIDER_PRESETS = [
@@ -84,6 +90,54 @@ def get_preset(provider_name):
         if p["name"] == provider_name:
             return {"base_url": p["base_url"], "model": p["model"]}
     return {"base_url": "", "model": ""}
+
+
+def _provider_store_path():
+    import config as _cfg
+    return os.path.join(_cfg.APP_DATA_DIR, "ai_provider_config.json")
+
+
+def load_provider_configs():
+    """读取「每个供应商各自记住的配置」{供应商名: {api_key, base_url, model}}。
+    存独立文件（不放 settings.json）：settings 会被启动快照整体覆盖，独立文件更稳。损坏返回空"""
+    try:
+        with open(_provider_store_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_provider_config(provider):
+    """取某供应商上次用过的配置（没存过返回 {}）"""
+    item = load_provider_configs().get(str(provider or "").strip())
+    return item if isinstance(item, dict) else {}
+
+
+def save_provider_config(provider, api_key="", base_url="", model=""):
+    """记住某供应商的地址/模型/Key，切换预设时自动回填"""
+    name = str(provider or "").strip()
+    if not name:
+        return False
+    path = _provider_store_path()
+    try:
+        data = load_provider_configs()
+        data[name] = {
+            "api_key": str(api_key or ""),
+            "base_url": str(base_url or ""),
+            "model": str(model or ""),
+        }
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+        return True
+    except Exception as e:
+        print(f"⚠️ 保存供应商配置失败：{e}")
+        return False
 
 
 def is_configured(settings, require_enabled=True):
@@ -147,20 +201,27 @@ def get_coord_space(settings):
 
 def _build_prompt(width, height):
     return (
-        "你是登录验证码识别助手。这是电脑屏幕截图，"
+        "你是登录验证码识别助手。这是电脑屏幕截图（可能只截取了验证码所在区域），"
         f"分辨率 {width}x{height} 像素。判断图中是否出现验证码（点选/图片验证）。\n"
         '只输出严格JSON，不要输出任何其他文字：\n'
-        '{"captcha": true/false, "type": "click"/"slider"/"none", '
-        '"targets": [{"text": "要点击的目标文字或描述", "bbox": [x1,y1,x2,y2], "point": [x,y]}]}\n'
-        "规则：\n"
-        "- 点选类验证码：type=click，按题目要求的点击顺序排列 targets，每个 target 必须给 point（目标中心坐标）；可另给 bbox 作参考，但程序以 point 为准\n"
+        '{"captcha": true/false, "type": "click"/"slider"/"none", "mode": "text"/"image", '
+        '"targets": [{"text": "要点击的目标描述", "bbox": [x1,y1,x2,y2], "point": [x,y]}]}\n'
+        "【第一步：读懂题目文字，判断题型】（mode 必须填对，两种题型完全不同）\n"
+        "- mode=text（文字点选）：题目直接给出要点选的字/词，"
+        "如「请依次点击：桦 离」「请点击文字：XXX」→ 每个要点选的字/词各给一个 target，"
+        "point 是该字中心的坐标，targets 按题目要求的点击顺序排列\n"
+        "- mode=image（图片选择）：题目要求选出【内容符合某个描述】的图片，"
+        "如「请选择所有包含红绿灯的图片」「选出所有有狗的图片」→ 每张符合描述的图片各给一个 target，"
+        "point 必须是【那张图片的中心】，不要指向图片内部的某个文字或局部\n"
+        "【第二步：严格遵守】\n"
+        "- mode=image 时，绝对不要逐个输出图片里的文字，也不要把图中所有文字都当成目标；"
+        "target 数量 = 符合描述的图片张数（通常 1~4 个）。"
+        "如果你输出了十几个 target，说明你把题型判断错了，请重新判断\n"
+        "- 按题目顺序排列 targets（图片选择题无顺序要求时按从左到右、从上到下排）\n"
         "- 坐标一律用【0-1000 归一化整数】：本图左上角=(0,0)，右下角=(1000,1000)；不要给像素坐标\n"
-        "- 只点击清晰、颜色鲜明、显示完整的目标字符；忽略半透明水印、背景底纹、被遮挡或残缺的字符\n"
-        "- 图片点选类（从一组图片里选出所有符合某特征的图，如「请选择所有包含红绿灯的图片」）："
-        "同样用 type=click，每一个符合要求的图片各给一个 target（text 写图片描述，必须给 point），"
-        "程序会把所有 target 依次点一遍；不符合要求的图片不要输出\n"
-        "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"targets\": []}\n"
-        "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"targets\": []}\n"
+        "- 只选清晰、颜色鲜明、显示完整的目标；忽略半透明水印、背景底纹、被遮挡或残缺的内容\n"
+        "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"mode\": \"\", \"targets\": []}\n"
+        "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"mode\": \"\", \"targets\": []}\n"
         "- 找不准目标就不要给坐标，宁可输出找不到"
     )
 
@@ -333,17 +394,21 @@ def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO)
     points 为相对「发送给模型的这张图」左上角的像素坐标（已按坐标空间换算）。"""
     data = _extract_json(text)
     if not isinstance(data, dict):
-        return {"status": "invalid", "points": [], "labels": [], "space": coord_space}
+        return {"status": "invalid", "points": [], "labels": [], "space": coord_space,
+                "mode": ""}
     captcha = bool(data.get("captcha"))
     ctype = str(data.get("type") or "").strip().lower()
+    mode = str(data.get("mode") or "").strip().lower()
+    if mode not in ("text", "image"):
+        mode = ""
     targets = data.get("targets")
     if not isinstance(targets, list):
         targets = []
     space = _detect_coord_space(targets, coord_space)
     if not captcha or ctype in ("none", "no", "false"):
-        return {"status": "none", "points": [], "labels": [], "space": space}
+        return {"status": "none", "points": [], "labels": [], "space": space, "mode": mode}
     if ctype in ("slider", "slide", "drag", "puzzle"):
-        return {"status": "slider", "points": [], "labels": [], "space": space}
+        return {"status": "slider", "points": [], "labels": [], "space": space, "mode": mode}
     points = []
     labels = []
     for t in targets:
@@ -356,8 +421,8 @@ def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO)
             label = str(t.get("text") or "").strip()
         labels.append(label)
     if not points:
-        return {"status": "invalid", "points": [], "labels": [], "space": space}
-    return {"status": "click", "points": points, "labels": labels, "space": space}
+        return {"status": "invalid", "points": [], "labels": [], "space": space, "mode": mode}
+    return {"status": "click", "points": points, "labels": labels, "space": space, "mode": mode}
 
 
 def _capture_screen_jpeg(region=None):
@@ -720,7 +785,7 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             try:
                 print(f"🤖 AI原始回复：{str(content)[:300]}")
                 _sp = parsed.get("space")
-                print(f"🤖 图像 {w}x{h}，坐标空间={_sp}"
+                print(f"🤖 图像 {w}x{h}，题型={parsed.get('mode') or '未给'}，坐标空间={_sp}"
                       f"{'（已按 0-1000 归一化换算成像素）' if _sp == COORD_SPACE_NORMALIZED else '（按像素直读）'}，"
                       f"区域偏移 ({offset_x},{offset_y})，框内像素坐标：{parsed.get('points')}")
             except Exception:
@@ -764,6 +829,18 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                                         space=parsed.get("space"), crop_size=(w, h))
                 return False, "模型未返回有效坐标"
             # click：按顺序拟人点击（截图带区域时坐标需加区域偏移换算回全屏）
+            if len(parsed["points"]) > MAX_CLICK_TARGETS:
+                # 题型判错的典型症状（图片选择题被当成逐字点选），点下去会误触一大片
+                if save_debug:
+                    save_debug_annotation(
+                        region,
+                        [(int(px) + offset_x, int(py) + offset_y) for (px, py) in parsed["points"]],
+                        parsed["labels"], content, settings=settings,
+                        space=parsed.get("space"), crop_size=(w, h))
+                print(f"⚠️ AI视觉验证：模型给出 {len(parsed['points'])} 个目标，超过单轮上限 "
+                      f"{MAX_CLICK_TARGETS}，疑似题型判断错误（如把图片选择题当成逐字点选），"
+                      f"本轮不点击、按未通过处理（题型={parsed.get('mode') or '未给'}）")
+                return False, f"目标数异常（{len(parsed['points'])} 个 > {MAX_CLICK_TARGETS}）"
             if verify_only:
                 # 复核轮只判不点：还识别得到目标说明上一轮没点成功
                 if save_debug:

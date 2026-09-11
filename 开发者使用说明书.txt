@@ -676,6 +676,35 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
 ================================================================================
 
 ----------------------------------------
+6.09.08 (2026-09-12)
+----------------------------------------
+
+- 验证码提示词按题型分流（修「图片选择题被当成逐字点选，把所有图里的字都点了一遍」）：
+  - 提示词改为两步：① 先读题目文字判断题型并填 mode（text=文字点选 / image=图片选择）
+    ② 再按题型给 targets。明确写死「mode=image 时绝对不要逐个输出图片里的文字，
+    target 数量 = 符合描述的图片张数（通常 1~4 个），输出了十几个说明题型判错了」
+  - parse_model_response 增加 mode 字段（非 text/image 归一为空串），返回值带出便于日志归因
+  - 代码兜底 MAX_CLICK_TARGETS=10：单轮目标数超过上限直接判失败且**一个都不点**
+    （图片选择题判错时乱点会误触整页文字），日志打印题型与目标数
+- 供应商预设切换回填各自的 Key：
+  - 原来切换预设只换 base_url/model，Key 还是上一家的（拿智谱的 Key 请求 DeepSeek → 401）
+  - 新增 ai_visual_captcha.load_provider_configs/get_provider_config/save_provider_config，
+    存独立文件 %APPDATA%\DeltaAutoTool\ai_provider_config.json（{供应商名:{api_key,base_url,model}}），
+    避免被启动设置快照整体覆盖
+  - 用户切换下拉（<<ComboboxSelected>>）时回填该供应商上次保存的地址/模型/Key；
+    没配过的供应商填预设默认值并**清空 Key**（提示「请输入对应的 API Key」）
+  - 首次打开窗口只补空地址、不动 Key（Key 以 settings.json 为准，防止用旧存档覆盖当前值）
+  - 保存时（_apply_ai_visual_settings_to）把当前供应商的地址/模型/Key 写回该文件
+- 修复等待网络结束后托盘出现两个图标：
+  - 根因：_check_validate_result 在网络等待期间已创建托盘（驻留托盘 + 气泡提示），
+    验证通过后 _continue_init 里 `self.tray_icon = None` + _setup_tray() 又建了一个，
+    旧图标还在自己的线程里跑着 → 托盘两个图标
+  - 改为 _continue_init 仅在 tray_icon 为空时创建；_setup_tray 命中已存在时打印
+    「托盘图标已存在，跳过重复创建」便于归因
+- 测试：test_core_modules 新增 mode 解析、目标数兜底（超限一个都不点）、
+  供应商配置独立文件读写（含覆盖/空名/文件损坏）等 3 项
+
+----------------------------------------
 6.09.08 (2026-09-10b)
 ----------------------------------------
 
