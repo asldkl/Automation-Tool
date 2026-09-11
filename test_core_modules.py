@@ -665,6 +665,30 @@ class TestAiVisualCaptcha(unittest.TestCase):
             '{"captcha": true, "type": "click", "targets": [{"text": "没有坐标"}]}', 1000, 800)
         self.assertEqual(r["status"], "invalid")
 
+    def test_extract_json_repairs_unescaped_quotes(self):
+        """模型照抄题目文字会带出未转义的引号（"包含文字"川"的图片"）——JSON 非法，
+        旧实现直接解析失败导致坐标全丢（用户实测），现自动修复后仍能拿到坐标"""
+        import ai_visual_captcha as avc
+        broken = ('```json\n{"captcha": true, "type": "image", "mode": "image", "targets": [\n'
+                  '  {"text": "包含文字"川"的图片", "bbox": [398, 517, 625, 749], "point": [506, 634]},\n'
+                  '  {"text": "包含文字"川"的图片", "bbox": [620, 519, 897, 800], "point": [700, 650]}\n'
+                  ']}\n```')
+        r = avc.parse_model_response(broken, 532, 600)
+        self.assertEqual(r["status"], "click")
+        self.assertEqual(r["mode"], "image")
+        # 0-1000 归一化 → 532x600 像素
+        self.assertEqual(r["points"], [(269, 380), (372, 390)])
+        self.assertEqual(r["labels"][0], '包含文字"川"的图片')
+        # 正常 JSON 不受影响（含已经正确转义的引号）
+        r = avc.parse_model_response(
+            '{"captcha": true, "type": "click", "targets": [{"text": "桦", "point": [710, 261]}]}',
+            770, 532)
+        self.assertEqual(r["points"], [(547, 139)])
+        self.assertEqual(avc._extract_json('{"s": "含\\"引号\\"的"}'), {"s": '含"引号"的'})
+        # 多个未转义引号 + 结尾无引号的情况
+        self.assertEqual(avc._extract_json('{"t": "a"b"c"}'), {"t": 'a"b"c'})
+        self.assertEqual(avc._extract_json('[1,2]{"a": 1}'), {"a": 1})
+
     def test_parse_response_mode_text_and_image(self):
         """mode 字段：文字点选=text / 图片选择=image，解析后原样带出"""
         import ai_visual_captcha as avc

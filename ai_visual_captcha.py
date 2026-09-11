@@ -217,17 +217,63 @@ def _build_prompt(width, height):
         "- mode=image 时，绝对不要逐个输出图片里的文字，也不要把图中所有文字都当成目标；"
         "target 数量 = 符合描述的图片张数（通常 1~4 个）。"
         "如果你输出了十几个 target，说明你把题型判断错了，请重新判断\n"
+        "- 题目里带文字要求时（如「包含文字：\"川\"」），要看的是图片内容里是否真的出现了该文字"
+        "（可能是藏在景物里的字形、半透明水印等，不要因为不显眼就忽略）\n"
+        "- mode=image 时 bbox 要紧贴该图片的四条边（不要跨到相邻图片），point 取该图片矩形的中心\n"
+        "- text 字段用简短描述即可，不要包含英文引号（\"），以免 JSON 出错\n"
         "- 按题目顺序排列 targets（图片选择题无顺序要求时按从左到右、从上到下排）\n"
         "- 坐标一律用【0-1000 归一化整数】：本图左上角=(0,0)，右下角=(1000,1000)；不要给像素坐标\n"
-        "- 只选清晰、颜色鲜明、显示完整的目标；忽略半透明水印、背景底纹、被遮挡或残缺的内容\n"
+        "- 只选清晰、颜色鲜明、显示完整的目标；默认忽略半透明水印、背景底纹、被遮挡或残缺的内容"
+        "（例外：题目明确要求找「包含文字X」的图片时，图里的文字即使不显眼也要算）\n"
         "- 滑块拼图验证：输出 {\"captcha\": true, \"type\": \"slider\", \"mode\": \"\", \"targets\": []}\n"
         "- 没有验证码：输出 {\"captcha\": false, \"type\": \"none\", \"mode\": \"\", \"targets\": []}\n"
         "- 找不准目标就不要给坐标，宁可输出找不到"
     )
 
 
+def _repair_unescaped_quotes(text):
+    """修复模型返回 JSON 里【字符串内部的未转义引号】。
+
+    实测 glm-4.6v 会把画面上的题目原样写进 text 字段，于是出现
+    "text": "包含文字"川"的图片" —— JSON 非法，json.loads 直接失败、坐标全丢。
+    规则：字符串内碰到 " 时，看它后面第一个非空白字符——
+    是 , } ] : 或结尾 → 视为字符串结束；否则判为字符串内部的引号，转义为 \\" """
+    out = []
+    in_str = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if not in_str:
+            out.append(ch)
+            if ch == '"':
+                in_str = True
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            nxt = text[j] if j < n else ""
+            if nxt in (",", "}", "]", ":", ""):
+                out.append('"')
+                in_str = False
+            else:
+                out.append('\\"')
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _extract_json(text):
-    """从模型回复中提取第一个 JSON 对象（容忍 ```json 包裹、前后缀文字）"""
+    """从模型回复中提取第一个 JSON 对象（容忍 ```json 包裹、前后缀文字、
+    字符串内未转义的引号）"""
     if not text:
         return None
     cleaned = re.sub(r"```(?:json)?", "", str(text)).strip()
@@ -254,8 +300,15 @@ def _extract_json(text):
         elif ch == "}":
             depth -= 1
             if depth == 0:
+                raw = cleaned[start:i + 1]
                 try:
-                    return json.loads(cleaned[start:i + 1])
+                    return json.loads(raw)
+                except Exception:
+                    pass
+                # 常见失败原因：text 里带了未转义的引号（模型照抄画面上的
+                # 「包含文字"川"的图片」这类题目）→ 修一次再试
+                try:
+                    return json.loads(_repair_unescaped_quotes(raw))
                 except Exception:
                     return None
     return None
@@ -785,9 +838,15 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             try:
                 print(f"🤖 AI原始回复：{str(content)[:300]}")
                 _sp = parsed.get("space")
-                print(f"🤖 图像 {w}x{h}，题型={parsed.get('mode') or '未给'}，坐标空间={_sp}"
-                      f"{'（已按 0-1000 归一化换算成像素）' if _sp == COORD_SPACE_NORMALIZED else '（按像素直读）'}，"
-                      f"区域偏移 ({offset_x},{offset_y})，框内像素坐标：{parsed.get('points')}")
+                if status == "invalid" and not parsed.get("points"):
+                    # 解析失败（模型给了验证码但坐标没解出来）——多半是 JSON 格式问题
+                    print(f"⚠️ 未能解析出坐标（图像 {w}x{h}，题型={parsed.get('mode') or '未给'}）"
+                          f"，原始回复见上一行")
+                else:
+                    _sp_desc = {COORD_SPACE_NORMALIZED: "（已按 0-1000 归一化换算成像素）",
+                                COORD_SPACE_PIXEL: "（按像素直读）"}.get(_sp, "（自动判定）")
+                    print(f"🤖 图像 {w}x{h}，题型={parsed.get('mode') or '未给'}，坐标空间={_sp}{_sp_desc}，"
+                          f"区域偏移 ({offset_x},{offset_y})，框内像素坐标：{parsed.get('points')}")
             except Exception:
                 pass
             status = parsed["status"]
@@ -823,7 +882,12 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                 print("🤖 AI视觉验证：检测到滑块拼图验证，请在游戏内手动完成（滑块YOLO未启用）")
                 return False, "检测到滑块验证，需手动处理"
             if status == "invalid":
-                print(f"⚠️ AI视觉验证：模型未返回有效坐标（回复：{content[:120]}）")
+                if _extract_json(content) is None:
+                    print("⚠️ AI视觉验证：模型回复的 JSON 解析失败（格式损坏，常见于字符串里带"
+                          "未转义的引号）；原始回复见上方日志")
+                else:
+                    print("⚠️ AI视觉验证：模型答复里没有可用坐标"
+                          "（可能只读出了题目文字、没给出目标位置）")
                 if save_debug:
                     save_debug_annotation(region, [], [], content, settings=settings,
                                         space=parsed.get("space"), crop_size=(w, h))
