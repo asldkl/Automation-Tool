@@ -1013,6 +1013,25 @@ class SettingsWindow:
         self._cap_refresh_max_var = tk.IntVar(value=_rm)
         ttk.Spinbox(_rrow, from_=1, to=5, textvariable=self._cap_refresh_max_var, width=4).pack(side=tk.LEFT)
 
+        # 选图类验证码（选出所有符合描述的图片）：点完所有图后需再点一次「确认/提交」才生效
+        _crow = ttk.Frame(frame_ocr, style='SettingsInner.TFrame'); _crow.pack(fill=tk.X, pady=(4, 0))
+        self._cap_confirm_enabled_var = tk.BooleanVar(value=s.get("captcha_confirm_enabled", False))
+        ttk.Checkbutton(_crow, text="选图后点「确认」按钮", variable=self._cap_confirm_enabled_var,
+                        style='Settings.TCheckbutton').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(_crow, text="确认坐标：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
+        _cp = s.get("captcha_confirm_point", [0, 0]) or [0, 0]
+        self._cap_confirm_x_var = tk.StringVar(value=str(_cp[0]))
+        self._cap_confirm_y_var = tk.StringVar(value=str(_cp[1] if len(_cp) > 1 else 0))
+        ttk.Entry(_crow, textvariable=self._cap_confirm_x_var, width=6).pack(side=tk.LEFT)
+        ttk.Label(_crow, text=",").pack(side=tk.LEFT)
+        ttk.Entry(_crow, textvariable=self._cap_confirm_y_var, width=6).pack(side=tk.LEFT)
+        ttk.Button(_crow, text="取点", width=6,
+                   command=self._pick_confirm_point).pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(frame_ocr, text="「选出所有包含XX的图片」这类验证码：AI 点完所有目标图后，再点这个「确认/提交」"
+                                  "按钮才算完成；题目文字要落在识别区域内，否则 AI 看不到题",
+                  style='SettingsSmall.TLabel', wraplength=540, justify=tk.LEFT).pack(
+                      anchor='w', pady=(2, 0))
+
         # ----- 滑块验证（YOLO） -----
         frame_slider = ttk.LabelFrame(body, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
         frame_slider.pack(fill=tk.X, pady=(0, 8))
@@ -1303,6 +1322,14 @@ class SettingsWindow:
 
     def _pick_refresh_point(self):
         """屏幕取点：单击选择「刷新」按钮坐标（验证码多次不过时点击用）"""
+        self._pick_screen_point(self._cap_refresh_x_var, self._cap_refresh_y_var, "刷新")
+
+    def _pick_confirm_point(self):
+        """屏幕取点：单击选择「确认/提交」按钮坐标（选图类验证码点完图后点击用）"""
+        self._pick_screen_point(self._cap_confirm_x_var, self._cap_confirm_y_var, "确认")
+
+    def _pick_screen_point(self, x_var, y_var, what):
+        """屏幕取点：单击屏幕把坐标写进 x_var/y_var（what=按钮名称，仅用于提示文案）"""
         hiding = []
         for w in (getattr(self, "_captcha_win", None), self.win):
             try:
@@ -1324,14 +1351,17 @@ class SettingsWindow:
             ov.config(cursor='crosshair')
             cv = tk_overlay.Canvas(ov, highlightthickness=0, bg='black')
             cv.pack(fill=tk.BOTH, expand=True)
-            tk_overlay.Label(ov, text="单击「刷新」按钮位置（Esc 取消）",
+            tk_overlay.Label(ov, text=f"单击「{what}」按钮位置（Esc 取消）",
                              font=('Microsoft YaHei UI', 14, 'bold'),
                              fg='white', bg='black').place(relx=0.5, rely=0.05, anchor='center')
 
             def _click(e):
                 try:
-                    self._cap_refresh_x_var.set(str(int(e.x)))
-                    self._cap_refresh_y_var.set(str(int(e.y)))
+                    # 用画布相对屏幕的偏移换算，避免遮罩不在 (0,0) 时坐标整体偏
+                    px = int(cv.winfo_rootx()) + int(e.x)
+                    py = int(cv.winfo_rooty()) + int(e.y)
+                    x_var.set(str(px))
+                    y_var.set(str(py))
                 except Exception:
                     pass
                 ov.destroy()
@@ -1400,6 +1430,14 @@ class SettingsWindow:
             target["captcha_refresh_max"] = max(1, min(5, int(self._cap_refresh_max_var.get())))
         except Exception:
             target["captcha_refresh_max"] = 2
+        # 选图类验证码的「确认」按钮坐标（未勾选或坐标为 0 视为不点）
+        target["captcha_confirm_enabled"] = self._cap_confirm_enabled_var.get()
+        try:
+            _cx = int(float(self._cap_confirm_x_var.get() or 0))
+            _cy = int(float(self._cap_confirm_y_var.get() or 0))
+            target["captcha_confirm_point"] = [max(0, _cx), max(0, _cy)]
+        except Exception:
+            target["captcha_confirm_point"] = [0, 0]
         self._apply_ai_visual_settings_to(target)
         self._apply_slider_yolo_settings_to(target)
         config.save_settings(target)

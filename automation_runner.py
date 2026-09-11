@@ -734,10 +734,50 @@ def _login_account(app, account_name, i, total, processed_accounts):
             continue
         print("✅ 已点击登录确认按钮")
 
+        def _handle_verify(_region_text):
+            """验证码处理 + 人工等待。返回 True=验证已通过；False=未通过（调用方须中止该账号）"""
+            print("🛡️ 检测到需要验证")
+            # 先尝试自动处理（仅当总开关开启且已配置对应能力）
+            if _captcha_auto_enabled:
+                try:
+                    import captcha_router
+                    captcha_ok, captcha_detail = captcha_router.route_and_solve(
+                        app, stop_event=app._stop_event, screen_text=_region_text)
+                except Exception as e:
+                    print(f"⚠️ 登录验证码处理异常：{e}")
+                    captcha_ok, captcha_detail = False, f"调度异常：{e}"
+                print(f"🛡️ 自动验证码处理{'通过' if captcha_ok else '未通过'}：{captcha_detail}")
+                if captcha_ok:
+                    return True
+            # 未自动通过/未开启自动：等待人工验证（判定通过 = 成功识别到三角洲图标）
+            _wait_sec = 60
+            try:
+                _wait_sec = int(app.settings.get("captcha_manual_wait_seconds", 60) or 60)
+            except Exception:
+                _wait_sec = 60
+            print(f"⏳ 请手动完成验证（最长等待 {_wait_sec} 秒，完成后自动继续）...")
+            if _wait_manual_verify(app, _wait_sec):
+                print("✅ 人工验证已通过（识别到三角洲图标）")
+                return True
+            # 超时/停止：标记「未验证通过」（≈暂停）并跳过该账号
+            try:
+                import cooldown_manager as _cm
+                _cm.set_unverified(account_name, True)
+            except Exception:
+                pass
+            app._last_account_error = "未验证通过（人工验证超时）"
+            print("❌ 超时仍未通过验证，账号标记为「未验证通过」并跳过")
+            try:
+                processed_accounts.append(f"{account_name} (未验证通过)")
+            except Exception:
+                pass
+            return False
+
         # 轮询检查登录结果（每轮 2 秒间隔 + 两次纯探测各最多 2 秒，4 轮最长约 24 秒）
         # 注意：这里只是「探测是否出现」，必须用只识别不点击的判断，
         # 否则会把三角洲图标当按钮提前点击一次，之后 _launch_game 又会点一次（造成点 2 次）
         login_ok = False
+        _verify_text = None
         for _ in range(4):
             time.sleep(2)
             if app._stop_event.is_set():
@@ -750,6 +790,21 @@ def _login_account(app, account_name, i, total, processed_accounts):
                                           stop_event=app._stop_event):
                 login_ok = True
                 break
+            # 每轮顺带按「验证码识别区域」OCR 一次：验证码通常在点完确认登录后 1~3 秒就弹出，
+            # 命中特征就直接进验证处理，不必等 4 轮探测全部落空（旧流程最坏要 24 秒才反应过来，
+            # 期间一直对着验证码界面白找「重新登录按钮/三角洲图标」）。
+            # 仅在验证码总开关开启时启用——关闭时流程与旧版完全一致，不会多点也不会误判。
+            if _captcha_auto_enabled:
+                try:
+                    import captcha_router as _cr
+                    _t = _cr.gather_region_text(app.settings)
+                    if _t and _cr.needs_verification(app.settings, _t):
+                        print(f"📋 登录后区域文字: {_t}")
+                        print("🛡️ 登录后立即检测到验证（提前判定，不再等 4 轮探测）")
+                        _verify_text = _t
+                        break
+                except Exception:
+                    pass
         else:
             # 4 次检查既没看到重新登录按钮也没看到三角洲图标（可能停在验证码/公告页等
             # 第三态界面）：先输出屏幕文字诊断便于失败归因
@@ -778,44 +833,13 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 # 未检测到验证：按登录成功处理（真实状态由 _launch_game 兜底判断）
                 login_ok = True
             else:
-                print("🛡️ 检测到需要验证")
-                # 先尝试自动处理（仅当总开关开启且已配置对应能力）
-                if _captcha_auto_enabled:
-                    try:
-                        import captcha_router
-                        captcha_ok, captcha_detail = captcha_router.route_and_solve(
-                            app, stop_event=app._stop_event, screen_text=_region_text)
-                    except Exception as e:
-                        print(f"⚠️ 登录验证码处理异常：{e}")
-                        captcha_ok, captcha_detail = False, f"调度异常：{e}"
-                    print(f"🛡️ 自动验证码处理{'通过' if captcha_ok else '未通过'}：{captcha_detail}")
-                    if captcha_ok:
-                        login_ok = True
-                # 未自动通过/未开启自动：等待人工验证（判定通过 = 成功识别到三角洲图标）
-                if not login_ok:
-                    _wait_sec = 60
-                    try:
-                        _wait_sec = int(app.settings.get("captcha_manual_wait_seconds", 60) or 60)
-                    except Exception:
-                        _wait_sec = 60
-                    print(f"⏳ 请手动完成验证（最长等待 {_wait_sec} 秒，完成后自动继续）...")
-                    if _wait_manual_verify(app, _wait_sec):
-                        print("✅ 人工验证已通过（识别到三角洲图标）")
-                        login_ok = True
-                    else:
-                        # 超时/停止：标记「未验证通过」（≈暂停）并跳过该账号
-                        try:
-                            import cooldown_manager as _cm
-                            _cm.set_unverified(account_name, True)
-                        except Exception:
-                            pass
-                        app._last_account_error = "未验证通过（人工验证超时）"
-                        print("❌ 超时仍未通过验证，账号标记为「未验证通过」并跳过")
-                        try:
-                            processed_accounts.append(f"{account_name} (未验证通过)")
-                        except Exception:
-                            pass
-                        return False
+                _verify_text = _region_text
+
+        # 验证处理统一入口（提前判定命中 或 第三态判定命中）
+        if _verify_text is not None:
+            if not _handle_verify(_verify_text):
+                return False
+            login_ok = True
 
         if not login_ok:
             continue

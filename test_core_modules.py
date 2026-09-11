@@ -681,6 +681,109 @@ class TestAiVisualCaptcha(unittest.TestCase):
             if item["name"] != avc.CUSTOM_PROVIDER:
                 self.assertTrue(item["base_url"].startswith("https://"))
 
+    def test_get_confirm_point(self):
+        """选图后「确认」按钮坐标：未启用/坐标为 0 → None（不点）"""
+        import ai_visual_captcha as avc
+        self.assertIsNone(avc.get_confirm_point({"captcha_confirm_enabled": False,
+                                                 "captcha_confirm_point": [800, 900]}))
+        self.assertIsNone(avc.get_confirm_point({"captcha_confirm_enabled": True,
+                                                 "captcha_confirm_point": [0, 0]}))
+        self.assertIsNone(avc.get_confirm_point({}))
+        self.assertEqual(avc.get_confirm_point({"captcha_confirm_enabled": True,
+                                                "captcha_confirm_point": [800, 900]}),
+                         (800, 900))
+
+    def test_solve_captcha_recheck_after_last_round(self):
+        """max_rounds=1：点完目标后必须再复核一次，验证码消失即返回成功。
+
+        旧逻辑 round_index<rounds 才复核，rounds=1 时点完直接返回失败——
+        即使点对了也判不过，只能靠人工等待兜底。"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+        }, _stop_event=None)
+        # 第1轮（识别）→ 有验证码；第2轮（复核）→ 验证码已消失
+        replies = ['{"captcha": true, "type": "click", "targets": [{"point": [500, 500]}]}',
+                   '{"captcha": false, "type": "none", "targets": []}']
+        clicks = []
+        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", side_effect=replies), \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertTrue(ok, detail)
+        self.assertIn("复核", detail)
+        # [500,500] 是 0-1000 归一化 → 1000x800 图上 (500,400)；复核轮不点击
+        self.assertEqual(clicks, [(500, 400)])
+
+    def test_solve_captcha_clicks_confirm_after_targets(self):
+        """启用「选图后点确认」时：点完所有目标图后再点确认坐标"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+            "captcha_confirm_enabled": True,
+            "captcha_confirm_point": [900, 1000],
+        }, _stop_event=None)
+        replies = ['{"captcha": true, "type": "click", "targets": ['
+                   '{"text": "图A", "point": [300, 300]}, {"text": "图B", "point": [400, 400]}]}',
+                   '{"captcha": false, "type": "none", "targets": []}']
+        clicks = []
+        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", side_effect=replies), \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertTrue(ok, detail)
+        # 顺序：图A → 图B → 确认（前两个为归一化换算后的像素坐标）
+        self.assertEqual(clicks, [(300, 240), (400, 320), (900, 1000)])
+
+    def test_solve_captcha_recheck_still_present(self):
+        """复核轮仍识别到目标 → 判定未通过（且不在复核轮重复点击）"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+        }, _stop_event=None)
+        reply = '{"captcha": true, "type": "click", "targets": [{"point": [500, 500]}]}'
+        clicks = []
+        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", return_value=reply), \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertFalse(ok)
+        self.assertIn("复核时验证码仍在", detail)
+        self.assertEqual(clicks, [(500, 400)])      # 只点了 1 次，复核轮不点
+
     def test_normalize_model_retired_upgrade(self):
         """已下线旧模型自动映射到当前替代；其他值原样返回"""
         import ai_visual_captcha as avc

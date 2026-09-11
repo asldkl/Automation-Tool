@@ -111,6 +111,32 @@ def get_capture_region(settings):
     return (x, y, w, h)
 
 
+def get_confirm_point(settings):
+    """选图类验证码的「确认/提交」按钮坐标。
+    启用且坐标有效返回 (x, y)；未启用/坐标为 0 返回 None（不点）"""
+    if not (settings or {}).get("captcha_confirm_enabled", False):
+        return None
+    point = (settings or {}).get("captcha_confirm_point", [0, 0]) or [0, 0]
+    try:
+        x, y = int(point[0]), int(point[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if x <= 0 or y <= 0:
+        return None
+    return (x, y)
+
+
+def _click_screen_point(x, y):
+    """拟人移动到坐标并单击（移动失败则退回直接点击）"""
+    try:
+        utils.smooth_move_to(x, y)
+        utils.human_click_delay()
+    except Exception:
+        pass
+    import pyautogui
+    pyautogui.click()
+
+
 def get_coord_space(settings):
     """读取「坐标空间」设置：auto / normalized / pixel（非法值按 auto）"""
     value = str((settings or {}).get("ai_visual_captcha_coord_space", "") or "").strip()
@@ -650,8 +676,11 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
     region = get_capture_region(settings)
     offset_x, offset_y = (region[0], region[1]) if region else (0, 0)
     coord_space = get_coord_space(settings)
+    confirm_point = get_confirm_point(settings)
     if region:
         print(f"🤖 AI视觉验证：使用识别区域 {region}（坐标已自动换算全屏）")
+    if confirm_point:
+        print(f"🤖 AI视觉验证：已启用「选图后点确认」，点完目标图后点击 {confirm_point}")
     try:
         import pyautogui as _pag
         screen_size = tuple(_pag.size())
@@ -659,14 +688,22 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
         screen_size = None
 
     overlay_hidden = _hide_overlay()
+    # 轮次安排：前 rounds 轮「识别+点击」，最后再补 1 轮「只识别不点击」的复核。
+    # 复核必须单独占一轮：否则 max_rounds=1 时点完目标就直接返回失败，
+    # 即使点对了也判不过（只能靠后面的人工验证等待兜底）。
+    total_rounds = rounds + 1
     try:
-        for round_index in range(1, rounds + 1):
+        for round_index in range(1, total_rounds + 1):
+            verify_only = round_index > rounds
             if stop_event is not None and stop_event.is_set():
                 return False, "已停止"
             image_b64, mime, w, h = _capture_screen_jpeg(region)
             if not image_b64:
                 return False, "截图失败"
-            print(f"🤖 AI视觉验证 第{round_index}/{rounds}轮：请求 {model} 识别验证码...")
+            if verify_only:
+                print(f"🔍 AI视觉验证：复核验证码是否已消失（第{round_index - 1}次点击后）...")
+            else:
+                print(f"🤖 AI视觉验证 第{round_index}/{rounds}轮：请求 {model} 识别验证码...")
             try:
                 content = _ask_model(base_url, api_key, model, image_b64, _build_prompt(w, h))
             except urllib.error.HTTPError as e:
@@ -694,11 +731,15 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                 if save_debug:
                     save_debug_annotation(region, [], [], content, settings=settings,
                                         space=parsed.get("space"), crop_size=(w, h))
+                if verify_only:
+                    return True, "验证通过（复核确认验证码已消失）"
                 return True, f"第{round_index}轮未检测到验证码"
             if status == "slider":
                 if save_debug:
                     save_debug_annotation(region, [], [], content, settings=settings,
                                         space=parsed.get("space"), crop_size=(w, h))
+                if verify_only:
+                    return False, "复核时仍检测到滑块验证"
                 # 滑块验证：委托本地 YOLO 模块处理（未启用且非 force 则提示手动）
                 slider_module = None
                 try:
@@ -711,8 +752,7 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                         app, stop_event=stop_event, manage_overlay=False, force=force)
                     if found and solved:
                         # 继续下一轮 AI 复核（此时验证码应已消失）
-                        if round_index < rounds:
-                            time.sleep(RECHECK_WAIT_SECONDS)
+                        time.sleep(RECHECK_WAIT_SECONDS)
                         continue
                     return False, f"滑块YOLO处理未通过：{slider_detail}"
                 print("🤖 AI视觉验证：检测到滑块拼图验证，请在游戏内手动完成（滑块YOLO未启用）")
@@ -724,6 +764,16 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                                         space=parsed.get("space"), crop_size=(w, h))
                 return False, "模型未返回有效坐标"
             # click：按顺序拟人点击（截图带区域时坐标需加区域偏移换算回全屏）
+            if verify_only:
+                # 复核轮只判不点：还识别得到目标说明上一轮没点成功
+                if save_debug:
+                    save_debug_annotation(
+                        region,
+                        [(int(px) + offset_x, int(py) + offset_y) for (px, py) in parsed["points"]],
+                        parsed["labels"], content, settings=settings,
+                        space=parsed.get("space"), crop_size=(w, h))
+                print(f"❌ 复核仍有 {len(parsed['points'])} 个目标未被点击成功，本次验证未通过")
+                return False, f"复核时验证码仍在（仍有 {len(parsed['points'])} 个目标）"
             labels = parsed["labels"]
             if save_debug:
                 save_debug_annotation(
@@ -745,16 +795,22 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                     return False, f"坐标超出屏幕：{label}({screen_x},{screen_y})"
                 print(f"🤖 AI视觉验证：点击「{label}」（{screen_x},{screen_y}）")
                 try:
-                    utils.smooth_move_to(screen_x, screen_y)
-                    utils.human_click_delay()
-                    import pyautogui
-                    pyautogui.click()
+                    _click_screen_point(screen_x, screen_y)
                 except Exception as e:
                     return False, f"点击失败：{e}"
                 time.sleep(random.uniform(0.6, 1.2))
-            if round_index < rounds:
-                time.sleep(RECHECK_WAIT_SECONDS)
-        return False, f"{rounds}轮处理后仍未确认验证码消失"
+            # 选图类验证码：选完图还要点一次「确认/提交」才生效
+            if confirm_point:
+                time.sleep(0.8)
+                if stop_event is not None and stop_event.is_set():
+                    return False, "已停止"
+                print(f"🤖 AI视觉验证：点击「确认」（{confirm_point[0]},{confirm_point[1]}）")
+                try:
+                    _click_screen_point(confirm_point[0], confirm_point[1])
+                except Exception as e:
+                    return False, f"点击确认失败：{e}"
+            time.sleep(RECHECK_WAIT_SECONDS)
+        return False, f"{rounds}轮点击后复核仍未确认验证码消失"
     finally:
         _show_overlay(overlay_hidden)
 
@@ -770,6 +826,7 @@ def test_captcha(app):
         time.sleep(3)
         ok, detail = solve_captcha(app, stop_event=stop_event, force=True, save_debug=True)
         print(f"{'✅' if ok else '❌'} AI视觉验证测试结束：{detail}")
-        print("🖼️ 本次已在 %APPDATA%\\DeltaAutoTool\\captcha_debug\\ 生成带标注的截图（红圈=AI定位点）")
+        print("🖼️ 本次已在「日志目录/日期/图片/」生成带标注的截图并自动打开"
+              "（绿=AI原始值直读，蓝=按坐标空间换算，红=实际点击）")
 
     threading.Thread(target=_run, daemon=True).start()

@@ -484,11 +484,20 @@ class TestCodeConsistency(unittest.TestCase):
         self.assertIn("cooldown_run_immediately", DEFAULT_SETTINGS)
 
     def test_gui_version_updated(self):
-        """gui_app.py 中版本号应为 v1.3.6"""
-        gui_app_path = os.path.join(os.path.dirname(__file__), "gui_app.py")
-        with open(gui_app_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("v1.3.6", content)
+        """gui_app.py 中版本号应与 installer.iss 的 AppVersion 一致（v1.3.6 已过时）"""
+        base = os.path.dirname(__file__)
+        with open(os.path.join(base, "gui_app.py"), "r", encoding="utf-8") as f:
+            gui_content = f.read()
+        with open(os.path.join(base, "installer.iss"), "r", encoding="utf-8") as f:
+            iss_content = f.read()
+        ver = ""
+        for line in iss_content.splitlines():
+            line = line.strip()
+            if line.startswith("AppVersion="):
+                ver = line.split("=", 1)[1].strip()
+                break
+        self.assertTrue(ver, "installer.iss 未找到 AppVersion")
+        self.assertIn(f"v{ver}", gui_content)
 
     def test_readme_has_v190_section(self):
         """README.md 应包含配置说明"""
