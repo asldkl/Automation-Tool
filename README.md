@@ -213,6 +213,7 @@ Interception 驱动中设备 1 是只读中转设备，真实键盘设备从 2 �
 | `ai_visual_captcha_max_rounds` | 验证码最大处理轮次（1-10，默认 5） |
 | `captcha_auto_enabled` | 登录验证码自动处理总开关（默认关闭，关闭时登录流程不做验证码处理） |
 | `captcha_slider_keywords` / `captcha_click_keywords` | OCR 判定验证类型的关键词（逗号分隔，滑块优先） |
+| `captcha_manual_keywords` | 命中即【直接转人工验证、不调用 AI】的关键词（默认「包含文字,含有文字,含文字」＝图片文字选择题；清空即关闭本规则） |
 | `captcha_confirm_enabled` / `captcha_confirm_point` | 选图类验证码：点完所有目标图后再点「确认/提交」按钮（默认关闭） |
 | `captcha_refresh_enabled` / `captcha_refresh_point` / `captcha_refresh_max` | 「换一组/刷新」按钮坐标：验证没过、或选图类没把握时点它换一批图重来（最多 N 次） |
 | `slider_yolo_enabled` | 启用滑块验证 YOLO 自动拖动（默认关闭，需程序目录有 best.onnx） |

@@ -86,6 +86,26 @@ def gather_region_text(settings=None):
 # 未配置关键词时的兜底验证特征词
 _DEFAULT_VERIFY_KEYWORDS = ("验证", "滑块", "拼图", "拖动", "滑动")
 
+# 「图片文字选择」类验证码（第③类）的兜底特征词：题目里带「包含文字：X」。
+# 这类题目要求选出「画面里写着某个字的图片」，目前视觉模型判断不稳，按约定直接转人工，
+# 不浪费 AI 调用。设置里 captcha_manual_keywords 留空即关闭本规则（让第③类也走 AI）
+_DEFAULT_MANUAL_KEYWORDS = ("包含文字", "含有文字", "含文字")
+
+
+def needs_manual_verification(settings, screen_text):
+    """OCR 文字是否表明这是「图片文字选择」类验证码 → True 时应直接转人工、不调 AI
+
+    设置键缺失 → 用默认词；显式留空 → 关闭本规则（返回 False）"""
+    text = str(screen_text or "")
+    if not text:
+        return False
+    raw = (settings or {}).get("captcha_manual_keywords", None)
+    if raw is None:
+        kws = list(_DEFAULT_MANUAL_KEYWORDS)
+    else:
+        kws = _parse_keywords(raw)
+    return any(k in text for k in kws)
+
 
 def needs_verification(settings, screen_text):
     """根据（区域）OCR 文本判断是否出现需要人工处理的登录验证。
@@ -171,6 +191,14 @@ def _route_once(app, stop_event=None, screen_text=None, force=False):
     if screen_text is None:
         screen_text = gather_screen_text()
     text = str(screen_text or "")
+
+    # 0) 图片文字选择题（第③类：「选择所有包含文字：X 的图片」）→ 直接转人工验证。
+    #    必须放在最前面：这类题面同时含有「选择所有」等点击关键词，落到下面会被当点击式
+    #    交给 AI，而目前模型对它判断不稳，白跑一轮还容易误点。
+    if needs_manual_verification(settings, text):
+        print("🛡️ OCR 判定为「图片文字选择」类验证码（题目含「包含文字」）"
+              "→ 直接转人工验证，不调用 AI")
+        return False, "图片文字选择类验证码，转人工验证"
 
     slider_kws = _parse_keywords(settings.get("captcha_slider_keywords"))
     click_kws = _parse_keywords(settings.get("captcha_click_keywords"))

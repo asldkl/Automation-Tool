@@ -1044,8 +1044,14 @@ class SettingsWindow:
         ttk.Label(ocr_row2, text="点击关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
         self._cap_click_kw_var = tk.StringVar(value=s.get("captcha_click_keywords", ""))
         ttk.Entry(ocr_row2, textvariable=self._cap_click_kw_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(adv_box, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击",
-                  style='SettingsSmall.TLabel').pack(anchor='w', pady=(4, 0))
+        ocr_row3 = ttk.Frame(adv_box, style='SettingsInner.TFrame')
+        ocr_row3.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(ocr_row3, text="转人工关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        self._cap_manual_kw_var = tk.StringVar(value=s.get("captcha_manual_keywords", ""))
+        ttk.Entry(ocr_row3, textvariable=self._cap_manual_kw_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(adv_box, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击；"
+                                "转人工关键词命中则【直接等你手动处理、不调用 AI】（清空=关闭本规则）",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(4, 0))
 
         def _toggle_adv():
             if adv_var.get():
@@ -1483,6 +1489,7 @@ class SettingsWindow:
         target["captcha_auto_enabled"] = self._captcha_auto_var.get()
         target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
         target["captcha_click_keywords"] = self._cap_click_kw_var.get().strip()
+        target["captcha_manual_keywords"] = self._cap_manual_kw_var.get().strip()
         # 识别区域（仅当勾选启用时解析；格式非法则保持关闭）
         target["captcha_region_enabled"] = self._cap_region_enabled_var.get()
         try:

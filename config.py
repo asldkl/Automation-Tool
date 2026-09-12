@@ -237,6 +237,10 @@ DEFAULT_SETTINGS = {
     "captcha_click_keywords": "依次点击,请点击,按顺序点击,点选,点击下列,"
                               "请选择,选择所有,选出,符合描述,包含文字,点击图片,请验证",
     "captcha_kw_supplemented": False,           # 关键词一次性补充标记（老配置升级用，勿手动改）
+    # 命中即【直接转人工验证】的关键词：登录验证码共 3 类——①滑块 ②选择图片 ③选择图片文字。
+    # 第③类（题目里带「包含文字」）自动识别通过率低，按约定不调 AI、直接等人工处理。
+    # 想放开第③类走 AI：把这里清空即可
+    "captcha_manual_keywords": "包含文字,含有文字,含文字",
     "captcha_region_enabled": False,            # 启用验证码识别区域（只截图区域内容，提升识别率）
     "captcha_region": [0, 0, 0, 0],             # 识别区域 [x, y, w, h]（滑块YOLO与AI视觉共用）
     "captcha_manual_wait_seconds": 60,          # 登录验证：等人工处理秒数（超时→账号标记「未验证通过」并跳过）

@@ -814,7 +814,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         none = '{"captcha": false, "type": "none", "targets": []}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[empty, empty, good, none]) as m, \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -828,7 +827,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(m.call_count, 4)      # 空答复重问了 2 次后才拿到坐标
         # 一直拿不到坐标 → 重试耗尽后仍判失败（不会死循环）
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=empty), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -858,7 +856,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         reply = '{"captcha": true, "type": "click", "mode": "image", "targets": [%s]}' % many
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=reply), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -941,53 +938,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(same, [(12, 34)])
         self.assertEqual(rej2, 0)
 
-    def test_solve_captcha_second_pass_adds_missed_tile(self):
-        """第一轮漏掉的那张图：第二轮放大复查后按「has 且 conf≥75」补进来（用户实测的漏判场景）"""
-        import types
-        import unittest.mock as mock
-        import numpy as np
-        import ai_visual_captcha as avc
-
-        # 造一张 3 列 2 行、白底彩块的验证码图（和真实布局同构）
-        img = np.full((594, 526, 3), 255, np.uint8)
-        for r in range(2):
-            for c in range(3):
-                x, y, w, h = 29 + c * 154, 202 + r * 156, 152, 154
-                img[y:y + h, x:x + w] = (60 + r * 40, 120, 200)
-        app = types.SimpleNamespace(settings={
-            "ai_visual_captcha_enabled": True,
-            "ai_visual_captcha_base_url": "https://example.com",
-            "ai_visual_captcha_api_key": "k",
-            "ai_visual_captcha_model": "m",
-            "ai_visual_captcha_max_rounds": 1,
-        }, _stop_event=None)
-        # 第一轮只选中 图3/5/6（漏了图2）；第二轮对 图1/2/4 复查 → 图2 高分采纳、图4 低分拒绝
-        p1 = ('{"captcha": true, "type": "click", "mode": "image", '
-              '"caption": "选择所有包含文字：\\"川\\"的图片", "targets": ['
-              '{"text": "图3", "point": [789, 470], "conf": 90}, '
-              '{"text": "图5", "point": [494, 731], "conf": 88}, '
-              '{"text": "图6", "point": [789, 731], "conf": 86}]}')
-        p2 = ('{"results": [{"no": 1, "has": false, "conf": 10, "why": "没有"}, '
-              '{"no": 2, "has": true, "conf": 92, "why": "山脊三道竖纹"}, '
-              '{"no": 4, "has": true, "conf": 68, "why": "倒影有点像但不够"}]}')
-        p3 = '{"captcha": false, "type": "none", "targets": []}'
-        clicks = []
-        with mock.patch.object(avc, "_grab_bgr", return_value=img), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
-             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 526, 594)), \
-             mock.patch.object(avc, "_ask_model", side_effect=[p1, p2, p3]) as m, \
-             mock.patch.object(avc, "_hide_overlay", return_value=False), \
-             mock.patch.object(avc, "_show_overlay"), \
-             mock.patch.object(avc, "save_debug_annotation"), \
-             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
-             mock.patch.object(avc.time, "sleep"):
-            ok, detail = avc.solve_captcha(app, force=True)
-        self.assertTrue(ok, detail)
-        centers = [(29 + c * 154 + 76, 202 + r * 156 + 77) for r in range(2) for c in range(3)]
-        self.assertIn(centers[1], clicks)          # 图2（第二轮补上的）被点了
-        self.assertNotIn(centers[3], clicks)       # 图4（低分）没被点
-        self.assertEqual(m.call_count, 3)          # 第一轮 + 第二轮 + 复核轮
-
     def test_solve_captcha_refreshes_when_low_confidence(self):
         """选图类「没把握」（conf 低于阈值）→ 不硬提交，点「换一组」换批图重来"""
         import types
@@ -1012,7 +962,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         clicks = []
         # 第1轮：低把握 → 点换一组 → 重来；第2次识别高把握 → 正常点击；复核消失 → 成功
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[low, high, none]) as m, \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1047,7 +996,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         none = '{"captcha": false, "type": "none", "targets": []}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[low, low, low, none]), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1093,7 +1041,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
                    '{"captcha": false, "type": "none", "targets": []}']
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=replies), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1127,7 +1074,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
                    '{"captcha": false, "type": "none", "targets": []}']
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=replies), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1156,7 +1102,6 @@ class TestAiVisualCaptcha(unittest.TestCase):
         reply = '{"captcha": true, "type": "click", "targets": [{"point": [500, 500]}]}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
-             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=reply), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1366,6 +1311,32 @@ class TestCaptchaRouter(unittest.TestCase):
         self.assertEqual(_parse_keywords(" 拖动 , 滑动 "), ["拖动", "滑动"])
         self.assertEqual(_parse_keywords(""), [])
         self.assertEqual(_parse_keywords(None), [])
+
+    def test_route_text_image_captcha_goes_manual(self):
+        """第③类「图片文字选择」（题面含「包含文字」）→ 直接转人工、不调用 AI"""
+        import captcha_router as cr
+        s = {
+            "captcha_auto_enabled": True,
+            "captcha_slider_keywords": "拖动,滑动,滑块",
+            "captcha_click_keywords": "依次点击,请选择,选择所有,包含文字",
+            "captcha_manual_keywords": "包含文字,含有文字",
+        }
+        # 命中「包含文字」→ 转人工
+        self.assertTrue(cr.needs_manual_verification(
+            s, "为了您的账号安全，请验证后登录。选择所有符合描述的图片包含文字：川"))
+        # 第②类「选择图片」（题面只有事物名）→ 不转人工，照常走 AI
+        self.assertFalse(cr.needs_manual_verification(s, "选择所有符合描述的图片 海浪"))
+        self.assertFalse(cr.needs_manual_verification(s, "请依次点击：桦 离"))
+        # 路由结果：命中转人工关键词时直接返回失败（调用方据此进入人工等待）
+        ok, detail = cr._route_once(type("A", (), {"settings": s})(), screen_text="包含文字：川",
+                                    force=True)
+        self.assertFalse(ok)
+        self.assertIn("转人工", detail)
+        # 转人工关键词清空 → 关闭本规则，第③类也放行给 AI
+        self.assertFalse(cr.needs_manual_verification({"captcha_manual_keywords": ""}, "包含文字：川"))
+        # 键缺失 → 用默认词（仍拦）
+        self.assertTrue(cr.needs_manual_verification({}, "包含文字：川"))
+        self.assertFalse(cr.needs_manual_verification({}, "选择所有符合描述的图片 海浪"))
 
     def test_route_disabled_master_switch(self):
         """总开关关闭 → 不做任何处理"""
