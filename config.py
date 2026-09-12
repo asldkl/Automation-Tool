@@ -514,7 +514,7 @@ TEMPLATE_CAPTURE_LIST = [
     ("Warehouse",           "picture/One_Click_Sell/Warehouse.png",       "仓库入口",     "在游戏主界面，截取「仓库」图标"),
     ("Sell",                "picture/One_Click_Sell/Sell.png",            "出售按钮",     "在物品详情界面，截取「出售」按钮"),
     ("List_Item",           "picture/One_Click_Sell/List.png",            "上架按钮",     "在出售界面，截取「上架」按钮"),
-    ("Max_Quantity",        "picture/One_Click_Sell/Max Quantity.png",    "最大数量按钮", "点完「上架」后、降价前，截取「最大数量」按钮（一次挂满，不用再配出售数量）"),
+    ("Max_Quantity",        "picture/One_Click_Sell/Max Quantity.png",    "最大数量按钮", "在上架界面，截取「最大数量」按钮"),
     ("Discount",            "picture/One_Click_Sell/Discount.png",        "降价按钮",     "在上架界面，截取「降价」按钮"),
     ("Confirm_Listing",     "picture/One_Click_Sell/Confirm Listing.png", "确认上架按钮", "在上架界面，截取「确认上架」按钮"),
 ]
