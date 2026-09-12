@@ -10,6 +10,7 @@
 内置模板基于 2560×1440（2K）屏幕 + 游戏 1440×900 制作。
 
 【版本历史】
+6.09.08 (2026-09-12g)：①遮罩矩形避让——原来只避让「点击点」，只截图不点击的场景（资产识别、验证码区域OCR）没人管；且遮罩为避让点击被移到右上后会一直留着，正好压住资产区域(2297,16,338,74)导致 OCR 读到日志文本。新增 utils.set_overlay_avoid_region_hooks/_avoid_overlay_for_region/_restore_overlay_after_region + gui_app._overlay_avoid_region（四角都挡就临时隐藏，截完复原），挂到 _recognize_asset 与 gather_region_text。②选图类验证码强化：detect_image_tiles 图块检测（连通域+按行聚类，实测两类图都稳定找出6格）、snap_points_to_tiles 坐标吸附（偏差≤0.75×边长吸附到图块中心，太远丢弃）、提示词要求每 target 给 conf 并区分「内容题/文字题」；最高 conf<60 或坐标全废 → 不硬提交，点「换一组」换批图重来（复用 captcha_refresh_* 配置，次数用尽仍按最可能答案提交）
 6.09.08 (2026-09-12f)：OCR 判定关键词补充图片点选类验证码——老配置只有「依次点击/请点击/按顺序点击/点选/点击下列」（只覆盖文字点选），「选择所有符合描述的图片 / 包含文字：川」这类一条都命不中，只能靠 AI 兜底、没配 AI 就直接放行。默认词表增补 请选择/选择所有/选出/符合描述/包含文字/点击图片/请验证；新增 config.migrate_captcha_keywords()（纯追加去重、不覆盖用户自加词、captcha_kw_supplemented 标记只做一次），App.__init__ 调用并有改动才落盘。刻意不加裸「验证」以免被「验证码登录/短信验证」误判
 6.09.08 (2026-09-12e)：修复「未验证通过」账号无法恢复——右键「恢复账号」只清 account_paused/auto_paused 不碰 unverified（恢复后仍被 is_account_skipped 跳过）、菜单标签只看 is_account_paused（未验证账号显示成「暂停账号」，点了反而又加一道暂停）、「重置选中冷却」在无冷却记录时直接返回，三个出口全堵死。改法：菜单标签判定改为 is_account_paused or is_unverified；恢复分支同时 set_unverified(False) 并清零连续失败计数
 6.09.08 (2026-09-12d)：验证码设置窗口改版——原来 20 多个控件堆在一页太乱，改成 3 标签页（基本 / 点击式验证(AI) / 滑块验证）+ 固定底部栏（测试完整流程 + 立即保存），OCR 判定关键词收进「显示高级选项」默认隐藏，每个标签页自带纵向滚动（复用 _create_scrollable_tab），首次打开按内容自适应尺寸（winfo_reqwidth/reqheight，上限屏幕 85%——高分屏 DPI 缩放下写死像素会把右侧裁掉），尺寸记忆改用 captcha_window_geometry_v2；顺带精简说明文案、收窄输入框

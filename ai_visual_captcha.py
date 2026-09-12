@@ -58,6 +58,13 @@ MAX_CLICK_TARGETS = 10
 # 这种情况直接判失败太浪费，重问几次显著提高成功率（只在拿不到坐标时才会多花调用）
 COORD_RETRIES = 2
 
+# 图块吸附：模型给的坐标离最近图块中心超过 ratio×图块边长 → 判为不可信（勾选类验证码用）
+TILE_SNAP_RATIO = 0.75
+
+# 选图类验证码的把握度下限：所有选中目标的 conf 都低于它 → 判定「没把握」，
+# 若配置了刷新（换一组）坐标就换一批图重来，而不是硬提交一个大概率错的答案
+LOW_CONFIDENCE = 60
+
 # 供应商预设：切换时自动回填 base_url / model；CUSTOM 只用用户手填的值
 CUSTOM_PROVIDER = "自定义"
 PROVIDER_PRESETS = [
@@ -185,6 +192,21 @@ def get_confirm_point(settings):
     return (x, y)
 
 
+def get_refresh_point(settings):
+    """「换一组 / 刷新」按钮坐标（验证码没过或没把握时点它换一批图）。
+    启用且坐标有效返回 (x, y)；否则返回 None"""
+    if not (settings or {}).get("captcha_refresh_enabled", False):
+        return None
+    point = (settings or {}).get("captcha_refresh_point", [0, 0]) or [0, 0]
+    try:
+        x, y = int(point[0]), int(point[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if x <= 0 or y <= 0:
+        return None
+    return (x, y)
+
+
 def _click_screen_point(x, y):
     """拟人移动到坐标并单击（移动失败则退回直接点击）"""
     try:
@@ -210,14 +232,17 @@ def _build_prompt(width, height):
         f"分辨率 {width}x{height} 像素。判断图中是否出现验证码（点选/图片验证）。\n"
         '只输出严格JSON，不要输出任何其他文字：\n'
         '{"captcha": true/false, "type": "click"/"slider"/"none", "mode": "text"/"image", '
-        '"targets": [{"text": "要点击的目标描述", "bbox": [x1,y1,x2,y2], "point": [x,y]}]}\n'
+        '"targets": [{"text": "目标描述", "bbox": [x1,y1,x2,y2], "point": [x,y], "conf": 把握度0-100}]}\n'
         "【第一步：读懂题目文字，判断题型】（mode 必须填对，两种题型完全不同）\n"
         "- mode=text（文字点选）：题目直接给出要点选的字/词，"
         "如「请依次点击：桦 离」「请点击文字：XXX」→ 每个要点选的字/词各给一个 target，"
         "point 是该字中心的坐标，targets 按题目要求的点击顺序排列\n"
-        "- mode=image（图片选择）：题目要求选出【内容符合某个描述】的图片，"
-        "如「请选择所有包含红绿灯的图片」「选出所有有狗的图片」→ 每张符合描述的图片各给一个 target，"
-        "point 必须是【那张图片的中心】，不要指向图片内部的某个文字或局部\n"
+        "- mode=image（图片选择）：题目要求选出【符合要求】的图片。分两种情况，判断依据完全不同：\n"
+        "    · 内容题：题目给的是【事物】（如「海浪」「红绿灯」「有狗的图片」）→ 看图的内容是不是这个事物\n"
+        "    · 文字题：题目给的是【一个或几个字】且说「包含文字」（如 包含文字：\"川\"）→ 必须看图里"
+        "【画面上是否真的出现了这个字】：它可能藏在山脊/水流的纹理里、被画成景物的一部分、"
+        "或做成半透明水印，而不是「画面内容跟这个字的意思像」（山河照片不等于有川字）\n"
+        "    两种都是每张符合的图片各给一个 target，point 取【那张图片的中心】\n"
         "【第二步：严格遵守】\n"
         "- mode=image 时，绝对不要逐个输出图片里的文字，也不要把图中所有文字都当成目标；"
         "target 数量 = 符合描述的图片张数（通常 1~4 个）。"
@@ -225,6 +250,9 @@ def _build_prompt(width, height):
         "- 题目里带文字要求时（如「包含文字：\"川\"」），要看的是图片内容里是否真的出现了该文字"
         "（可能是藏在景物里的字形、半透明水印等，不要因为不显眼就忽略）\n"
         "- mode=image 时 bbox 要紧贴该图片的四条边（不要跨到相邻图片），point 取该图片矩形的中心\n"
+        "- 每个 target 要给 conf（0-100）：你对「这张图确实符合要求」有多确定。"
+        "反复看也拿不准就把 conf 给低（如 40），不要为了凑答案硬给高分——程序会据此决定"
+        "是不是换一组图片重来\n"
         "【必做】先逐张检查再作答：在 \"checks\" 数组里按从左到右、从上到下逐张写出判断结果，"
         "如 [\"图1：草地树林，未见川字\", \"图2：峡谷三道纵纹，形似川字 → 是\"]，"
         "然后据此给出 targets。这些图里往往只有一两张、最多几张符合要求，不要因为不确定就跳过\n"
@@ -475,29 +503,38 @@ def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO)
         return {"status": "slider", "points": [], "labels": [], "space": space, "mode": mode}
     points = []
     labels = []
+    confs = []
     for t in targets:
         center = _target_center(t, screen_w, screen_h, space)
         if center is None:
             continue
         points.append(center)
         label = ""
+        conf = None
         if isinstance(t, dict):
             label = str(t.get("text") or "").strip()
+            conf = _to_number(t.get("conf"))
+            if conf is not None:
+                conf = max(0.0, min(100.0, conf))
         labels.append(label)
+        confs.append(conf)
     if not points:
-        return {"status": "invalid", "points": [], "labels": [], "space": space, "mode": mode}
-    return {"status": "click", "points": points, "labels": labels, "space": space, "mode": mode}
+        return {"status": "invalid", "points": [], "labels": [], "confs": [],
+                "space": space, "mode": mode}
+    return {"status": "click", "points": points, "labels": labels, "confs": confs,
+            "space": space, "mode": mode}
 
 
-def _capture_screen_jpeg(region=None):
-    """截图 → JPEG base64（超 4MB 逐级降质）。
-    region 为 (x, y, w, h) 时只截该区域（验证码识别区域），返回 (b64, mime, w, h)"""
+def _grab_bgr(region=None):
+    """截屏（可指定区域 (x,y,w,h)）→ BGR ndarray；失败返回 None"""
     import pyautogui
-    if region:
-        region = tuple(int(v) for v in region)
-        shot = pyautogui.screenshot(region=region)
-    else:
-        shot = pyautogui.screenshot()
+    try:
+        if region:
+            shot = pyautogui.screenshot(region=tuple(int(v) for v in region))
+        else:
+            shot = pyautogui.screenshot()
+    except Exception:
+        return None
     try:
         arr = np.array(shot)
     finally:
@@ -505,8 +542,95 @@ def _capture_screen_jpeg(region=None):
             shot.close()
         except Exception:
             pass
-    h, w = arr.shape[:2]
-    bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    try:
+        return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    except Exception:
+        return None
+
+
+def detect_image_tiles(bgr, min_side=60, max_tiles=12):
+    """在验证码裁剪图里找出「一张张图片」的矩形（白底上的彩色图块）。
+
+    图片选择题的图片是规则排布的方块，先把坐标吸附到最近的图块中心，
+    再判断模型给的坐标是否离谱——这一步把「模型报了格子位置但坐标偏出去」救回来。
+    返回 [(x, y, w, h), ...]，按从上到下、从左到右；识别不到返回 []（此时不做吸附）"""
+    if bgr is None or getattr(bgr, "size", 0) == 0:
+        return []
+    try:
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        mask = (gray < 245).astype(np.uint8) * 255
+        n, _labels, stats, _cents = cv2.connectedComponentsWithStats(mask, 8)
+        H, W = bgr.shape[:2]
+        tiles = []
+        for i in range(1, n):
+            x, y, w, h, area = stats[i]
+            if w < min_side or h < min_side:
+                continue
+            if w > W * 0.98 and h > H * 0.5:      # 整块背景（含题目文字区）不算图块
+                continue
+            if area < w * h * 0.55:               # 形状太不规则（细长的文字块）
+                continue
+            if w / float(h) > 4 or h / float(w) > 4:
+                continue
+            tiles.append((int(x), int(y), int(w), int(h)))
+        if not tiles:
+            return []
+        # 按行聚类（行高容差 = 平均高度 × 0.6）
+        avg_h = sum(t[3] for t in tiles) / float(len(tiles))
+        tiles.sort(key=lambda r: (r[1], r[0]))
+        rows, cur = [], [tiles[0]]
+        for t in tiles[1:]:
+            if abs(t[1] - cur[0][1]) <= avg_h * 0.6:
+                cur.append(t)
+            else:
+                rows.append(cur)
+                cur = [t]
+        rows.append(cur)
+        out = []
+        for row in rows:
+            row.sort(key=lambda r: r[0])
+            out.extend(row)
+        return out if 2 <= len(out) <= max_tiles else []
+    except Exception:
+        return []
+
+
+def snap_points_to_tiles(points, tiles, ratio=0.75):
+    """把坐标吸附到最近的图块中心。离所有图块中心都超过 ratio×图块边长 → 判为不可信（None）。
+
+    返回 (吸附后的坐标列表, 被拒绝的个数)"""
+    if not points or not tiles:
+        return list(points or []), 0
+    out, rejected = [], 0
+    for pt in points:
+        try:
+            px, py = float(pt[0]), float(pt[1])
+        except Exception:
+            out.append(pt)
+            continue
+        best, best_d = None, 1e18
+        for (x, y, w, h) in tiles:
+            cx, cy = x + w // 2, y + h // 2
+            d = ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
+            if d < best_d:
+                best_d, best = d, (cx, cy, w, h)
+        if best is not None and best_d <= ratio * max(best[2], best[3]):
+            out.append((best[0], best[1]))
+        else:
+            out.append(None)
+            rejected += 1
+    return out, rejected
+
+
+def _capture_screen_jpeg(region=None, bgr=None):
+    """截图 → JPEG base64（超 4MB 逐级降质）。
+    region 为 (x, y, w, h) 时只截该区域（验证码识别区域），返回 (b64, mime, w, h)。
+    已截好的 BGR 可直接用 bgr 传入（避免重复截屏，保证与图块检测用的是同一帧）"""
+    if bgr is None:
+        bgr = _grab_bgr(region)
+    if bgr is None:
+        return None, None, 0, 0
+    h, w = bgr.shape[:2]
     for quality in JPEG_QUALITIES:
         ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         if not ok:
@@ -806,10 +930,18 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
     offset_x, offset_y = (region[0], region[1]) if region else (0, 0)
     coord_space = get_coord_space(settings)
     confirm_point = get_confirm_point(settings)
+    # 换一组（刷新）坐标：选图类验证码「没把握」时换一批图重来用它
+    refresh_point = get_refresh_point(settings)
+    try:
+        refresh_budget = max(0, min(5, int(settings.get("captcha_refresh_max", 2) or 2)))
+    except (TypeError, ValueError):
+        refresh_budget = 2
     if region:
         print(f"🤖 AI视觉验证：使用识别区域 {region}（坐标已自动换算全屏）")
     if confirm_point:
         print(f"🤖 AI视觉验证：已启用「选图后点确认」，点完目标图后点击 {confirm_point}")
+    if refresh_point:
+        print(f"🤖 AI视觉验证：换一组坐标 {refresh_point}（没把握时会换一批图重来，最多 {refresh_budget} 次）")
     try:
         import pyautogui as _pag
         screen_size = tuple(_pag.size())
@@ -826,12 +958,15 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             verify_only = round_index > rounds
             if stop_event is not None and stop_event.is_set():
                 return False, "已停止"
-            # 截图-识别-解析：模型偶尔会「确认有验证码但 targets 为空」，重问几次再算数
+            # 截图-识别-解析：模型偶尔会「确认有验证码但 targets 为空」，重问几次再算数；
+            # 选图类还会「没把握 → 点换一组换批图重来」，所以这里多给 refresh_budget 次机会
             content = None
             parsed = None
             w = h = 0
-            for _try in range(COORD_RETRIES + 1):
-                image_b64, mime, w, h = _capture_screen_jpeg(region)
+            refresh_left = 0 if verify_only else refresh_budget
+            for _try in range(COORD_RETRIES + 1 + refresh_budget):
+                bgr = _grab_bgr(region)
+                image_b64, mime, w, h = _capture_screen_jpeg(region, bgr=bgr)
                 if not image_b64:
                     return False, "截图失败"
                 if verify_only:
@@ -851,6 +986,41 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                 except Exception as e:
                     return False, f"AI接口调用失败：{e}"
                 parsed = parse_model_response(content, w, h, coord_space)
+                # 选图类：把坐标吸附到最近的图块中心，并给出「没把握」判定
+                if parsed["status"] == "click" and parsed.get("mode") == "image":
+                    tiles = detect_image_tiles(bgr)
+                    if tiles:
+                        pts = parsed["points"]
+                        snapped, rejected = snap_points_to_tiles(pts, tiles)
+                        confs_all = list(parsed.get("confs") or [None] * len(pts))
+                        labels_all = list(parsed.get("labels") or [""] * len(pts))
+                        keep = [i for i, p in enumerate(snapped) if p is not None]
+                        if rejected:
+                            print(f"🖼️ 图块吸附：识别到 {len(tiles)} 个图块，{len(keep)} 个坐标吸附到"
+                                  f"图块中心，{rejected} 个离图块太远已丢弃")
+                        parsed["points"] = [snapped[i] for i in keep]
+                        parsed["labels"] = [labels_all[i] if i < len(labels_all) else ""
+                                            for i in keep]
+                        parsed["confs"] = [confs_all[i] if i < len(confs_all) else None
+                                           for i in keep]
+                    confs = [c for c in (parsed.get("confs") or []) if c is not None]
+                    best_conf = max(confs) if confs else None
+                    no_target = not parsed["points"]
+                    low_conf = (best_conf is not None and best_conf < LOW_CONFIDENCE)
+                    if (no_target or low_conf) and refresh_left > 0 and refresh_point:
+                        refresh_left -= 1
+                        why = "坐标全对不上图块" if no_target else f"最高把握度只有 {int(best_conf)} 分"
+                        print(f"🔁 选图类验证码{why}，不硬提交，点「换一组」换批图重来"
+                              f"（本行还剩 {refresh_left} 次）")
+                        try:
+                            _click_screen_point(refresh_point[0], refresh_point[1])
+                            time.sleep(1.6)
+                        except Exception as e:
+                            print(f"⚠️ 点「换一组」失败：{e}")
+                            break
+                        continue
+                    if no_target:
+                        return False, "选图类坐标全部对不上图块"
                 if parsed["status"] != "invalid":
                     break
                 if _try < COORD_RETRIES:

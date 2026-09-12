@@ -214,6 +214,7 @@ Interception 驱动中设备 1 是只读中转设备，真实键盘设备从 2 �
 | `captcha_auto_enabled` | 登录验证码自动处理总开关（默认关闭，关闭时登录流程不做验证码处理） |
 | `captcha_slider_keywords` / `captcha_click_keywords` | OCR 判定验证类型的关键词（逗号分隔，滑块优先） |
 | `captcha_confirm_enabled` / `captcha_confirm_point` | 选图类验证码：点完所有目标图后再点「确认/提交」按钮（默认关闭） |
+| `captcha_refresh_enabled` / `captcha_refresh_point` / `captcha_refresh_max` | 「换一组/刷新」按钮坐标：验证没过、或选图类没把握时点它换一批图重来（最多 N 次） |
 | `slider_yolo_enabled` | 启用滑块验证 YOLO 自动拖动（默认关闭，需程序目录有 best.onnx） |
 | `slider_yolo_confidence` | YOLO 缺口检测置信度阈值（默认 0.35） |
 | `slider_yolo_drag_offset` | 拖动距离微调（像素，正=多拖，默认 0） |

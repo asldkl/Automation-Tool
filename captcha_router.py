@@ -54,10 +54,23 @@ def gather_region_text(settings=None):
             region = ai_visual_captcha.get_capture_region(settings)
     except Exception:
         region = None
+    # 识别区域若被日志遮罩盖住，OCR 会读到遮罩上自己的日志（里面有「验证」等字样，
+    # 会把判定带偏）→ 截图前先让遮罩避让，截完复原
+    _token = None
+    try:
+        if region:
+            _token = utils._avoid_overlay_for_region(region[0], region[1], region[2], region[3])
+    except Exception:
+        _token = None
     try:
         results = utils.ocr_recognize(region)
     except Exception:
         return ""
+    finally:
+        try:
+            utils._restore_overlay_after_region(_token)
+        except Exception:
+            pass
     parts = []
     for item in (results or []):
         try:

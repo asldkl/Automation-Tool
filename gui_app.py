@@ -310,6 +310,65 @@ def _overlay_avoid(x, y):
     return token['v']
 
 
+def _overlay_avoid_region(x, y, w, h):
+    """截图区域若与日志遮罩重叠，临时把遮罩移到不遮挡的角落（资产识别等只读场景）。
+
+    与点击避让的区别：这里看的是「矩形」而不是「点」。四个角落都被盖住时直接隐藏遮罩。
+    返回 token（供截图后复原）；无需避让返回 None。线程安全"""
+    if _qt_overlay is None:
+        return None
+    token = {'corner': None, 'hidden': False}
+
+    def _do():
+        try:
+            if not _qt_overlay.isVisible():
+                return
+            g = _qt_overlay.geometry()
+            def _overlap(px, py, pw, ph):
+                return not (px + pw <= x or px >= x + w or py + ph <= y or py >= y + h)
+            if not _overlap(g.x(), g.y(), g.width(), g.height()):
+                return   # 未覆盖，无需避让
+            from PyQt6.QtWidgets import QApplication
+            scr = QApplication.primaryScreen().availableGeometry()
+            cur = _qt_overlay.corner_index
+            for idx in range(4):
+                if idx == cur:
+                    continue
+                px, py = _qt_overlay._corner_pos(scr, idx)
+                if not _overlap(px, py, _qt_overlay.width(), _qt_overlay.height()):
+                    _qt_overlay.cycle_corner(idx)
+                    token['corner'] = cur
+                    return
+            # 四个角落都会挡住识别区域（区域太大）：临时隐藏遮罩
+            _qt_overlay.hide()
+            token['hidden'] = True
+        except Exception:
+            pass
+
+    _run_on_main(_do)
+    if token['hidden']:
+        return token
+    return token['corner']
+
+
+def _overlay_restore_region(token):
+    """把遮罩移回/显示回来（region 版本；token 可能是角落索引或 {'hidden': True}）"""
+    if token is None or _qt_overlay is None:
+        return
+
+    def _do():
+        try:
+            if isinstance(token, dict):
+                if token.get('hidden'):
+                    _qt_overlay.show()
+            else:
+                _qt_overlay.cycle_corner(int(token))
+        except Exception:
+            pass
+
+    _run_on_main(_do)
+
+
 def _overlay_restore(token):
     """把遮罩移回避让前的角落"""
     if token is None or _qt_overlay is None:
@@ -326,6 +385,8 @@ def _overlay_restore(token):
 
 # 注册日志遮罩避让钩子（点击点被遮罩覆盖时临时移开，点完复原）
 utils.set_overlay_avoid_hooks(_overlay_avoid, _overlay_restore)
+# 截图区域避让（资产识别只截图不点击，区域被遮罩盖住时同样要移开）
+utils.set_overlay_avoid_region_hooks(_overlay_avoid_region, _overlay_restore_region)
 
 
 def _overlay_status_text(app):

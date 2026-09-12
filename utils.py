@@ -341,6 +341,7 @@ def find_image_on_screen(img_path, timeout=2, confidence=None, region=None, stop
 # ==================== 日志遮罩避让钩子（点击点被遮罩覆盖时临时移开） ====================
 _overlay_avoid_fn = None      # avoid_fn(x, y) -> token|None（返回原角落等用于复原）
 _overlay_restore_fn = None    # restore_fn(token)
+_overlay_region_avoid_fn = None   # avoid_fn(x, y, w, h) —— 矩形区域避让（截图用）
 
 
 def set_overlay_avoid_hooks(avoid_fn, restore_fn):
@@ -348,6 +349,29 @@ def set_overlay_avoid_hooks(avoid_fn, restore_fn):
     global _overlay_avoid_fn, _overlay_restore_fn
     _overlay_avoid_fn = avoid_fn
     _overlay_restore_fn = restore_fn
+
+
+def set_overlay_avoid_region_hooks(avoid_fn, restore_fn):
+    """注册「矩形区域」避让回调（资产识别等只截图不点击的场景：区域被遮罩盖住时移开遮罩）"""
+    global _overlay_region_avoid_fn, _overlay_restore_fn
+    _overlay_region_avoid_fn = avoid_fn
+    _overlay_restore_fn = restore_fn
+
+
+def _avoid_overlay_for_region(x, y, w, h):
+    """截图前调用：识别区域若与日志遮罩重叠，临时移开遮罩。
+    返回 token（供截图后复原）；无需避让返回 None"""
+    if _overlay_region_avoid_fn:
+        try:
+            return _overlay_region_avoid_fn(int(x), int(y), int(w), int(h))
+        except Exception:
+            return None
+    return None
+
+
+def _restore_overlay_after_region(token):
+    """截图后把遮罩移回原位"""
+    _restore_overlay_after_click(token)
 
 
 def _avoid_overlay_for_point(x, y):

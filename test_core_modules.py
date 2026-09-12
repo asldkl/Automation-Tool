@@ -259,6 +259,30 @@ class TestConfigSettings(unittest.TestCase):
 class TestUtilsFunctions(unittest.TestCase):
     """测试工具函数"""
 
+    def test_overlay_region_avoid_hooks(self):
+        """截图区域避让钩子（资产识别/验证码区域 OCR 用）：注册后可调用、可复原"""
+        import utils
+        calls = []
+        orig_a, orig_r = utils._overlay_region_avoid_fn, utils._overlay_restore_fn
+        try:
+            utils.set_overlay_avoid_region_hooks(
+                lambda x, y, w, h: calls.append(("avoid", x, y, w, h)) or "TOKEN",
+                lambda t: calls.append(("restore", t)))
+            tok = utils._avoid_overlay_for_region(2297, 16, 338, 74)
+            self.assertEqual(tok, "TOKEN")
+            utils._restore_overlay_after_region(tok)
+            self.assertEqual(calls, [("avoid", 2297, 16, 338, 74), ("restore", "TOKEN")])
+            # 未注册 / 回调异常都不能把主流程带崩
+            utils.set_overlay_avoid_region_hooks(None, None)
+            self.assertIsNone(utils._avoid_overlay_for_region(1, 2, 3, 4))
+            utils._restore_overlay_after_region(None)      # token 为空 → 直接返回
+            def _boom(*_a):
+                raise RuntimeError("x")
+            utils.set_overlay_avoid_region_hooks(_boom, _boom)
+            self.assertIsNone(utils._avoid_overlay_for_region(1, 2, 3, 4))
+        finally:
+            utils._overlay_region_avoid_fn, utils._overlay_restore_fn = orig_a, orig_r
+
     def test_parse_asset_value(self):
         """资产字符串解析"""
         from utils import parse_asset_value
@@ -789,7 +813,8 @@ class TestAiVisualCaptcha(unittest.TestCase):
         good = '{"captcha": true, "type": "click", "mode": "image", "targets": [{"point": [500, 500]}]}'
         none = '{"captcha": false, "type": "none", "targets": []}'
         clicks = []
-        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[empty, empty, good, none]) as m, \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
              mock.patch.object(avc, "_show_overlay"), \
@@ -801,7 +826,8 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(clicks, [(500, 400)])
         self.assertEqual(m.call_count, 4)      # 空答复重问了 2 次后才拿到坐标
         # 一直拿不到坐标 → 重试耗尽后仍判失败（不会死循环）
-        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=empty), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
              mock.patch.object(avc, "_show_overlay"), \
@@ -829,7 +855,8 @@ class TestAiVisualCaptcha(unittest.TestCase):
                         for i in range(avc.MAX_CLICK_TARGETS + 5))
         reply = '{"captcha": true, "type": "click", "mode": "image", "targets": [%s]}' % many
         clicks = []
-        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=reply), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
              mock.patch.object(avc, "_show_overlay"), \
@@ -883,6 +910,104 @@ class TestAiVisualCaptcha(unittest.TestCase):
             if item["name"] != avc.CUSTOM_PROVIDER:
                 self.assertTrue(item["base_url"].startswith("https://"))
 
+    def test_detect_image_tiles_and_snap(self):
+        """选图类验证码：图块检测 + 坐标吸附（模型给的坐标偏出去也能救回来）"""
+        import numpy as np
+        import ai_visual_captcha as avc
+        # 造一张 3 列 2 行、白底彩块的「验证码图」
+        img = np.full((594, 526, 3), 255, np.uint8)
+        rects = []
+        for r in range(2):
+            for c in range(3):
+                x, y, w, h = 29 + c * 154, 202 + r * 156, 152, 154
+                img[y:y + h, x:x + w] = (60 + r * 40, 120, 200)
+                rects.append((x, y, w, h))
+        tiles = avc.detect_image_tiles(img)
+        self.assertEqual(len(tiles), 6)
+        self.assertEqual(tiles[0][:2], (29, 202))          # 从上到下、从左到右
+        self.assertEqual(tiles[5][:2], (29 + 308, 202 + 156))
+        # 坐标吸附：偏一点 → 吸附到图块中心；离谱 → 拒绝
+        centers = [(t[0] + t[2] // 2, t[1] + t[3] // 2) for t in tiles]
+        snapped, rejected = avc.snap_points_to_tiles(
+            [(centers[2][0] + 20, centers[2][1] - 25), (500, 20)], tiles)
+        self.assertEqual(snapped[0], centers[2])
+        self.assertIsNone(snapped[1])
+        self.assertEqual(rejected, 1)
+        # 没有图块时报原样（不做吸附，避免误伤其它题型）
+        same, rej2 = avc.snap_points_to_tiles([(12, 34)], [])
+        self.assertEqual(same, [(12, 34)])
+        self.assertEqual(rej2, 0)
+
+    def test_solve_captcha_refreshes_when_low_confidence(self):
+        """选图类「没把握」（conf 低于阈值）→ 不硬提交，点「换一组」换批图重来"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+            "captcha_refresh_enabled": True,
+            "captcha_refresh_point": [900, 1000],
+            "captcha_refresh_max": 2,
+        }, _stop_event=None)
+        low = ('{"captcha": true, "type": "click", "mode": "image", "targets": '
+               '[{"text": "图2", "point": [500, 500], "conf": 35}]}')
+        high = ('{"captcha": true, "type": "click", "mode": "image", "targets": '
+                '[{"text": "图2", "point": [500, 500], "conf": 88}]}')
+        none = '{"captcha": false, "type": "none", "targets": []}'
+        clicks = []
+        # 第1轮：低把握 → 点换一组 → 重来；第2次识别高把握 → 正常点击；复核消失 → 成功
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", side_effect=[low, high, none]) as m, \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertTrue(ok, detail)
+        # 顺序：换一组(900,1000) → 目标(500,400)
+        self.assertEqual(clicks, [(900, 1000), (500, 400)])
+        self.assertEqual(m.call_count, 3)
+
+    def test_solve_captcha_refresh_budget_exhausted(self):
+        """一直没把握 → 换一组次数用尽后按最可能答案提交（不死循环、不空转）"""
+        import types
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+            "captcha_refresh_enabled": True,
+            "captcha_refresh_point": [900, 1000],
+            "captcha_refresh_max": 2,
+        }, _stop_event=None)
+        low = ('{"captcha": true, "type": "click", "mode": "image", "targets": '
+               '[{"text": "图2", "point": [500, 500], "conf": 20}]}')
+        none = '{"captcha": false, "type": "none", "targets": []}'
+        clicks = []
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+             mock.patch.object(avc, "_ask_model", side_effect=[low, low, low, none]), \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertTrue(ok, detail)
+        # 换一组 2 次（预算用尽）后，第 3 次就按答案点下去
+        self.assertEqual(clicks, [(900, 1000), (900, 1000), (500, 400)])
+
     def test_get_confirm_point(self):
         """选图后「确认」按钮坐标：未启用/坐标为 0 → None（不点）"""
         import ai_visual_captcha as avc
@@ -915,7 +1040,8 @@ class TestAiVisualCaptcha(unittest.TestCase):
         replies = ['{"captcha": true, "type": "click", "targets": [{"point": [500, 500]}]}',
                    '{"captcha": false, "type": "none", "targets": []}']
         clicks = []
-        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=replies), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
              mock.patch.object(avc, "_show_overlay"), \
@@ -947,7 +1073,8 @@ class TestAiVisualCaptcha(unittest.TestCase):
                    '{"text": "图A", "point": [300, 300]}, {"text": "图B", "point": [400, 400]}]}',
                    '{"captcha": false, "type": "none", "targets": []}']
         clicks = []
-        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=replies), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
              mock.patch.object(avc, "_show_overlay"), \
@@ -974,7 +1101,8 @@ class TestAiVisualCaptcha(unittest.TestCase):
         }, _stop_event=None)
         reply = '{"captcha": true, "type": "click", "targets": [{"point": [500, 500]}]}'
         clicks = []
-        with mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
+        with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=reply), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
              mock.patch.object(avc, "_show_overlay"), \

@@ -1005,8 +1005,11 @@ class SettingsWindow:
                   style='SettingsSmall.TLabel').pack(anchor='w', pady=(0, 4))
 
         self._cap_refresh_enabled_var = tk.BooleanVar(value=s.get("captcha_refresh_enabled", False))
-        ttk.Checkbutton(frame_fallback, text="多次不过自动点刷新重试", variable=self._cap_refresh_enabled_var,
+        ttk.Checkbutton(frame_fallback, text="验证不过 / 没把握时点「刷新·换一组」重来",
+                        variable=self._cap_refresh_enabled_var,
                         style='Settings.TCheckbutton').pack(anchor='w')
+        ttk.Label(frame_fallback, text="选图类验证码的「换一组 / 刷新」按钮坐标（填了才生效）",
+                  style='SettingsSmall.TLabel').pack(anchor='w', pady=(0, 2))
         _rrow = ttk.Frame(frame_fallback, style='SettingsInner.TFrame'); _rrow.pack(fill=tk.X)
         ttk.Label(_rrow, text="刷新坐标：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
         _rp = s.get("captcha_refresh_point", [0, 0]) or [0, 0]

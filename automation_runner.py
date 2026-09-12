@@ -73,9 +73,14 @@ def _recognize_asset(app, asset_region):
     try:
         import numpy as np
         import re
-        screenshot = pyautogui.screenshot(region=(x, y, w, h))
-        img_array = np.array(screenshot)
-        screenshot.close()
+        # 资产区域若被日志遮罩盖住，OCR 会把遮罩上的日志当成资产数字 → 先让遮罩避让
+        _avoid_token = utils._avoid_overlay_for_region(x, y, w, h)
+        try:
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
+            img_array = np.array(screenshot)
+            screenshot.close()
+        finally:
+            utils._restore_overlay_after_region(_avoid_token)
 
         if _ocr_engine is None:
             _ocr_engine = RapidOCR()
