@@ -66,9 +66,16 @@ TILE_SNAP_RATIO = 0.75
 LOW_CONFIDENCE = 60
 
 # 第二轮（把没选中的图块放大单独复查）的采纳线：实测「真有的那张」模型给 85~92 分，
-# 「看着像其实是陷阱的那张」只给 35~70 分，75 分能干净地分开
-TILE_VERIFY_CONF = 75
-TILE_VERIFY_SCALE = 2.6
+# 「看着像其实是陷阱的那张」给 55~80 分——线下定 85（75→80→85 逐次收紧，每次都是被陷阱图更高的一次分数顶上去的）
+TILE_VERIFY_CONF = 85
+# 第二轮每个图块放大到的目标宽度（像素）：太小看不清，太大只会被接口再压回去
+TILE_VERIFY_TILE_W = 460
+
+# 发给模型前对截图做放大+锐化：识别区域裁剪图常常只有几百像素宽，格子里的细节
+# 到了模型那边被压得更小。实测同一张图，放大 2 倍 + 一次非锐化掩蔽后，
+# 之前连续 3 次都漏掉的那一格被正确认出来了；全屏截图不放大（接口也会压缩，白费流量）
+ENHANCE_TARGET_SIDE = 1600
+ENHANCE_MAX_SCALE = 2.0
 # 第二轮一次最多复查几张：太多就退回成「和第一轮一样的整图」，失去放大优势
 TILE_VERIFY_MAX = 4
 
@@ -536,7 +543,24 @@ def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO)
             "space": space, "mode": mode, "caption": caption}
 
 
-def build_tile_sheet(bgr, tiles, idxs, scale=TILE_VERIFY_SCALE):
+def _enhance_for_model(bgr):
+    """发给模型前放大 + 锐化（非锐化掩蔽）。小图才放大，全屏截图原样返回"""
+    try:
+        h, w = bgr.shape[:2]
+        long_side = max(h, w)
+        if long_side >= ENHANCE_TARGET_SIDE:
+            return bgr
+        scale = min(ENHANCE_MAX_SCALE, ENHANCE_TARGET_SIDE / float(long_side))
+        if scale <= 1.05:
+            return bgr
+        up = cv2.resize(bgr, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
+        blur = cv2.GaussianBlur(up, (0, 0), 2.0)
+        return cv2.addWeighted(up, 1.6, blur, -0.6, 0)
+    except Exception:
+        return bgr
+
+
+def build_tile_sheet(bgr, tiles, idxs, scale=None):
     """把指定的几个图块放大后横向拼成一张图（每块上方标 NO.x），用于第二轮单独复查。
 
     为什么有效：一次看 6 格 + 题目文字时，模型分给每格的像素很少；
@@ -551,7 +575,9 @@ def build_tile_sheet(bgr, tiles, idxs, scale=TILE_VERIFY_SCALE):
             t = bgr[y:y + h, x:x + w]
             if t is None or t.size == 0:
                 continue
-            t = cv2.resize(t, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            # 每块放大到目标宽度（按块的实际宽度算，不受截图是否已被放大影响）
+            sc = scale if scale else max(1.0, min(3.0, TILE_VERIFY_TILE_W / float(max(1, w))))
+            t = cv2.resize(t, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC)
             t = cv2.copyMakeBorder(t, 34, 6, 6, 6, cv2.BORDER_CONSTANT, value=(255, 255, 255))
             cv2.putText(t, f"NO.{i}", (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
             cells.append(t)
@@ -587,7 +613,7 @@ def _verify_tiles_second_pass(base_url, api_key, model, bgr, tiles, idxs, captio
     """第二轮复查：把 idxs 这些图块放大拼一张图单独问，返回「确实符合」的编号列表。
 
     第一轮一次看 6 格 + 题目文字时，每格分到的像素太少，容易漏掉不太明显的那张；
-    只发 2~4 格并放大 2.6 倍后模型才看得清。实测「真的那张」给 85~92 分、
+    只发 2~4 格并放大到每块约 460px 后模型才看得清。实测「真的那张」给 85~92 分、
     「看着像其实是陷阱那张」只给 35~70 分，用 TILE_VERIFY_CONF 卡住就能分开。"""
     if not idxs:
         return []
@@ -600,7 +626,7 @@ def _verify_tiles_second_pass(base_url, api_key, model, bgr, tiles, idxs, captio
         image_b64, mime, w, h = _capture_screen_jpeg(bgr=sheet)
         if not image_b64:
             return []
-        print(f"🔬 第二轮复查未选中的 {len(idxs)} 张图（放大 {TILE_VERIFY_SCALE} 倍单独看）...")
+        print(f"🔬 第二轮复查未选中的 {len(idxs)} 张图（每张放大到约 {TILE_VERIFY_TILE_W}px 单独看）...")
         content = _ask_model(base_url, api_key, model, image_b64,
                              _build_tile_verify_prompt(caption))
         data = _extract_json(content)
@@ -680,6 +706,13 @@ def detect_image_tiles(bgr, min_side=60, max_tiles=12):
             if w / float(h) > 4 or h / float(w) > 4:
                 continue
             tiles.append((int(x), int(y), int(w), int(h)))
+        if not tiles:
+            return []
+        # 去掉明显偏小的块：放大后「确定」按钮之类的 UI 元素也会被当成图块，
+        # 留着会白占第二轮的复查名额（真图块彼此尺寸接近，取面积中位数的一半做门槛）
+        areas = sorted(t[2] * t[3] for t in tiles)
+        med = areas[len(areas) // 2]
+        tiles = [t for t in tiles if t[2] * t[3] >= med * 0.5]
         if not tiles:
             return []
         # 按行聚类（行高容差 = 平均高度 × 0.6）
@@ -1072,7 +1105,7 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
             w = h = 0
             refresh_left = 0 if verify_only else refresh_budget
             for _try in range(COORD_RETRIES + 1 + refresh_budget):
-                bgr = _grab_bgr(region)
+                bgr = _enhance_for_model(_grab_bgr(region))   # 放大+锐化后再发给模型
                 image_b64, mime, w, h = _capture_screen_jpeg(region, bgr=bgr)
                 if not image_b64:
                     return False, "截图失败"
@@ -1145,8 +1178,10 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                                 base_url, api_key, model, bgr, tiles, rest,
                                 parsed.get("caption"), stop_event)
                             for _i in _added:
-                                x, y, w, h = tiles[_i - 1]
-                                parsed["points"].append((x + w // 2, y + h // 2))
+                                # 注意别用 w/h 当变量名：那是外层截图尺寸，被覆盖会让
+                                # 后面的换算和标注图全错（踩过一次）
+                                _tx, _ty, _tw, _th = tiles[_i - 1]
+                                parsed["points"].append((_tx + _tw // 2, _ty + _th // 2))
                                 parsed["labels"].append(f"第{_i}格（第二轮补上）")
                                 parsed["confs"].append(TILE_VERIFY_CONF)
                 if parsed["status"] != "invalid":

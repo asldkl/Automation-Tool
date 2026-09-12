@@ -814,6 +814,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         none = '{"captcha": false, "type": "none", "targets": []}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[empty, empty, good, none]) as m, \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -827,6 +828,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(m.call_count, 4)      # 空答复重问了 2 次后才拿到坐标
         # 一直拿不到坐标 → 重试耗尽后仍判失败（不会死循环）
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=empty), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -856,6 +858,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         reply = '{"captcha": true, "type": "click", "mode": "image", "targets": [%s]}' % many
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=reply), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -970,6 +973,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         p3 = '{"captcha": false, "type": "none", "targets": []}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=img), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 526, 594)), \
              mock.patch.object(avc, "_ask_model", side_effect=[p1, p2, p3]) as m, \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1008,6 +1012,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         clicks = []
         # 第1轮：低把握 → 点换一组 → 重来；第2次识别高把握 → 正常点击；复核消失 → 成功
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[low, high, none]) as m, \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1042,6 +1047,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         none = '{"captcha": false, "type": "none", "targets": []}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=[low, low, low, none]), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1087,6 +1093,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
                    '{"captcha": false, "type": "none", "targets": []}']
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=replies), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1120,6 +1127,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
                    '{"captcha": false, "type": "none", "targets": []}']
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", side_effect=replies), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
@@ -1148,6 +1156,7 @@ class TestAiVisualCaptcha(unittest.TestCase):
         reply = '{"captcha": true, "type": "click", "targets": [{"point": [500, 500]}]}'
         clicks = []
         with mock.patch.object(avc, "_grab_bgr", return_value=None), \
+             mock.patch.object(avc, "_enhance_for_model", side_effect=lambda x: x), \
              mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 1000, 800)), \
              mock.patch.object(avc, "_ask_model", return_value=reply), \
              mock.patch.object(avc, "_hide_overlay", return_value=False), \
