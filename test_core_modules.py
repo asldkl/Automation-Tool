@@ -938,6 +938,52 @@ class TestAiVisualCaptcha(unittest.TestCase):
         self.assertEqual(same, [(12, 34)])
         self.assertEqual(rej2, 0)
 
+    def test_solve_captcha_second_pass_adds_missed_tile(self):
+        """第一轮漏掉的那张图：第二轮放大复查后按「has 且 conf≥75」补进来（用户实测的漏判场景）"""
+        import types
+        import unittest.mock as mock
+        import numpy as np
+        import ai_visual_captcha as avc
+
+        # 造一张 3 列 2 行、白底彩块的验证码图（和真实布局同构）
+        img = np.full((594, 526, 3), 255, np.uint8)
+        for r in range(2):
+            for c in range(3):
+                x, y, w, h = 29 + c * 154, 202 + r * 156, 152, 154
+                img[y:y + h, x:x + w] = (60 + r * 40, 120, 200)
+        app = types.SimpleNamespace(settings={
+            "ai_visual_captcha_enabled": True,
+            "ai_visual_captcha_base_url": "https://example.com",
+            "ai_visual_captcha_api_key": "k",
+            "ai_visual_captcha_model": "m",
+            "ai_visual_captcha_max_rounds": 1,
+        }, _stop_event=None)
+        # 第一轮只选中 图3/5/6（漏了图2）；第二轮对 图1/2/4 复查 → 图2 高分采纳、图4 低分拒绝
+        p1 = ('{"captcha": true, "type": "click", "mode": "image", '
+              '"caption": "选择所有包含文字：\\"川\\"的图片", "targets": ['
+              '{"text": "图3", "point": [789, 470], "conf": 90}, '
+              '{"text": "图5", "point": [494, 731], "conf": 88}, '
+              '{"text": "图6", "point": [789, 731], "conf": 86}]}')
+        p2 = ('{"results": [{"no": 1, "has": false, "conf": 10, "why": "没有"}, '
+              '{"no": 2, "has": true, "conf": 92, "why": "山脊三道竖纹"}, '
+              '{"no": 4, "has": true, "conf": 68, "why": "倒影有点像但不够"}]}')
+        p3 = '{"captcha": false, "type": "none", "targets": []}'
+        clicks = []
+        with mock.patch.object(avc, "_grab_bgr", return_value=img), \
+             mock.patch.object(avc, "_capture_screen_jpeg", return_value=("b64", "jpeg", 526, 594)), \
+             mock.patch.object(avc, "_ask_model", side_effect=[p1, p2, p3]) as m, \
+             mock.patch.object(avc, "_hide_overlay", return_value=False), \
+             mock.patch.object(avc, "_show_overlay"), \
+             mock.patch.object(avc, "save_debug_annotation"), \
+             mock.patch.object(avc, "_click_screen_point", side_effect=lambda x, y: clicks.append((x, y))), \
+             mock.patch.object(avc.time, "sleep"):
+            ok, detail = avc.solve_captcha(app, force=True)
+        self.assertTrue(ok, detail)
+        centers = [(29 + c * 154 + 76, 202 + r * 156 + 77) for r in range(2) for c in range(3)]
+        self.assertIn(centers[1], clicks)          # 图2（第二轮补上的）被点了
+        self.assertNotIn(centers[3], clicks)       # 图4（低分）没被点
+        self.assertEqual(m.call_count, 3)          # 第一轮 + 第二轮 + 复核轮
+
     def test_solve_captcha_refreshes_when_low_confidence(self):
         """选图类「没把握」（conf 低于阈值）→ 不硬提交，点「换一组」换批图重来"""
         import types

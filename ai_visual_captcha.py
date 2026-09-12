@@ -65,6 +65,13 @@ TILE_SNAP_RATIO = 0.75
 # 若配置了刷新（换一组）坐标就换一批图重来，而不是硬提交一个大概率错的答案
 LOW_CONFIDENCE = 60
 
+# 第二轮（把没选中的图块放大单独复查）的采纳线：实测「真有的那张」模型给 85~92 分，
+# 「看着像其实是陷阱的那张」只给 35~70 分，75 分能干净地分开
+TILE_VERIFY_CONF = 75
+TILE_VERIFY_SCALE = 2.6
+# 第二轮一次最多复查几张：太多就退回成「和第一轮一样的整图」，失去放大优势
+TILE_VERIFY_MAX = 4
+
 # 供应商预设：切换时自动回填 base_url / model；CUSTOM 只用用户手填的值
 CUSTOM_PROVIDER = "自定义"
 PROVIDER_PRESETS = [
@@ -232,6 +239,7 @@ def _build_prompt(width, height):
         f"分辨率 {width}x{height} 像素。判断图中是否出现验证码（点选/图片验证）。\n"
         '只输出严格JSON，不要输出任何其他文字：\n'
         '{"captcha": true/false, "type": "click"/"slider"/"none", "mode": "text"/"image", '
+        '"caption": "题面文字原文（如 包含文字：\\"川\\" / 海浪）", '
         '"targets": [{"text": "目标描述", "bbox": [x1,y1,x2,y2], "point": [x,y], "conf": 把握度0-100}]}\n'
         "【第一步：读懂题目文字，判断题型】（mode 必须填对，两种题型完全不同）\n"
         "- mode=text（文字点选）：题目直接给出要点选的字/词，"
@@ -487,20 +495,23 @@ def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO)
     data = _extract_json(text)
     if not isinstance(data, dict):
         return {"status": "invalid", "points": [], "labels": [], "space": coord_space,
-                "mode": ""}
+                "mode": "", "caption": ""}
     captcha = bool(data.get("captcha"))
     ctype = str(data.get("type") or "").strip().lower()
     mode = str(data.get("mode") or "").strip().lower()
     if mode not in ("text", "image"):
         mode = ""
+    caption = str(data.get("caption") or "").strip()[:80]
     targets = data.get("targets")
     if not isinstance(targets, list):
         targets = []
     space = _detect_coord_space(targets, coord_space)
     if not captcha or ctype in ("none", "no", "false"):
-        return {"status": "none", "points": [], "labels": [], "space": space, "mode": mode}
+        return {"status": "none", "points": [], "labels": [], "space": space, "mode": mode,
+                "caption": caption}
     if ctype in ("slider", "slide", "drag", "puzzle"):
-        return {"status": "slider", "points": [], "labels": [], "space": space, "mode": mode}
+        return {"status": "slider", "points": [], "labels": [], "space": space, "mode": mode,
+                "caption": caption}
     points = []
     labels = []
     confs = []
@@ -520,9 +531,105 @@ def parse_model_response(text, screen_w, screen_h, coord_space=COORD_SPACE_AUTO)
         confs.append(conf)
     if not points:
         return {"status": "invalid", "points": [], "labels": [], "confs": [],
-                "space": space, "mode": mode}
+                "space": space, "mode": mode, "caption": caption}
     return {"status": "click", "points": points, "labels": labels, "confs": confs,
-            "space": space, "mode": mode}
+            "space": space, "mode": mode, "caption": caption}
+
+
+def build_tile_sheet(bgr, tiles, idxs, scale=TILE_VERIFY_SCALE):
+    """把指定的几个图块放大后横向拼成一张图（每块上方标 NO.x），用于第二轮单独复查。
+
+    为什么有效：一次看 6 格 + 题目文字时，模型分给每格的像素很少；
+    只给它 2~3 格并放大 2.6 倍后，「字藏在哪儿」这种细节才看得清。
+    返回拼好的 BGR 图；失败返回 None"""
+    try:
+        cells = []
+        for i in idxs:
+            if i < 1 or i > len(tiles):
+                continue
+            x, y, w, h = tiles[i - 1]
+            t = bgr[y:y + h, x:x + w]
+            if t is None or t.size == 0:
+                continue
+            t = cv2.resize(t, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            t = cv2.copyMakeBorder(t, 34, 6, 6, 6, cv2.BORDER_CONSTANT, value=(255, 255, 255))
+            cv2.putText(t, f"NO.{i}", (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+            cells.append(t)
+        if not cells:
+            return None
+        hmax = max(c.shape[0] for c in cells)
+        cells = [cv2.copyMakeBorder(c, 0, hmax - c.shape[0], 0, 0,
+                                    cv2.BORDER_CONSTANT, value=(255, 255, 255))
+                 for c in cells]
+        return np.hstack(cells)
+    except Exception:
+        return None
+
+
+def _build_tile_verify_prompt(caption):
+    """第二轮的提示词：题目文字由第一轮读出后带进来（第二轮只发图块，看不到题目）"""
+    cap = str(caption or "").strip() or "（题目描述见第一轮）"
+    return (
+        "这是同一道验证码里挑出来的几张图片（每张上方标了编号 NO.x）。\n"
+        f"题目原文是：{cap}\n"
+        "请逐张判断：这张图是否【符合题目要求】。\n"
+        "判定标准：必须能指出符合的理由、而且证据要对得上（例如文字题要能说清这个字由画面"
+        "中的什么构成、笔画的数量与方向都对得上）；只是「有几条纹看着像」不算；"
+        "倒影、雪线、树列、河道都可能构成笔画，不要只盯着山坡条纹一种特征。\n"
+        "只输出严格JSON："
+        '{"results": [{"no": 2, "has": true/false, "conf": 0-100, "why": "简短理由"}]}\n'
+        "conf 是你有多确定：拿不准就给低分（如 30、50），不要为了凑答案给高分。"
+    )
+
+
+def _verify_tiles_second_pass(base_url, api_key, model, bgr, tiles, idxs, caption,
+                              stop_event=None):
+    """第二轮复查：把 idxs 这些图块放大拼一张图单独问，返回「确实符合」的编号列表。
+
+    第一轮一次看 6 格 + 题目文字时，每格分到的像素太少，容易漏掉不太明显的那张；
+    只发 2~4 格并放大 2.6 倍后模型才看得清。实测「真的那张」给 85~92 分、
+    「看着像其实是陷阱那张」只给 35~70 分，用 TILE_VERIFY_CONF 卡住就能分开。"""
+    if not idxs:
+        return []
+    if stop_event is not None and stop_event.is_set():
+        return []
+    sheet = build_tile_sheet(bgr, tiles, idxs)
+    if sheet is None:
+        return []
+    try:
+        image_b64, mime, w, h = _capture_screen_jpeg(bgr=sheet)
+        if not image_b64:
+            return []
+        print(f"🔬 第二轮复查未选中的 {len(idxs)} 张图（放大 {TILE_VERIFY_SCALE} 倍单独看）...")
+        content = _ask_model(base_url, api_key, model, image_b64,
+                             _build_tile_verify_prompt(caption))
+        data = _extract_json(content)
+    except Exception as e:
+        print(f"⚠️ 第二轮复查失败（不影响第一轮结果）：{e}")
+        return []
+    if not isinstance(data, dict):
+        return []
+    added = []
+    for r in (data.get("results") or []):
+        if not isinstance(r, dict):
+            continue
+        try:
+            no = int(r.get("no"))
+            conf = float(r.get("conf") or 0)
+        except (TypeError, ValueError):
+            continue
+        has = bool(r.get("has"))
+        why = str(r.get("why") or "")[:60]
+        if no not in idxs:
+            continue
+        if has and conf >= TILE_VERIFY_CONF:
+            added.append(no)
+            print(f"   ✅ 第{no}格 判定符合（把握 {int(conf)}）：{why}")
+        else:
+            print(f"   ✖ 第{no}格 不采纳（has={has} 把握 {int(conf)}）：{why}")
+    if added:
+        print(f"   → 补上第 {'、'.join(str(i) for i in added)} 格")
+    return added
 
 
 def _grab_bgr(region=None):
@@ -1021,6 +1128,27 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                         continue
                     if no_target:
                         return False, "选图类坐标全部对不上图块"
+                    # 第二轮：第一轮经常漏掉「不太明显的那张」（实测文字题 4 张只找到 3 张）。
+                    # 把没选中的图块放大后单独发一次，只让模型逐张判「是不是」，命中线索后再补进答案。
+                    # 用我们自己的图块中心当坐标，不依赖模型再报坐标。
+                    if (not verify_only and tiles
+                            and 1 <= len(tiles) - len(parsed["points"]) <= TILE_VERIFY_MAX):
+                        sel_idx = set()
+                        for (px, py) in parsed["points"]:
+                            for k, (x, y, w, h) in enumerate(tiles):
+                                if x <= px <= x + w and y <= py <= y + h:
+                                    sel_idx.add(k + 1)
+                                    break
+                        rest = [i for i in range(1, len(tiles) + 1) if i not in sel_idx]
+                        if rest:
+                            _added = _verify_tiles_second_pass(
+                                base_url, api_key, model, bgr, tiles, rest,
+                                parsed.get("caption"), stop_event)
+                            for _i in _added:
+                                x, y, w, h = tiles[_i - 1]
+                                parsed["points"].append((x + w // 2, y + h // 2))
+                                parsed["labels"].append(f"第{_i}格（第二轮补上）")
+                                parsed["confs"].append(TILE_VERIFY_CONF)
                 if parsed["status"] != "invalid":
                     break
                 if _try < COORD_RETRIES:
