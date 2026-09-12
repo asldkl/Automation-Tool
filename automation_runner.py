@@ -761,6 +761,10 @@ def _login_account(app, account_name, i, total, processed_accounts):
             except Exception:
                 _wait_sec = 60
             print(f"⏳ 请手动完成验证（最长等待 {_wait_sec} 秒，完成后自动继续）...")
+            # 托盘气泡：需要你动手了（这类事件最该提醒）
+            app._tray_notify("三角洲行动自动化",
+                             f"🔐 账号 {account_name} 需要人工验证，请尽快处理"
+                             f"（最长等待 {_wait_sec} 秒）")
             if _wait_manual_verify(app, _wait_sec):
                 print("✅ 人工验证已通过（识别到三角洲图标）")
                 return True
@@ -772,6 +776,9 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 pass
             app._last_account_error = "未验证通过（人工验证超时）"
             print("❌ 超时仍未通过验证，账号标记为「未验证通过」并跳过")
+            app._tray_notify("三角洲行动自动化",
+                             f"⌛ 账号 {account_name} 验证超时，已标记「未验证通过」并跳过"
+                             f"（右键「恢复账号」可解除）")
             try:
                 processed_accounts.append(f"{account_name} (未验证通过)")
             except Exception:
@@ -1211,6 +1218,7 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         print(f"⏹️ 账号 {account_name} 被用户中断，跳过冷却记录")
         processed_accounts.append(f"{account_name} (中断)")
         server_client.update_account_status(app, account_name, "idle")
+        app._tray_notify("三角洲行动自动化", f"账号 {account_name} 已中断")
     elif account_failed:
         app.run_stats["fail"] += 1
         processed_accounts.append(f"{account_name} (失败)")
@@ -1225,11 +1233,17 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         if not app._user_stopped_cooldown:
             error_msg = getattr(app, '_last_account_error', '未知错误')
             email_notifier.send_account_failure_email(app, account_name, next_run_str, processed_accounts, error_msg)
+        # 托盘气泡：哪个账号失败了、为什么（只提示，不影响流程）
+        _err_brief = str(getattr(app, '_last_account_error', '') or '未知错误')[:60]
+        app._tray_notify("三角洲行动自动化", f"❌ 账号 {account_name} 失败：{_err_brief}")
         # 连续失败计数（跨轮累计）：达到 2 次自动暂停该账号（标黄，不弹窗）
         app._consecutive_failures[account_name] = app._consecutive_failures.get(account_name, 0) + 1
         if app._consecutive_failures[account_name] >= 2:
             print(f"⏸️ 账号 {account_name} 连续失败 {app._consecutive_failures[account_name]} 次，自动暂停")
             processed_accounts[-1] = f"{account_name} (失败-自动暂停)"
+            app._tray_notify("三角洲行动自动化",
+                             f"⏸️ 账号 {account_name} 连续失败 "
+                             f"{app._consecutive_failures[account_name]} 次，已自动暂停")
             try:
                 cooldown_manager.set_account_paused(account_name, True)
                 cooldown_manager.set_auto_paused(account_name, True)
@@ -1551,6 +1565,9 @@ def run_script_main(app):
 
             acc_text = f"第 {i+1}/{total} 个账号"
             app.root.after(0, app.update_ui, False, acc_text, file_name)
+            # 托盘气泡：正在运行哪个账号（只提示，不影响流程）
+            app._tray_notify("三角洲行动自动化",
+                             f"正在运行账号：{file_name}（{i + 1}/{total}）")
             try:
                 app._set_overlay_status(i + 1, file_name)  # 更新日志遮罩顶行
             except Exception:

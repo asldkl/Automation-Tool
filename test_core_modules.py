@@ -381,6 +381,84 @@ class TestAssetValueParsing(unittest.TestCase):
 
 
 # ==================== 未售累加 / 未验证状态 ====================
+class TestSellFlowOrder(unittest.TestCase):
+    """售卖流程：上架后先点「最大数量」再降价（不再有出售数量/补卖多轮）"""
+
+    def test_click_order_includes_max_quantity(self):
+        import types
+        import unittest.mock as mock
+        import automation, utils, config
+
+        # 一件物品 + 降价 1 次；模板文件都造出来（Max_Quantity 存在才会走那一步）
+        item_path = os.path.join(TEST_DIR, "_sell_item_A.png")
+        with open(item_path, "wb") as f:
+            f.write(b"PNG")
+        mq_path = os.path.join(TEST_DIR, "_sell_max_qty.png")
+        with open(mq_path, "wb") as f:
+            f.write(b"PNG")
+
+        order = []
+
+        def fake_click(run_insert, var_name, img_path, timeout=15, **kw):
+            order.append(var_name)
+            return True
+
+        settings = {"enable_sell_after_run": True, "sell_confidence": 0.55,
+                    "sell_time_enabled": False}
+        with mock.patch.object(config, "load_sell_items_meta",
+                               return_value={"items": [{"filename": "_sell_item_A.png",
+                                                        "name": "测试物品",
+                                                        "discount_times": 1}]}), \
+             mock.patch.object(config, "SELL_ITEMS_DIR", TEST_DIR), \
+             mock.patch.object(config, "Max_Quantity", mq_path), \
+             mock.patch.object(config, "Warehouse", "wh.png"), \
+             mock.patch.object(utils, "clear_template_cache"), \
+             mock.patch.object(utils, "find_and_click", return_value=True), \
+             mock.patch.object(utils, "human_pause"), \
+             mock.patch.object(utils, "human_move_away"), \
+             mock.patch.object(automation, "_click", side_effect=fake_click), \
+             mock.patch.object(automation.time, "sleep"), \
+             mock.patch("pyautogui.click"):
+            ok, stats = automation.sell_operations(settings, types.SimpleNamespace(
+                is_set=lambda: False), lambda t: None)
+        self.assertTrue(ok)
+        self.assertEqual(order, ["Warehouse", "Sell", "List_Item",
+                                 "Max_Quantity", "Discount", "Confirm_Listing"])
+        self.assertEqual(stats["sold"], 1)
+        self.assertEqual(stats["total"], 1)
+
+    def test_max_quantity_template_missing_is_optional(self):
+        """没上传「最大数量」模板时跳过该步，不影响售卖（兼容旧模板包）"""
+        import types
+        import unittest.mock as mock
+        import automation, utils, config
+        with open(os.path.join(TEST_DIR, "_sell_item_B.png"), "wb") as f:
+            f.write(b"PNG")
+        order = []
+
+        def fake_click(run_insert, var_name, img_path, timeout=15, **kw):
+            order.append(var_name)
+            return True
+
+        with mock.patch.object(config, "load_sell_items_meta",
+                               return_value={"items": [{"filename": "_sell_item_B.png",
+                                                        "name": "测试物品B",
+                                                        "discount_times": 0}]}), \
+             mock.patch.object(config, "SELL_ITEMS_DIR", TEST_DIR), \
+             mock.patch.object(config, "Max_Quantity", os.path.join(TEST_DIR, "_不存在.png")), \
+             mock.patch.object(utils, "clear_template_cache"), \
+             mock.patch.object(utils, "find_and_click", return_value=True), \
+             mock.patch.object(utils, "human_pause"), \
+             mock.patch.object(utils, "human_move_away"), \
+             mock.patch.object(automation, "_click", side_effect=fake_click), \
+             mock.patch.object(automation.time, "sleep"):
+            ok, stats = automation.sell_operations({}, types.SimpleNamespace(
+                is_set=lambda: False), lambda t: None)
+        self.assertTrue(ok)
+        self.assertEqual(order, ["Warehouse", "Sell", "List_Item", "Confirm_Listing"])
+        self.assertNotIn("Max_Quantity", order)
+
+
 class TestSellPendingAndUnverified(unittest.TestCase):
     """测试 sell_pending 累加清零、模板点击坐标、未验证状态=跳过"""
 

@@ -122,23 +122,18 @@ def _in_sell_window(settings):
         return True
 
 
-def sell_operations(settings, stop_event, set_operation, run_insert=None, extra_rounds=0):
+def sell_operations(settings, stop_event, set_operation, run_insert=None):
     """
-    一键出售流程：打开仓库，遍历售卖物品执行出售
+    一键出售流程：打开仓库，遍历售卖物品执行出售（每件物品走一遍）
     run_insert: 插入步骤执行回调 ri(var_name, timing)
-    extra_rounds: 之前因不在售卖时段被跳过的轮次（补卖：每件物品数量×(1+extra_rounds)）
     返回 (success: bool, stats: dict)
     stats: {"total": N, "sold": N, "not_found": N, "failed": N}
-    """
+
+    注：上架后会点一下「最大数量」按钮（模板 Max_Quantity），一次就把数量挂满，
+    所以不再有「出售数量」配置，也不再有补卖轮数。"""
     sell_stats = {"total": 0, "sold": 0, "not_found": 0, "failed": 0}
     print("\n--- 一键出售 ---")
     set_operation("一键出售")
-    try:
-        extra_rounds = max(0, int(extra_rounds or 0))
-    except Exception:
-        extra_rounds = 0
-    if extra_rounds > 0:
-        print(f"🔁 检测到之前有 {extra_rounds} 次未售，本次补卖（每件物品多卖 {extra_rounds} 轮）")
 
     # 未配置任何售卖物品时完全跳过售卖（不进入仓库）
     items_meta = config.load_sell_items_meta()
@@ -180,58 +175,59 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None, extra_
 
         item_name = item.get("name", item_filename)
         discount_times = item.get("discount_times", 0)
-        quantity = item.get("quantity", 1) * (1 + extra_rounds)   # 补卖：把之前跳过的轮次补上
 
-        print(f"📦 出售物品：{item_name}（数量：{quantity}，降价：{discount_times}次）")
-        sell_stats["total"] += quantity
+        print(f"📦 出售物品：{item_name}（降价：{discount_times}次）")
+        sell_stats["total"] += 1
 
-        for qty in range(quantity):
-            if stop_event.is_set():
-                return False, sell_stats
+        if stop_event.is_set():
+            return False, sell_stats
 
-            if quantity > 1:
-                print(f"  📦 第 {qty + 1}/{quantity} 次出售")
+        # 用户上传的出售物品图片无对应 OCR 文本，直接图像匹配
+        if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
+            print(f"⚠️ 未找到物品 {item_name}，跳过")
+            sell_stats["not_found"] += 1
+            continue
+        utils.human_pause()
 
-            # 用户上传的出售物品图片无对应 OCR 文本，直接图像匹配
-            if not utils.find_and_click(item_path, timeout=10, confidence=sell_confidence):
-                print(f"⚠️ 未找到物品 {item_name}，跳过")
-                sell_stats["not_found"] += 1
-                break
+        if _click(run_insert, "Sell", config.Sell, 10) is not True:
+            print(f"❌ 未找到出售按钮")
+            sell_stats["failed"] += 1
+            continue
+        utils.human_pause()
+
+        if _click(run_insert, "List_Item", config.List_Item, 10) is not True:
+            print(f"❌ 未找到上架按钮")
+            sell_stats["failed"] += 1
+            continue
+        # 鼠标随机移动到距离当前位置 300 像素以上处（避免固定在左上角的机械化特征）
+        utils.human_move_away(min_dist=300)
+        utils.human_pause()
+
+        # 上架后、降价前：点一下「最大数量」，一次把数量挂满（不用再配「出售数量」）。
+        # 模板没上传时跳过本步（兼容旧流程）；上传了但没找到只告警，不算失败
+        if os.path.exists(config.Max_Quantity):
+            if _click(run_insert, "Max_Quantity", config.Max_Quantity, 5) is not True:
+                print("  ⚠️ 未找到「最大数量」按钮，本次按界面默认数量上架")
+            else:
+                print("  🔢 已选择最大数量")
             utils.human_pause()
 
-            if _click(run_insert, "Sell", config.Sell, 10) is not True:
-                print(f"❌ 未找到出售按钮")
-                sell_stats["failed"] += 1
-                break
-            utils.human_pause()
-
-            if _click(run_insert, "List_Item", config.List_Item, 10) is not True:
-                print(f"❌ 未找到上架按钮")
-                sell_stats["failed"] += 1
-                break
-            # 鼠标随机移动到距离当前位置 300 像素以上处（避免固定在左上角的机械化特征）
-            utils.human_move_away(min_dist=300)
-            utils.human_pause()
-
-            if discount_times > 0:
-                # 首次识别降价按钮并点击，鼠标停在按钮位置
-                if _click(run_insert, "Discount", config.Discount, 5) is True:
-                    print(f"📉 降价 1/{discount_times}")
+        if discount_times > 0:
+            # 首次识别降价按钮并点击，鼠标停在按钮位置
+            if _click(run_insert, "Discount", config.Discount, 5) is True:
+                print(f"📉 降价 1/{discount_times}")
+                time.sleep(0.3)
+                # 鼠标已在按钮上，原地继续点击剩余次数
+                for _ in range(1, discount_times):
+                    pyautogui.click()
                     time.sleep(0.3)
-                    # 鼠标已在按钮上，原地继续点击剩余次数
-                    for _ in range(1, discount_times):
-                        pyautogui.click()
-                        time.sleep(0.3)
 
-            if _click(run_insert, "Confirm_Listing", config.Confirm_Listing, 10) is not True:
-                print(f"❌ 未找到确认上架按钮")
-                sell_stats["failed"] += 1
-                break
-            time.sleep(1.5)
-            sell_stats["sold"] += 1
-            if quantity > 1:
-                print(f"  ✅ 第 {qty + 1}/{quantity} 次出售完成")
-
+        if _click(run_insert, "Confirm_Listing", config.Confirm_Listing, 10) is not True:
+            print(f"❌ 未找到确认上架按钮")
+            sell_stats["failed"] += 1
+            continue
+        time.sleep(1.5)
+        sell_stats["sold"] += 1
         print(f"✅ {item_name} 出售完成")
 
     print(f"✅ 一键出售完成：共 {sell_stats['total']} 件，"
@@ -413,30 +409,24 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         except Exception:
             _acc_key = account_name or ""
         if not _in_sell_window(settings):
-            # 不在售卖时段：跳过售卖（并跳过邮箱领取），累加未售次数待下次补卖
+            # 不在售卖时段：跳过售卖（并跳过邮箱领取）
             sell_skipped_by_time = True
             print("⏰ 不在售卖时间区间：本次跳过一键出售（邮箱领取也一并跳过）")
             try:
                 import sell_pending as _sp
                 if _acc_key:
                     _n = _sp.add_pending(_acc_key, 1)
-                    print(f"📦 账号 {_acc_key} 未售次数累加为 {_n}（进入售卖时段后会一起补卖）")
+                    print(f"📦 账号 {_acc_key} 未售次数累加为 {_n}（仅作记录：上架时会点「最大数量」，"
+                          f"进入售卖时段后一次就能挂满，不再补卖多轮）")
             except Exception as _e:
                 print(f"⚠️ 未售次数累加失败：{_e}")
         else:
-            _pend = 0
-            try:
-                import sell_pending as _sp
-                _pend = _sp.get_pending(_acc_key) if _acc_key else 0
-            except Exception:
-                _pend = 0
             _, sell_stats = sell_operations(settings, stop_event, set_operation,
-                                            run_insert=run_insert, extra_rounds=_pend)
-            if _acc_key and _pend > 0:
+                                            run_insert=run_insert)
+            if _acc_key:
                 try:
                     import sell_pending as _sp
                     _sp.clear_pending(_acc_key)
-                    print(f"✅ 账号 {_acc_key} 已补卖完毕，未售次数清零")
                 except Exception:
                     pass
             # 出售完成：关闭仓库回到主界面（若接下来走邮箱流程，其开头会再 esc，无需重复）

@@ -2029,17 +2029,15 @@ class SettingsWindow:
         list_frame = ttk.LabelFrame(parent, text="  售卖物品列表  ", style='SettingsCard.TLabelframe', padding=10)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
-        # Treeview
-        columns = ("name", "discount_times", "quantity", "filename")
+        # Treeview（「出售数量」已去掉：上架时会点「最大数量」一次挂满）
+        columns = ("name", "discount_times", "filename")
         self.sell_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=4)
         self.sell_tree.heading("name", text="名称")
         self.sell_tree.heading("discount_times", text="降价次数")
-        self.sell_tree.heading("quantity", text="出售数量")
         self.sell_tree.heading("filename", text="图片文件")
-        self.sell_tree.column("name", width=100)
-        self.sell_tree.column("discount_times", width=80, anchor="center")
-        self.sell_tree.column("quantity", width=80, anchor="center")
-        self.sell_tree.column("filename", width=90)
+        self.sell_tree.column("name", width=120)
+        self.sell_tree.column("discount_times", width=90, anchor="center")
+        self.sell_tree.column("filename", width=110)
 
         tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -2132,7 +2130,6 @@ class SettingsWindow:
             self.sell_tree.insert("", tk.END, values=(
                 item.get("name", ""),
                 item.get("discount_times", 0),
-                item.get("quantity", 1),
                 item.get("filename", "")
             ))
 
@@ -2164,8 +2161,7 @@ class SettingsWindow:
                 self._sell_items_meta.setdefault("items", []).append({
                     "filename": saved_name,
                     "name": os.path.splitext(saved_name)[0],
-                    "discount_times": 0,
-                    "quantity": 1
+                    "discount_times": 0
                 })
                 existing_filenames.add(saved_name)
                 added += 1
@@ -2231,8 +2227,8 @@ class SettingsWindow:
             return
 
         col_idx = int(column.replace("#", "")) - 1  # 0-based
-        # 只允许编辑 name(0), discount_times(1), quantity(2)
-        if col_idx > 2:
+        # 只允许编辑 name(0), discount_times(1)（图片文件列不可编辑）
+        if col_idx > 1:
             return
 
         item_idx = self.sell_tree.index(row_id)
@@ -2264,16 +2260,14 @@ class SettingsWindow:
             entry.bind("<Return>", _confirm_name)
             entry.bind("<FocusOut>", _confirm_name)
         else:
-            # 降价次数/出售数量 - Spinbox
-            from_ = 0 if col_idx == 1 else 1
-            to_ = 5 if col_idx == 1 else 99
-            spin = ttk.Spinbox(self.sell_tree, from_=from_, to=to_, width=5)
+            # 降价次数 - Spinbox
+            spin = ttk.Spinbox(self.sell_tree, from_=0, to=5, width=5)
             spin.delete(0, tk.END)
             spin.insert(0, current_val)
             spin.place(x=x, y=y, width=w, height=h)
             spin.focus_set()
 
-            field = "discount_times" if col_idx == 1 else "quantity"
+            field = "discount_times"
 
             def _confirm_spin(e=None):
                 try:

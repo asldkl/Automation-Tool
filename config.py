@@ -97,8 +97,7 @@ def load_sell_items_meta():
             existing_items.append({
                 "filename": filename,
                 "name": os.path.splitext(filename)[0],
-                "discount_times": 0,
-                "quantity": 1
+                "discount_times": 0
             })
             changed = True
 
@@ -108,6 +107,12 @@ def load_sell_items_meta():
     existing_items = [i for i in existing_items if i["filename"] in disk_set]
     if len(existing_items) != before_count:
         changed = True
+
+    # 清理已废弃的「出售数量」字段（现在上架时点一下「最大数量」就挂满，不再需要）
+    for i in existing_items:
+        if "quantity" in i:
+            i.pop("quantity", None)
+            changed = True
 
     meta["items"] = existing_items
 
@@ -423,6 +428,8 @@ Sell                = resource_path("picture/One_Click_Sell/Sell.png")
 List_Item           = resource_path("picture/One_Click_Sell/List.png")
 Discount            = resource_path("picture/One_Click_Sell/Discount.png")
 Confirm_Listing     = resource_path("picture/One_Click_Sell/Confirm Listing.png")
+# 上架后、降价前点一下「最大数量」按钮：一次就挂满数量，所以不再需要配置「出售数量」
+Max_Quantity        = resource_path("picture/One_Click_Sell/Max Quantity.png")
 
 Produce_TechCenter  = resource_path("picture/produce/produce_tech_center.png")
 Produce_ToolBench   = resource_path("picture/produce/produce_tool_bench.png")
@@ -507,6 +514,7 @@ TEMPLATE_CAPTURE_LIST = [
     ("Warehouse",           "picture/One_Click_Sell/Warehouse.png",       "仓库入口",     "在游戏主界面，截取「仓库」图标"),
     ("Sell",                "picture/One_Click_Sell/Sell.png",            "出售按钮",     "在物品详情界面，截取「出售」按钮"),
     ("List_Item",           "picture/One_Click_Sell/List.png",            "上架按钮",     "在出售界面，截取「上架」按钮"),
+    ("Max_Quantity",        "picture/One_Click_Sell/Max Quantity.png",    "最大数量按钮", "点完「上架」后、降价前，截取「最大数量」按钮（一次挂满，不用再配出售数量）"),
     ("Discount",            "picture/One_Click_Sell/Discount.png",        "降价按钮",     "在上架界面，截取「降价」按钮"),
     ("Confirm_Listing",     "picture/One_Click_Sell/Confirm Listing.png", "确认上架按钮", "在上架界面，截取「确认上架」按钮"),
 ]
