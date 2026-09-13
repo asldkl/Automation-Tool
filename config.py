@@ -246,6 +246,8 @@ DEFAULT_SETTINGS = {
     # 第③类（题目里带「包含文字」）自动识别通过率低，按约定不调 AI、直接等人工处理。
     # 想放开第③类走 AI：把这里清空即可
     "captcha_manual_keywords": "包含文字,含有文字,含文字",
+    # 命中第③类（图片文字选择）时，把画面存到日志目录的「日期/图片/」，用于收集训练样本
+    "captcha_type3_save_image": False,
     "captcha_region_enabled": False,            # 启用验证码识别区域（只截图区域内容，提升识别率）
     "captcha_region": [0, 0, 0, 0],             # 识别区域 [x, y, w, h]（滑块YOLO与AI视觉共用）
     "captcha_manual_wait_seconds": 60,          # 登录验证：等人工处理秒数（超时→账号标记「未验证通过」并跳过）

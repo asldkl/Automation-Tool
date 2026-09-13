@@ -1052,6 +1052,14 @@ class SettingsWindow:
         ttk.Label(adv_box, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击；"
                                 "转人工关键词命中则【直接等你手动处理、不调用 AI】（清空=关闭本规则）",
                   style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(4, 0))
+        # 命中第③类（图片文字选择）时存样本图，用于收集训练数据
+        self._cap_type3_save_var = tk.BooleanVar(value=s.get("captcha_type3_save_image", False))
+        ttk.Checkbutton(adv_box, text="命中「图片文字选择」时保存截图到日志（收集训练样本）",
+                        variable=self._cap_type3_save_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(6, 0))
+        ttk.Label(adv_box, text="开启后每次遇到这类验证码，会把画面（配了识别区域就存该区域）存到"
+                                "「目录及数据/日期/图片/文字选择验证_时间.png」，并附一份同名 .txt 记 OCR 文字",
+                  style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w')
 
         def _toggle_adv():
             if adv_var.get():
@@ -1490,6 +1498,7 @@ class SettingsWindow:
         target["captcha_slider_keywords"] = self._cap_slider_kw_var.get().strip()
         target["captcha_click_keywords"] = self._cap_click_kw_var.get().strip()
         target["captcha_manual_keywords"] = self._cap_manual_kw_var.get().strip()
+        target["captcha_type3_save_image"] = self._cap_type3_save_var.get()
         # 识别区域（仅当勾选启用时解析；格式非法则保持关闭）
         target["captcha_region_enabled"] = self._cap_region_enabled_var.get()
         try:

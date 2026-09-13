@@ -381,6 +381,166 @@ class TestAssetValueParsing(unittest.TestCase):
 
 
 # ==================== 未售累加 / 未验证状态 ====================
+class TestInterceptionSafety(unittest.TestCase):
+    """Interception 按键安全：不装过滤（不会吞键盘）+ 失败时补发抬起（不会卡 Shift）"""
+
+    def test_filter_mask_is_zero(self):
+        """只发送、不拦截：filter mask 必须是 0（装 KEY_ALL 过滤才会导致键盘假死）"""
+        src_path = os.path.join(os.path.dirname(__file__), "interception_keyboard.py")
+        with open(src_path, encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("_set_filter(ctx, _predicate_callback, 0)", src)
+        # 不允许出现任何非 0 的过滤掩码（0xFFFF / KEY_ALL 之类）
+        self.assertNotIn("0xFFFF", src)
+        self.assertNotIn("_set_filter(ctx, _predicate_callback, 1)", src)
+
+    def test_shift_released_when_send_fails_midway(self):
+        """shift 按下后发送失败 → 必须在 finally 里补发 shift_up（否则用户键盘看起来"失灵"）"""
+        import unittest.mock as mock
+        import interception_keyboard as ik
+        sent = []
+        # 第 1 次（shift down）成功，第 2 次（字母 down）失败
+        def fake_send(ctx, dev, stroke, n):
+            sent.append((stroke.code, stroke.state))
+            return 1 if len(sent) == 1 else 0
+        with mock.patch.object(ik, "_load_dll", return_value=True), \
+             mock.patch.object(ik, "_create_context", return_value=1234), \
+             mock.patch.object(ik, "_set_filter"), \
+             mock.patch.object(ik, "_destroy_context") as destroy, \
+             mock.patch.object(ik, "_find_keyboard_device", return_value=2), \
+             mock.patch.object(ik, "_is_capslock_on", return_value=False), \
+             mock.patch.object(ik, "_send", side_effect=fake_send), \
+             mock.patch.object(ik.time, "sleep"):
+            ok = ik._send_chars("Ab")       # 'A' 需要 shift
+        self.assertFalse(ok)
+        self.assertIn((ik._SHIFT_SCANCODE, ik.KEY_DOWN), sent)
+        self.assertIn((ik._SHIFT_SCANCODE, ik.KEY_UP), sent)   # 补发的抬起
+        destroy.assert_called_once()                            # 上下文一定释放
+
+    def test_context_destroyed_on_success(self):
+        import unittest.mock as mock
+        import interception_keyboard as ik
+        with mock.patch.object(ik, "_load_dll", return_value=True), \
+             mock.patch.object(ik, "_create_context", return_value=99), \
+             mock.patch.object(ik, "_set_filter"), \
+             mock.patch.object(ik, "_destroy_context") as destroy, \
+             mock.patch.object(ik, "_find_keyboard_device", return_value=2), \
+             mock.patch.object(ik, "_is_capslock_on", return_value=False), \
+             mock.patch.object(ik, "_send", return_value=1), \
+             mock.patch.object(ik.time, "sleep"):
+            self.assertTrue(ik._send_chars("aq1"))
+        destroy.assert_called_once()
+
+
+class TestFacilityStageAndManualVerify(unittest.TestCase):
+    """设施失败断在哪一步 + 人工验证期间检测「重新登录」"""
+
+    def test_facility_stage_tagged_on_collect_fail(self):
+        """Collect（收取）找不到 → 记为「未领取」"""
+        import types
+        import unittest.mock as mock
+        import automation, utils, config
+        sink = {"stage": ""}
+        # 只在 Collect（收取）这一步失败，前面都要成功
+        with mock.patch.object(automation, "_click",
+                               side_effect=lambda ri, var, img, t=15, **k:
+                               "nofind" if var == "Collect" else True), \
+             mock.patch.object(utils, "human_pause"), \
+             mock.patch.object(utils, "find_and_click_smart", return_value=False), \
+             mock.patch.object(automation.pyautogui, "press"), \
+             mock.patch.object(automation.time, "sleep"):
+            ok = automation.handle_facility("fac.png", "prod.png", "防具台",
+                                            types.SimpleNamespace(is_set=lambda: False),
+                                            lambda t: None, stage_sink=sink)
+        self.assertFalse(ok)
+        self.assertEqual(sink["stage"], "未领取")
+
+    def test_facility_stage_tagged_on_produce_fail(self):
+        """前面都成功、Produce（开始生产）找不到 → 记为「未制造」"""
+        import types
+        import unittest.mock as mock
+        import automation, utils
+        sink = {"stage": ""}
+        # 只在 Produce（开始生产）这一步失败，前面都要成功
+        with mock.patch.object(automation, "_click",
+                               side_effect=lambda ri, var, img, t=15, **k:
+                               "nofind" if var == "Produce" else True), \
+             mock.patch.object(utils, "human_pause"), \
+             mock.patch.object(utils, "find_and_click_smart", return_value=False), \
+             mock.patch.object(automation.pyautogui, "press"), \
+             mock.patch.object(automation.time, "sleep"):
+            ok = automation.handle_facility("fac.png", "prod.png", "医疗站",
+                                            types.SimpleNamespace(is_set=lambda: False),
+                                            lambda t: None, stage_sink=sink)
+        self.assertFalse(ok)
+        self.assertEqual(sink["stage"], "未制造")
+
+    def test_type3_sample_saved_to_log_dir(self):
+        """开启后遇到「图片文字选择」类验证码：存一张样本图 + 同名 txt（记 OCR 文字）"""
+        import numpy as np
+        import unittest.mock as mock
+        import captcha_router as cr
+        import utils
+        out_root = os.path.join(TEST_DIR, "type3_logs")
+        settings = {"log_save_path": out_root, "captcha_type3_save_image": True,
+                    "captcha_region_enabled": False}
+        fake_shot = np.zeros((40, 60, 3), dtype=np.uint8)
+        with mock.patch("pyautogui.screenshot", return_value=fake_shot):
+            cr.save_type3_sample(settings, "选择所有符合描述的图片包含文字：川")
+        day_dir = os.path.join(out_root, utils.date_folder_name(), "图片")
+        files = sorted(os.listdir(day_dir))
+        self.assertTrue(any(f.startswith("文字选择验证_") and f.endswith(".png") for f in files), files)
+        txts = [f for f in files if f.endswith(".txt")]
+        self.assertEqual(len(txts), 1)
+        with open(os.path.join(day_dir, txts[0]), encoding="utf-8") as f:
+            self.assertIn("包含文字", f.read())
+
+    def test_wait_manual_verify_detects_relogin(self):
+        """人工验证等待期间识别到「重新登录」→ 返回 'relogin'（交给登录重试）"""
+        import types
+        import unittest.mock as mock
+        import automation_runner as ar
+        import config
+        app = types.SimpleNamespace(_stop_event=types.SimpleNamespace(is_set=lambda: False))
+
+        def fake_find(img_path, timeout=2, stop_event=None):
+            return img_path == config.LOGIN_AGAIN      # 只认出「重新登录」
+
+        with mock.patch.object(ar.utils, "find_image_on_screen", side_effect=fake_find), \
+             mock.patch.object(ar.time, "sleep"):
+            self.assertEqual(ar._wait_manual_verify(app, 10), "relogin")
+        # 认出三角洲图标 → 'ok'
+        with mock.patch.object(ar.utils, "find_image_on_screen",
+                               side_effect=lambda img, timeout=2, stop_event=None:
+                               img == config.DELTA_GAME_ICON), \
+             mock.patch.object(ar.time, "sleep"):
+            self.assertEqual(ar._wait_manual_verify(app, 10), "ok")
+        # 都没认出且立即超时 → 'timeout'
+        with mock.patch.object(ar.utils, "find_image_on_screen", return_value=False), \
+             mock.patch.object(ar.time, "sleep"):
+            self.assertEqual(ar._wait_manual_verify(app, 1), "timeout")
+
+    def test_email_status_cell_shows_facility_failures(self):
+        """邮件报告的状态列下方显示「防具台✗未领取」这类设施结果"""
+        import types
+        import automation_runner as ar
+        app = types.SimpleNamespace(
+            _account_notes={},
+            _account_assets={},
+            _facility_notes={"accA": [("技术中心", "✓"), ("防具台", "✗未领取"),
+                                      ("医疗站", "未执行")]},
+            settings={"enable_cooldown": False})
+        with patch.object(ar, "get_account_next_run", return_value="已冷却"):
+            html_out = ar.build_accounts_html(app, ["accA (成功)"])
+        self.assertIn("防具台✗未领取", html_out)
+        self.assertIn("医疗站未执行", html_out)
+        # 全部 ✓ 时不显示任何设施字样
+        app._facility_notes = {"accA": [("技术中心", "✓")]}
+        with patch.object(ar, "get_account_next_run", return_value="已冷却"):
+            html_out = ar.build_accounts_html(app, ["accA (成功)"])
+        self.assertNotIn("技术中心", html_out)
+
+
 class TestSellFlowOrder(unittest.TestCase):
     """售卖流程：上架后先点「最大数量」再降价（不再有出售数量/补卖多轮）"""
 

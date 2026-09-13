@@ -228,6 +228,7 @@ def get_backend():
 # Caps Lock 键扫描码（0x3A）和 VK_CAPITAL
 _VK_CAPITAL = 0x14
 _CAPSLOCK_SCANCODE = 0x3A
+_SHIFT_SCANCODE = 0x2A          # 左 Shift（大写字母/符号用）
 
 
 def _is_capslock_on():
@@ -267,6 +268,9 @@ def _send_chars(chars, interval=0.02):
         return False
 
     ctx = None
+    keyboard_device = None
+    # 发过 key_down 但还没发 key_up 的扫描码：任何一步提前返回/异常时据此补发抬起
+    pressed = set()
     try:
         ctx = _create_context()
         if not ctx:
@@ -283,6 +287,7 @@ def _send_chars(chars, interval=0.02):
             if _send_toggle_key(ctx, keyboard_device, _CAPSLOCK_SCANCODE):
                 print("🔒 检测到 Caps Lock 开启，已自动关闭")
             else:
+                pressed.add(_CAPSLOCK_SCANCODE)   # 抬起未必发出去，交给兜底
                 print("⚠️ 自动关闭 Caps Lock 失败，密码输入可能受影响")
 
         for ch in chars:
@@ -292,22 +297,26 @@ def _send_chars(chars, interval=0.02):
             scan_code, need_shift = _CHAR_TO_SCANCODE[ch]
 
             if need_shift:
-                shift_down = InterceptionKeyStroke(0x2A, KEY_DOWN, 0)
+                shift_down = InterceptionKeyStroke(_SHIFT_SCANCODE, KEY_DOWN, 0)
                 if _send(ctx, keyboard_device, shift_down, 1) <= 0:
                     return False
+                pressed.add(_SHIFT_SCANCODE)
 
             key_down = InterceptionKeyStroke(scan_code, KEY_DOWN, 0)
             if _send(ctx, keyboard_device, key_down, 1) <= 0:
                 return False
+            pressed.add(scan_code)
 
             key_up = InterceptionKeyStroke(scan_code, KEY_UP, 0)
             if _send(ctx, keyboard_device, key_up, 1) <= 0:
                 return False
+            pressed.discard(scan_code)
 
             if need_shift:
-                shift_up = InterceptionKeyStroke(0x2A, KEY_UP, 0)
+                shift_up = InterceptionKeyStroke(_SHIFT_SCANCODE, KEY_UP, 0)
                 if _send(ctx, keyboard_device, shift_up, 1) <= 0:
                     return False
+                pressed.discard(_SHIFT_SCANCODE)
 
             # 逐字符间隔随机化（拟人打字速度），保持基础间隔均值附近波动
             time.sleep(interval * random.uniform(0.7, 1.5))
@@ -317,6 +326,16 @@ def _send_chars(chars, interval=0.02):
         print(f"[ERROR] Interception send_string 失败: {e}")
         return False
     finally:
+        # 兜底补发抬起：若中途发送失败（或某一步出错提前返回），Shift 会停在"按住"状态，
+        # 用户接着打字全变大写/符号，看起来就像键盘坏了——这里保证一定抬起来
+        if ctx and keyboard_device is not None and pressed:
+            try:
+                for _sc in list(pressed):
+                    _send(ctx, keyboard_device, InterceptionKeyStroke(_sc, KEY_UP, 0), 1)
+                print(f"⚠️ 已补发按键抬起，避免卡键：{sorted(pressed)}")
+            except Exception:
+                pass
+            pressed.clear()
         if ctx:
             _destroy_context(ctx)
 

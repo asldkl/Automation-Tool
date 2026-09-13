@@ -40,26 +40,33 @@ def _click(run_insert, var_name, img_path, timeout=15, **kw):
 
 
 def handle_facility(facility_img, produce_item_img, facility_name, stop_event, set_operation,
-                    update_ui_callback=None, fac_var="", prod_var="", run_insert=None):
+                    update_ui_callback=None, fac_var="", prod_var="", run_insert=None,
+                    stage_sink=None):
     """
     处理单个设施的完整流程：进入设施 → 收取 → 选择产出 → 补齐材料 → 生产
     fac_var / prod_var: 设施图标与产出项的模板 var_name（插入步骤用）
     run_insert: 插入步骤执行回调 ri(var_name, timing)
+    stage_sink: 可选 dict，失败时写入 {"stage": "未领取"/"未制造"/...}，供日志与邮件报告说明是哪一步断的
     返回 True=成功，False=失败
     """
+    def _fail(stage=""):
+        if stage_sink is not None and stage:
+            stage_sink["stage"] = stage
+        return False
+
     if stop_event.is_set():
         return False
     print(f"🏭 开始处理 {facility_name} ...")
     if _click(run_insert, fac_var, facility_img, 15) is not True:
-        return False
+        return _fail("未进入设施")
     utils.human_pause()
 
     if _click(run_insert, "MAKE", config.MAKE, 15) is not True:
-        return False
+        return _fail("未找到制造页")
     utils.human_pause()
 
     if _click(run_insert, "Collect", config.Collect, 15) is not True:
-        return False
+        return _fail("未领取")
     utils.human_pause()
 
     # 领取奖励：直接按两次空格领取（无需图片识别，对应模板第20步）
@@ -69,7 +76,7 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     utils.human_pause()
 
     if _click(run_insert, prod_var, produce_item_img, 15) is not True:
-        return False
+        return _fail("未找到产出项")
     utils.human_pause()
 
     # 一键补齐（可选模板）：未找到/插入失败均按「材料已足够」继续
@@ -98,7 +105,7 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
         _hook(run_insert, "COIN_GAME", "after")
 
     if _click(run_insert, "Produce", config.Produce, 15) is not True:
-        return False
+        return _fail("未制造")
     utils.human_pause()
 
     pyautogui.press("esc")
@@ -255,12 +262,14 @@ def _ensure_game_focused():
 
 
 def game_operations(settings, stop_event, set_operation, update_ui_callback=None, on_hub_entered=None,
-                    observe_mode=False, hazard_retry=5, run_insert=None, account_name=""):
+                    observe_mode=False, hazard_retry=5, run_insert=None, account_name="",
+                    facility_sink=None):
     """
     执行游戏内操作（导航、设施处理、一键出售、邮箱货币）
     on_hub_entered: 进入大厅（空格Tab后、特勤处前）的回调，用于资产识别
     observe_mode: 观察状态账号，在按下烽火地带前先识别并点击观察状态入口（可选模板）
     hazard_retry: 烽火地带入口识别重试次数（单账号运行为 3，主流程为 5）
+    facility_sink: 可选 list，写完设施结果 [(摘要字符串, [(设施名,结果),...])]，供邮件报告使用
     run_insert: 插入步骤执行回调 ri(var_name, timing)
     返回 True=成功，False=失败
     """
@@ -375,20 +384,36 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     random.shuffle(facilities)
     print(f"🔧 将执行：{'、'.join(op_names)}")
     all_success = True
+    fac_results = []        # [(设施名, 结果)] 结果：✓ / 未领取 / 未制造 / 未进入设施 ...
     for fac_img, prod_img, fac_name, fac_var, prod_var in facilities:
         if stop_event.is_set():
             return False
         set_operation(f"处理 {fac_name}")
         _ensure_game_focused()
+        _sink = {"stage": ""}
         if not handle_facility(fac_img, prod_img, fac_name, stop_event, set_operation,
                                update_ui_callback, fac_var=fac_var, prod_var=prod_var,
-                               run_insert=run_insert):
+                               run_insert=run_insert, stage_sink=_sink):
             if not stop_event.is_set():
-                print(f"❌ 处理{fac_name}失败，终止当前账号")
+                _why = _sink.get("stage") or "失败"
+                print(f"❌ 处理{fac_name}失败（{_why}），终止当前账号")
+                fac_results.append((fac_name, f"✗{_why}"))
                 all_success = False
                 break
+            fac_results.append((fac_name, "✗中断"))
+            break
+        fac_results.append((fac_name, "✓"))
         pyautogui.press("esc")
         utils.human_pause()
+    # 因前面失败而没轮到的设施标记为「未执行」
+    for _f in facilities[len(fac_results):]:
+        fac_results.append((_f[2], "未执行"))
+    if fac_results:
+        _fac_summary = "  ".join(f"{n}{st}" for n, st in fac_results)
+        print(f"📋 设施结果：{_fac_summary}")
+        if facility_sink is not None:
+            facility_sink.clear()
+            facility_sink.append((_fac_summary, fac_results))
     if all_success:
         print("✅ 所有设施处理完成")
 

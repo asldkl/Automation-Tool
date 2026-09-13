@@ -12,7 +12,52 @@
 
 总开关 captcha_auto_enabled 关闭时整条链路不生效（登录流程保持原行为）。
 """
+import os
+
 import utils
+
+
+def save_type3_sample(settings, screen_text):
+    """命中「图片文字选择」类验证码时把画面存到日志目录，用于收集训练样本。
+
+    有识别区域就存区域裁剪图（和发给 AI 的图一致），否则存全屏；
+    同目录再写一份 .txt 记录当次 OCR 文字，便于做标注。仅设置里开启时才调用"""
+    try:
+        import datetime
+        import cv2
+        import numpy as np
+        import pyautogui
+        import ai_visual_captcha as _aiv
+        import config as _cfg
+        region = _aiv.get_capture_region(settings)
+        shot = (pyautogui.screenshot(region=tuple(int(v) for v in region))
+                if region else pyautogui.screenshot())
+        try:
+            bgr = cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2BGR)
+        finally:
+            try:
+                shot.close()
+            except Exception:
+                pass
+        base = str((settings or {}).get("log_save_path", "") or "").strip() or _cfg.APP_DATA_DIR
+        try:
+            out_dir = os.path.join(base, utils.date_folder_name(), "图片")
+        except Exception:
+            out_dir = base
+        os.makedirs(out_dir, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%H%M%S")
+        path = os.path.join(out_dir, f"文字选择验证_{stamp}.png")
+        cv2.imencode(".png", bgr)[1].tofile(path)
+        try:
+            with open(os.path.join(out_dir, f"文字选择验证_{stamp}.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write(str(screen_text or ""))
+        except Exception:
+            pass
+        print(f"📷 已保存「图片文字选择」样本：{path}"
+              f"（同目录同名 .txt 记了当次 OCR 文字，方便后面标注）")
+    except Exception as e:
+        print(f"⚠️ 保存「图片文字选择」样本失败：{e}")
 
 
 def _parse_keywords(value):
@@ -198,6 +243,9 @@ def _route_once(app, stop_event=None, screen_text=None, force=False):
     if needs_manual_verification(settings, text):
         print("🛡️ OCR 判定为「图片文字选择」类验证码（题目含「包含文字」）"
               "→ 直接转人工验证，不调用 AI")
+        # 可选：存一张样本图到日志目录（收集训练数据用，默认关闭）
+        if settings.get("captcha_type3_save_image", False):
+            save_type3_sample(settings, text)
         return False, "图片文字选择类验证码，转人工验证"
 
     slider_kws = _parse_keywords(settings.get("captcha_slider_keywords"))

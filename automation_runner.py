@@ -613,6 +613,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
             return False
 
     max_retries = 3
+    saw_relogin = False      # 本轮登录是否出现过「重新登录」（账号或密码错误）
     for attempt in range(max_retries):
         if app._stop_event.is_set():
             return False
@@ -740,7 +741,9 @@ def _login_account(app, account_name, i, total, processed_accounts):
         print("✅ 已点击登录确认按钮")
 
         def _handle_verify(_region_text):
-            """验证码处理 + 人工等待。返回 True=验证已通过；False=未通过（调用方须中止该账号）"""
+            """验证码处理 + 人工等待。
+            返回 True=验证已通过 / 'relogin'=账号密码错误（调用方应回到登录重试）
+                / False=未通过（调用方须中止该账号）"""
             print("🛡️ 检测到需要验证")
             # 先尝试自动处理（仅当总开关开启且已配置对应能力）
             if _captcha_auto_enabled:
@@ -765,9 +768,14 @@ def _login_account(app, account_name, i, total, processed_accounts):
             app._tray_notify("三角洲行动自动化",
                              f"🔐 账号 {account_name} 需要人工验证，请尽快处理"
                              f"（最长等待 {_wait_sec} 秒）")
-            if _wait_manual_verify(app, _wait_sec):
+            _wr = _wait_manual_verify(app, _wait_sec)
+            if _wr == "ok":
                 print("✅ 人工验证已通过（识别到三角洲图标）")
                 return True
+            if _wr == "relogin":
+                # 验证做完了才暴露出账号/密码错：交回上面的登录重试（原有方式）
+                app._last_account_error = "账号或密码错误（WeGame 提示重新登录）"
+                return "relogin"
             # 超时/停止：标记「未验证通过」（≈暂停）并跳过该账号
             try:
                 import cooldown_manager as _cm
@@ -797,6 +805,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
             if utils.find_image_on_screen(config.LOGIN_AGAIN, timeout=2,
                                           stop_event=app._stop_event):
                 print(f"⚠️ 检测到重新登录按钮，登录失败，重试...")
+                saw_relogin = True
                 break
             if utils.find_image_on_screen(config.DELTA_GAME_ICON, timeout=2,
                                           stop_event=app._stop_event):
@@ -849,7 +858,11 @@ def _login_account(app, account_name, i, total, processed_accounts):
 
         # 验证处理统一入口（提前判定命中 或 第三态判定命中）
         if _verify_text is not None:
-            if not _handle_verify(_verify_text):
+            _verify_res = _handle_verify(_verify_text)
+            if _verify_res == "relogin":
+                saw_relogin = True      # 记下来，最终失败原因写得更准（见函数尾）
+                continue                # 回到登录重试：重新清理进程 → 输入账号密码
+            if not _verify_res:
                 return False
             login_ok = True
 
@@ -858,7 +871,11 @@ def _login_account(app, account_name, i, total, processed_accounts):
         print(f"✅ 账号 {account_name} WeGame 登录成功")
         return True
 
-    app._last_account_error = f"登录失败，已重试 {max_retries} 次"
+    # 失败原因写具体些（会进邮件正文的「错误原因」）
+    if saw_relogin:
+        app._last_account_error = f"账号或密码错误（WeGame 提示重新登录，已重试 {max_retries} 次）"
+    else:
+        app._last_account_error = f"登录失败，已重试 {max_retries} 次"
     print(f"❌ 账号 {account_name} {app._last_account_error}")
     return False
 
@@ -967,15 +984,17 @@ def _launch_game(app):
         return False
 
     ops_result = game_operations_wrapper(app)
+    # 设施失败时上面已写明「哪个设施、断在哪一步」，优先用它当错误原因
+    _fac_err = str(getattr(app, "_facility_error", "") or "")
     if ops_result == "game_failed":
-        msg = "游戏内操作失败（识别问题）"
+        msg = _fac_err or "游戏内操作失败（识别问题）"
         print(f"❌ {msg}，跳过此账号")
         app._last_account_error = msg
         return "game_failed"
     if not ops_result:
         if app._stop_event.is_set():
             return "interrupted"
-        msg = "游戏内操作失败"
+        msg = _fac_err or "游戏内操作失败"
         print(f"❌ {msg}，跳过此账号")
         app._last_account_error = msg
         return False
@@ -1167,20 +1186,32 @@ def _cleanup_account_processes(app):
 
 
 def _wait_manual_verify(app, timeout_sec):
-    """等待人工完成登录验证：期间轮询是否识别到三角洲图标（判定通过）。
-    返回 True=已通过；False=超时或被停止"""
+    """等待人工完成登录验证。期间同时盯两件事：
+
+    - 识别到三角洲图标 → 验证通过
+    - 识别到「重新登录」按钮 → 说明账号或密码错了（验证做完才暴露出来），
+      按原有登录失败方式处理（回到登录重试，重新输入账号密码）
+
+    返回 'ok'=已通过 / 'relogin'=账号密码错误 / 'timeout'=超时或被停止"""
     end = time.time() + max(1, int(timeout_sec or 60))
     while time.time() < end:
         if app._stop_event.is_set():
-            return False
+            return "timeout"
+        try:
+            if utils.find_image_on_screen(config.LOGIN_AGAIN, timeout=1,
+                                          stop_event=app._stop_event):
+                print("⚠️ 检测到「重新登录」按钮（账号或密码错误），按登录失败重试")
+                return "relogin"
+        except Exception:
+            pass
         try:
             if utils.find_image_on_screen(config.DELTA_GAME_ICON, timeout=2,
                                           stop_event=app._stop_event):
-                return True
+                return "ok"
         except Exception:
             pass
         time.sleep(1)
-    return False
+    return "timeout"
 
 
 def _ocr_capture_screen_text():
@@ -1545,6 +1576,7 @@ def run_script_main(app):
             file_name = _get_cooldown_key(img_path)
             app._current_account_name = file_name
             app._last_account_error = ""  # 每个账号开始前清除上一个账号的错误
+            app._facility_error = ""      # 同上：设施失败原因也清掉
             utils.cancel_shutdown()  # 取消待执行的关机计划，防止账号运行中关机
 
             if cooldown_manager.is_account_skipped(file_name):
@@ -1690,6 +1722,8 @@ def game_operations_wrapper(app):
         single_account = (getattr(app, '_single_account_mode', False)
                           or getattr(app, '_cooldown_single_run', False))
         hazard_retry = 3 if single_account else 5
+        # 设施结果（哪个设施没领取/没制造）——写进日志与邮件报告
+        _fac_sink = []
         result = automation.game_operations(
             app.settings, app._stop_event, lambda text: set_operation(app, text),
             update_ui_callback=lambda: app.root.after(0, app.update_ui, True),
@@ -1697,7 +1731,20 @@ def game_operations_wrapper(app):
             observe_mode=observe_mode,
             hazard_retry=hazard_retry,
             run_insert=_make_run_insert(app),
-            account_name=account_name)
+            account_name=account_name,
+            facility_sink=_fac_sink)
+        if _fac_sink and account_name:
+            _fac_summary, _fac_rows = _fac_sink[0]
+            _fac_notes = getattr(app, "_facility_notes", None)
+            if _fac_notes is None:
+                _fac_notes = {}
+                app._facility_notes = _fac_notes
+            _fac_notes[account_name] = _fac_rows
+            # 失败时把「哪个设施、断在哪一步」写进错误原因（会进邮件正文）
+            _bad = [f"{n}{st}" for n, st in _fac_rows if st != "✓"]
+            if _bad:
+                app._facility_error = "游戏内操作失败：" + "、".join(_bad)
+                app._last_account_error = app._facility_error
     finally:
         utils.set_click_jitter(False)
     # 处理返回值：game_operations 可能返回 bool 或 (bool, dict)
@@ -1908,10 +1955,20 @@ def build_accounts_html(app, processed_accounts):
         if app.settings.get("enable_cooldown", False):
             next_run = get_account_next_run(app, account_name)
         next_run_display = html.escape(_email_next_run_display(next_run))
+        # 设施结果：把没领取/没制造的设施附在状态列下方（全 ✓ 就不显示）
+        fac_html = ""
+        try:
+            _fac_rows = (getattr(app, "_facility_notes", {}) or {}).get(account_name) or []
+            _bad_rows = [f"{n}{st}" for n, st in _fac_rows if st != "✓"]
+            if _bad_rows:
+                fac_html = ('<br><span style="font-size:11px;color:#e74c3c;">'
+                            + html.escape("  ".join(_bad_rows)) + '</span>')
+        except Exception:
+            pass
         row = (
             f'<tr style="background:#f0f2f5;">'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{account_display}</td>'
-            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(status)}</td>'
+            f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{html.escape(status)}{fac_html}</td>'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{asset_display}</td>'
             f'<td style="padding:8px 10px;border:1px solid #dcdde1;">{next_run_display}</td>'
             f'</tr>')
