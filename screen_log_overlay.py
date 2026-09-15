@@ -26,7 +26,9 @@
 
 注意事项：
     - 游戏需为窗口化 / 无边框模式；独占全屏会遮挡顶层遮罩
-    - 鼠标穿透模式下窗口不接收输入；切换交互模式通过 set_input_transparent()
+    - 遮罩恒定「鼠标穿透」：不接收鼠标输入、也不挡下层点击；
+      （原先的「可拖动交互模式」已于 2026-09-14 移除，位置改用「实验功能 → 更换角落」）
+    - 遮罩已排除在屏幕捕获之外（Win10 2004+），截图里不含遮罩内容
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from __future__ import annotations
 import threading
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel,
                              QPlainTextEdit, QVBoxLayout, QWidget)
@@ -64,6 +66,32 @@ class LogLevel:
     }
 
 
+# ==================== 屏幕捕获排除（WDA_EXCLUDEFROMCAPTURE） ====================
+# 目的：遮罩是给人看的，不该出现在「截图」里 —— 否则它盖住哪个按钮，那个按钮的模板匹配就废掉。
+# 历史缺陷：原来的「点击避让」写在匹配成功之后（utils._find_and_click_core 的 if matched 里面），
+# 而遮罩污染的是匹配之前的截图，所以遮罩一盖住目标就永远匹配不上、根本走不到避让。
+# Win10 2004+ 支持 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)：窗口照常显示在屏幕上，
+# 但 GDI BitBlt（pyautogui.screenshot / PIL ImageGrab）拍到的是它背后原本的画面。
+# 已真机实测：品红窗口设了该标志后，截图里 100% 是下层原始像素（不是黑块）。
+_WDA_EXCLUDEFROMCAPTURE = 0x00000011
+_WDA_NONE = 0x00000000
+
+
+def set_exclude_from_capture(hwnd: int, enable: bool = True) -> bool:
+    """把指定窗口从屏幕捕获里排除（或恢复）。失败返回 False，不影响主流程。"""
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SetWindowDisplayAffinity.argtypes = [wt.HWND, wt.DWORD]
+        user32.SetWindowDisplayAffinity.restype = wt.BOOL
+        return bool(user32.SetWindowDisplayAffinity(
+            wt.HWND(int(hwnd)),
+            _WDA_EXCLUDEFROMCAPTURE if enable else _WDA_NONE))
+    except Exception:
+        return False
+
+
 # ==================== 主组件类 ====================
 class ScreenLogOverlay(QWidget):
     """
@@ -87,7 +115,8 @@ class ScreenLogOverlay(QWidget):
                  pos: QPoint | None = None,
                  width: int = 420, height: int = 200,
                  translucent_bg: bool = False,
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None,
+                 exclude_from_capture: bool = True):
         """
         Args:
             max_lines: 最大日志行数，超出自动清除最早日志（默认 500）
@@ -96,14 +125,15 @@ class ScreenLogOverlay(QWidget):
             translucent_bg: True = 半透明黑色底板；False(默认) = 背景完全透明，
                             仅显示彩色日志文字，不遮挡下方游戏画面
             parent: 父窗口，默认 None（作为独立顶层窗口）
+            exclude_from_capture: True(默认) = 把遮罩从屏幕捕获里排除掉（Win10 2004+），
+                            这样它盖在哪个按钮上都不会污染模板匹配的截图；失败自动降级
         """
         super().__init__(parent)
         self._max_lines = max(50, int(max_lines))
-        self._transparent_input = True     # 当前是否鼠标穿透
-        self._dragging = False             # 是否正在拖动窗口
-        self._drag_offset = QPoint()       # 拖动时鼠标与窗口左上角偏移
         self._allow_close = False          # 是否允许关闭（仅程序主动关闭时 True）
                                            # 防止运行中游戏关闭后 alt+F4 误关遮罩
+        self._exclude_from_capture = bool(exclude_from_capture)
+        self._capture_excluded = False     # 是否已成功排除在屏幕捕获外（供上层查询）
 
         # ---------- 窗口属性：无边框 + 置顶 + 不占任务栏 ----------
         self.setWindowFlags(
@@ -192,11 +222,10 @@ class ScreenLogOverlay(QWidget):
         self.status_signal.connect(self._on_status)
         self.mouse_signal.connect(self._on_mouse)
 
-        # 事件过滤器：交互模式下拦截日志控件鼠标事件实现拖动
-        self.text_edit.installEventFilter(self)
-
-        # 应用初始鼠标穿透设置
-        self.set_input_transparent(True)
+        # 设为鼠标穿透（恒定，不再提供交互模式）
+        self.set_click_through()
+        # 再补一次捕获排除（show() 期间可能因重建原生窗口而失效）
+        self._apply_capture_exclusion()
 
     # ==================================================
     # 对外公开接口（任意线程可调用）
@@ -219,31 +248,44 @@ class ScreenLogOverlay(QWidget):
     def warn(self, message):  self.add_log(LogLevel.WARN,  message)
     def error(self, message): self.add_log(LogLevel.ERROR, message)
 
-    def set_input_transparent(self, transparent: bool) -> None:
-        """
-        切换鼠标穿透 / 可拖动交互模式。
-        True = 鼠标穿透（默认），点击穿透到下层，不影响游戏；不可拖动
-        False = 交互模式，可按住左键拖动窗口
+    def set_click_through(self) -> None:
+        """把遮罩设为鼠标穿透：点击直接落到下层，遮罩不接收任何鼠标事件。
+
+        恒定生效（不再提供「可拖动交互模式」—— 那个模式会真的挡住下层按钮的点击）。
         窗口标志变更后必须重新 show() 才生效。
         """
-        self._transparent_input = bool(transparent)
-        flag = Qt.WindowType.WindowTransparentForInput
-        if transparent:
-            self.setWindowFlag(flag, True)
-            self.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        else:
-            self.setWindowFlag(flag, False)
-            self.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.show()
 
-    def toggle_input_transparent(self) -> None:
-        """F8：切换穿透 / 交互模式"""
-        self.set_input_transparent(not self._transparent_input)
+    # ---------- 屏幕捕获排除（让遮罩不污染模板匹配的截图） ----------
+    def _apply_capture_exclusion(self) -> None:
+        """确保遮罩已被排除在屏幕捕获之外。
+
+        必须每次 show 后补设：setWindowFlag()/show() 会重建原生窗口，WDA 标志会随之丢失。
+        """
+        if not self._exclude_from_capture:
+            return
+        try:
+            hwnd = int(self.winId())
+        except Exception:
+            return
+        self._capture_excluded = set_exclude_from_capture(hwnd, True)
+
+    @property
+    def capture_excluded(self) -> bool:
+        """遮罩是否已成功排除在屏幕捕获外。
+
+        True 表示它盖在任何位置都不会污染截图 → 上层（gui_app）可以跳过所有让位动作。
+        """
+        return self._capture_excluded
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._apply_capture_exclusion()
 
     def toggle_visibility(self) -> None:
-        """F9：显示 / 隐藏遮罩窗口"""
+        """显示 / 隐藏遮罩窗口（由托盘菜单「关闭/开启日志遮罩」调用）"""
         if self.isVisible():
             self.hide()
         else:
@@ -326,30 +368,12 @@ class ScreenLogOverlay(QWidget):
         sb.setValue(sb.maximum())
 
     # ==================================================
-    # 窗口拖动（仅在交互模式生效；穿透模式下收不到鼠标事件）
+    # 窗口拖动 / 交互模式：已整体移除（2026-09-14 按用户要求）
     # ==================================================
-    def eventFilter(self, obj, event) -> bool:
-        """拦截日志控件的鼠标事件，在交互模式下实现窗口拖动"""
-        if obj is self.text_edit and not self._transparent_input:
-            etype = event.type()
-            if (etype == QEvent.Type.MouseButtonPress
-                    and event.button() == Qt.MouseButton.LeftButton):
-                self._drag_offset = (event.globalPosition().toPoint()
-                                     - self.frameGeometry().topLeft())
-                self._dragging = True
-                return True   # 拦截，避免选中文本
-            elif etype == QEvent.Type.MouseMove and self._dragging:
-                self.move(event.globalPosition().toPoint() - self._drag_offset)
-                return True
-            elif etype == QEvent.Type.MouseButtonRelease:
-                self._dragging = False
-                return True
-        return super().eventFilter(obj, event)
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        """双击遮罩：切换鼠标穿透 / 可拖动交互模式（交互模式按住左键可拖动）"""
-        self.toggle_input_transparent()
-        super().mouseDoubleClickEvent(event)
+    # 原先双击遮罩可切到「可拖动交互模式」，但那个模式下遮罩会接收鼠标事件 ——
+    # 也就是会**真的挡住下层按钮的点击**，排查问题时极易把人带偏。
+    # 现在遮罩永远鼠标穿透；挪位置走「实验功能 → 更换角落」（左下→右下→右上→左上）。
+    # 附带删掉了两处根本不存在的快捷键说明（F8 切换 / F9 显示隐藏）。
 
     def closeEvent(self, event) -> None:
         """免疫系统关闭事件（alt+F4 / WM_CLOSE）
@@ -381,7 +405,7 @@ if __name__ == "__main__":
     overlay.info("INFO 浅蓝日志")
     overlay.warn("WARN 黄色日志")
     overlay.error("ERROR 红色日志")
-    overlay.info("按 F8 切换穿透/拖动，F9 显示/隐藏")
+    overlay.info("遮罩为鼠标穿透且不进截图；移动位置请在「实验功能 → 更换角落」切换")
 
     # 子线程模拟业务调用（验证线程安全）
     stop_event = threading.Event()

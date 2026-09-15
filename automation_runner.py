@@ -1289,6 +1289,10 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         server_client.update_account_status(app, account_name, "success")
         # 成功则重置连续失败计数
         app._consecutive_failures.pop(account_name, None)
+        # 托盘气泡：账号跑完（成功）。失败/中断路径上面各自已有气泡，这里补齐成功路径 ——
+        # 这样「每个账号都有头有尾」，不用盯屏幕也知道跑到哪了。
+        app._tray_notify("三角洲行动自动化",
+                         f"✅ 账号 {account_name} 完成（下次运行：{next_run_str}）")
 
 
 def _wait_and_run_nearby_cooldowns(app, processed_accounts):
@@ -1549,6 +1553,11 @@ def run_script_main(app):
                 except Exception:
                     pass
                 print(f"⏳ 分组运行：已完成一组 {smart_group_size} 个账号，后续还有 {remaining_runnable} 个就绪，等待 {smart_interval} 分钟后再跑下一组（避免频繁切换账号触发滑块验证）")
+                # 托盘气泡：组间等待开始
+                app._tray_notify("三角洲行动自动化",
+                                 f"⏳ 已完成一组 {smart_group_size} 个账号，"
+                                 f"组间等待 {smart_interval} 分钟"
+                                 f"（后面还有 {remaining_runnable} 个就绪）")
                 wait_sec = smart_interval * 60
                 waited = 0
                 while waited < wait_sec and not app._stop_event.is_set():
@@ -1568,6 +1577,14 @@ def run_script_main(app):
                     app._overlay_override_text = None
                 except Exception:
                     pass
+                # 托盘气泡：组间等待结束（被中断时前面已有「已中断」气泡，这里不重复发）
+                if not app._stop_event.is_set():
+                    app._tray_notify("三角洲行动自动化", "▶️ 组间等待结束，继续运行下一组账号")
+
+        # 给 shell 一点时间消化上一条气泡（「开始运行 N 个账号」），否则紧跟着的
+        # 「第一个账号」气泡可能被系统丢掉 —— 用户反馈过「每个账号开始的气泡没弹」
+        if app.qq_account_images:
+            time.sleep(1.0)
 
         for i, img_path in enumerate(app.qq_account_images):
             if app._stop_event.is_set():
@@ -1764,14 +1781,20 @@ def game_operations_wrapper(app):
     return result
 
 
-def sell_operations_wrapper(app):
-    """一键出售流程：打开仓库，遍历售卖物品执行出售（游戏内点击启用拟人随机偏移）"""
+def sell_operations_wrapper(app, skip_warehouse=False, ignore_time_window=False):
+    """一键出售流程：遍历售卖物品执行出售（游戏内点击启用拟人随机偏移）
+
+    skip_warehouse=True 时不点「仓库入口」，直接从「逐个识别物品」开始 ——
+    出售测试用（由用户自行进入仓库界面），主流程保持 False 自动开仓库。
+    ignore_time_window=True 时不检查「售卖时间区间」——同样只给出售测试用。"""
     utils.set_click_jitter(app.settings.get("enable_click_jitter", False),
                            app.settings.get("click_jitter_max", 5))
     try:
         return automation.sell_operations(app.settings, app._stop_event,
                                           lambda text: set_operation(app, text),
-                                          run_insert=_make_run_insert(app))
+                                          run_insert=_make_run_insert(app),
+                                          skip_warehouse=skip_warehouse,
+                                          ignore_time_window=ignore_time_window)
     finally:
         utils.set_click_jitter(False)
 

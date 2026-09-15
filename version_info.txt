@@ -1,0 +1,32 @@
+# PyInstaller 版本资源文件（被 三角洲自动工具.spec 的 EXE(version=...) 引用）
+# 作用：让 dist\三角洲自动工具.exe 在「属性 → 详细信息」里显示版本，便于多机测试时分辨装的是哪一版。
+# 注意：改版本号时这里的三处都要同步（filevers / FileVersion / ProductVersion）。
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(6, 9, 14, 0),
+    prodvers=(6, 9, 14, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '080404B0',
+          [
+            StringStruct('CompanyName', '三角洲自动化工具'),
+            StringStruct('FileDescription', '三角洲行动自动化工具'),
+            StringStruct('FileVersion', '6.09.14.0'),
+            StringStruct('InternalName', '三角洲自动工具'),
+            StringStruct('OriginalFilename', '三角洲自动工具.exe'),
+            StringStruct('ProductName', '三角洲行动自动化工具'),
+            StringStruct('ProductVersion', '6.09.14')
+          ])
+      ]),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)

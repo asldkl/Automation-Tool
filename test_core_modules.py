@@ -542,19 +542,16 @@ class TestFacilityStageAndManualVerify(unittest.TestCase):
 
 
 class TestSellFlowOrder(unittest.TestCase):
-    """售卖流程：上架后先点「最大数量」再降价（不再有出售数量/补卖多轮）"""
+    """售卖流程：上架后按「固定坐标」点一下最大数量，再降价
+    （最大数量已从「模板找图」改为「坐标点击」，故不再有 Max_Quantity 模板这一步）"""
 
-    def test_click_order_includes_max_quantity(self):
+    def _run_sell(self, mq_point, item_filename="_sell_item_A.png", discount=1, settings_extra=None,
+                  screen=(2560, 1440), skip_warehouse=False):
         import types
         import unittest.mock as mock
         import automation, utils, config
 
-        # 一件物品 + 降价 1 次；模板文件都造出来（Max_Quantity 存在才会走那一步）
-        item_path = os.path.join(TEST_DIR, "_sell_item_A.png")
-        with open(item_path, "wb") as f:
-            f.write(b"PNG")
-        mq_path = os.path.join(TEST_DIR, "_sell_max_qty.png")
-        with open(mq_path, "wb") as f:
+        with open(os.path.join(TEST_DIR, item_filename), "wb") as f:
             f.write(b"PNG")
 
         order = []
@@ -564,35 +561,66 @@ class TestSellFlowOrder(unittest.TestCase):
             return True
 
         settings = {"enable_sell_after_run": True, "sell_confidence": 0.55,
-                    "sell_time_enabled": False}
+                    "sell_time_enabled": False, "max_quantity_point": mq_point}
+        if settings_extra:
+            settings.update(settings_extra)
+        # 屏幕尺寸固定，否则「坐标是否越界」的判定会随跑测试的机器变
         with mock.patch.object(config, "load_sell_items_meta",
-                               return_value={"items": [{"filename": "_sell_item_A.png",
+                               return_value={"items": [{"filename": item_filename,
                                                         "name": "测试物品",
-                                                        "discount_times": 1}]}), \
+                                                        "discount_times": discount}]}), \
              mock.patch.object(config, "SELL_ITEMS_DIR", TEST_DIR), \
-             mock.patch.object(config, "Max_Quantity", mq_path), \
              mock.patch.object(config, "Warehouse", "wh.png"), \
              mock.patch.object(utils, "clear_template_cache"), \
              mock.patch.object(utils, "find_and_click", return_value=True), \
              mock.patch.object(utils, "human_pause"), \
              mock.patch.object(utils, "human_move_away"), \
+             mock.patch.object(utils, "smooth_move_to") as mock_smooth, \
+             mock.patch.object(utils, "human_click_delay"), \
              mock.patch.object(automation, "_click", side_effect=fake_click), \
              mock.patch.object(automation.time, "sleep"), \
-             mock.patch("pyautogui.click"):
+             mock.patch("pyautogui.click") as mock_pyclick, \
+             mock.patch("pyautogui.size", return_value=screen):
             ok, stats = automation.sell_operations(settings, types.SimpleNamespace(
-                is_set=lambda: False), lambda t: None)
+                is_set=lambda: False), lambda t: None, skip_warehouse=skip_warehouse)
+        return ok, stats, order, mock_smooth, mock_pyclick
+
+    def test_max_quantity_clicked_at_fixed_point(self):
+        """上架后按设置里的固定坐标点「最大数量」（不找图、不叠加随机偏移），然后降价"""
+        ok, stats, order, mock_smooth, mock_pyclick = self._run_sell([1935, 740], discount=1)
         self.assertTrue(ok)
+        # 最大数量不再走 _click（找图），所以不在点击顺序里
         self.assertEqual(order, ["Warehouse", "Sell", "List_Item",
-                                 "Max_Quantity", "Discount", "Confirm_Listing"])
+                                 "Discount", "Confirm_Listing"])
+        # 严格落在设置坐标上
+        mock_smooth.assert_called_once_with(1935, 740)
+        self.assertTrue(mock_pyclick.called)
         self.assertEqual(stats["sold"], 1)
         self.assertEqual(stats["total"], 1)
 
-    def test_max_quantity_template_missing_is_optional(self):
-        """没上传「最大数量」模板时跳过该步，不影响售卖（兼容旧模板包）"""
+    def test_max_quantity_zero_point_skips_step(self):
+        """坐标填 0 时跳过「最大数量」这一步，不影响售卖"""
+        ok, stats, order, mock_smooth, mock_pyclick = self._run_sell(
+            [0, 0], item_filename="_sell_item_B.png", discount=0)
+        self.assertTrue(ok)
+        self.assertEqual(order, ["Warehouse", "Sell", "List_Item", "Confirm_Listing"])
+        mock_smooth.assert_not_called()
+        self.assertFalse(mock_pyclick.called)
+
+    def test_missing_max_quantity_point_uses_default(self):
+        """设置里没有 max_quantity_point 时用默认 (1935,740)"""
+        ok, stats, order, mock_smooth, mock_pyclick = self._run_sell(
+            None, item_filename="_sell_item_C.png", discount=0)
+        self.assertTrue(ok)
+        mock_smooth.assert_called_once_with(1935, 740)
+
+    def test_skip_warehouse_starts_from_items(self):
+        """skip_warehouse=True（出售测试）时不点「仓库入口」，直接从识别物品开始"""
         import types
         import unittest.mock as mock
         import automation, utils, config
-        with open(os.path.join(TEST_DIR, "_sell_item_B.png"), "wb") as f:
+
+        with open(os.path.join(TEST_DIR, "_sell_item_D.png"), "wb") as f:
             f.write(b"PNG")
         order = []
 
@@ -600,23 +628,108 @@ class TestSellFlowOrder(unittest.TestCase):
             order.append(var_name)
             return True
 
+        settings = {"sell_confidence": 0.55, "sell_time_enabled": False,
+                    "max_quantity_point": [0, 0]}
         with mock.patch.object(config, "load_sell_items_meta",
-                               return_value={"items": [{"filename": "_sell_item_B.png",
-                                                        "name": "测试物品B",
+                               return_value={"items": [{"filename": "_sell_item_D.png",
+                                                        "name": "测试物品D",
                                                         "discount_times": 0}]}), \
              mock.patch.object(config, "SELL_ITEMS_DIR", TEST_DIR), \
-             mock.patch.object(config, "Max_Quantity", os.path.join(TEST_DIR, "_不存在.png")), \
              mock.patch.object(utils, "clear_template_cache"), \
              mock.patch.object(utils, "find_and_click", return_value=True), \
              mock.patch.object(utils, "human_pause"), \
              mock.patch.object(utils, "human_move_away"), \
+             mock.patch.object(utils, "human_click_delay"), \
              mock.patch.object(automation, "_click", side_effect=fake_click), \
-             mock.patch.object(automation.time, "sleep"):
-            ok, stats = automation.sell_operations({}, types.SimpleNamespace(
-                is_set=lambda: False), lambda t: None)
+             mock.patch.object(automation.time, "sleep"), \
+             mock.patch("pyautogui.click"):
+            ok, stats = automation.sell_operations(settings, types.SimpleNamespace(
+                is_set=lambda: False), lambda t: None, skip_warehouse=True)
+        self.assertTrue(ok)
+        self.assertEqual(order, ["Sell", "List_Item", "Confirm_Listing"])
+        self.assertNotIn("Warehouse", order)
+        self.assertEqual(stats["sold"], 1)
+
+    def test_max_quantity_out_of_screen_is_skipped(self):
+        """坐标超出屏幕范围时跳过「最大数量」这一步（越界点击会被截到屏幕边缘、可能点到别处）"""
+        ok, stats, order, mock_smooth, mock_pyclick = self._run_sell(
+            [14412, 123123], item_filename="_sell_item_E.png", discount=0)
         self.assertTrue(ok)
         self.assertEqual(order, ["Warehouse", "Sell", "List_Item", "Confirm_Listing"])
-        self.assertNotIn("Max_Quantity", order)
+        mock_smooth.assert_not_called()
+        self.assertFalse(mock_pyclick.called)
+
+
+class TestSellSkipReasons(unittest.TestCase):
+    """出售流程「一件都没卖」的原因码（reason）——
+    出售测试弹窗据此给出准确提示；此前是一条笼统文案，曾把「不在售卖时间区间」误报成「请先添加物品」"""
+
+    def _call(self, settings, items, ignore_time_window=False):
+        import types
+        import unittest.mock as mock
+        import automation, utils, config
+        with mock.patch.object(config, "load_sell_items_meta", return_value={"items": items}), \
+             mock.patch.object(config, "SELL_ITEMS_DIR", TEST_DIR), \
+             mock.patch.object(utils, "clear_template_cache"), \
+             mock.patch.object(utils, "find_and_click", return_value=False), \
+             mock.patch.object(utils, "human_pause"), \
+             mock.patch.object(automation.time, "sleep"), \
+             mock.patch("pyautogui.size", return_value=(2560, 1440)):
+            return automation.sell_operations(
+                settings, types.SimpleNamespace(is_set=lambda: False), lambda t: None,
+                skip_warehouse=True, ignore_time_window=ignore_time_window)
+
+    @staticmethod
+    def _window_excluding_now():
+        """造一个必然不含当前时刻的售卖区间"""
+        import datetime as _dt
+        t1 = (_dt.datetime.now() + _dt.timedelta(hours=2)).strftime("%H:%M")
+        t2 = (_dt.datetime.now() + _dt.timedelta(hours=3)).strftime("%H:%M")
+        return t1, t2
+
+    def test_ignore_time_window_bypasses_limit(self):
+        """ignore_time_window=True（出售测试）时不受「售卖时间区间」限制"""
+        import os
+        item = "_sell_item_win.png"
+        with open(os.path.join(TEST_DIR, item), "wb") as f:
+            f.write(b"PNG")
+        t1, t2 = self._window_excluding_now()
+        ok, stats = self._call(
+            {"sell_time_enabled": True, "sell_time_start": t1, "sell_time_end": t2,
+             "sell_confidence": 0.55, "max_quantity_point": [0, 0]},
+            [{"filename": item, "name": "测试物品", "discount_times": 0}],
+            ignore_time_window=True)
+        # 区间被绕过 → 走到了物品循环（图片找不到，所以 not_found=1），而不是 0 件退出
+        self.assertEqual(stats["total"], 1)
+        self.assertEqual(stats["not_found"], 1)
+        self.assertNotEqual(stats["reason"], "out_of_window")
+
+    def test_reason_no_items(self):
+        """没有配置任何售卖物品 → reason=no_items"""
+        ok, stats = self._call({"sell_time_enabled": False}, [])
+        self.assertFalse(ok)
+        self.assertEqual(stats["reason"], "no_items")
+        self.assertEqual(stats["total"], 0)
+
+    def test_reason_out_of_window(self):
+        """不在售卖时间区间内 → reason=out_of_window（而不是笼统的「请先添加物品」）"""
+        t1, t2 = self._window_excluding_now()
+        ok, stats = self._call(
+            {"sell_time_enabled": True, "sell_time_start": t1, "sell_time_end": t2,
+             "max_quantity_point": [0, 0]},
+            [{"filename": "_x.png", "name": "x", "discount_times": 0}])
+        self.assertFalse(ok)
+        self.assertEqual(stats["reason"], "out_of_window")
+        self.assertEqual(stats["total"], 0)
+
+    def test_reason_all_missing(self):
+        """配置了物品但图片文件都不在 → reason=all_missing"""
+        ok, stats = self._call(
+            {"sell_time_enabled": False, "max_quantity_point": [0, 0]},
+            [{"filename": "_不存在的物品.png", "name": "不存在的物品", "discount_times": 0}])
+        self.assertEqual(stats["reason"], "all_missing")
+        self.assertEqual(stats["total"], 0)
+        self.assertEqual(stats["missing_files"], 1)
 
 
 class TestSellPendingAndUnverified(unittest.TestCase):

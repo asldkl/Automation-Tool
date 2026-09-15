@@ -409,6 +409,113 @@ class TemplateCaptureWizard:
         """为对话框设置图标"""
         utils.set_window_icon(dialog)
 
+    def _save_max_quantity_point(self, parent_win, x_var, y_var):
+        """保存「最大数量」的固定点击坐标（写 settings.json 并同步内存设置，无需重启生效）"""
+        try:
+            px = max(0, int(float(x_var.get() or 0)))
+            py = max(0, int(float(y_var.get() or 0)))
+        except (TypeError, ValueError):
+            messagebox.showerror("错误", "坐标必须是数字。", parent=parent_win)
+            return
+        # 坐标必须在屏幕范围内：越界的点击会被系统截到屏幕边缘，可能点到别的东西
+        if px > 0 and py > 0:
+            try:
+                import pyautogui
+                sw, sh = pyautogui.size()
+                if px > sw or py > sh:
+                    messagebox.showerror(
+                        "坐标超出屏幕",
+                        f"坐标 {px},{py} 超出当前屏幕范围（{sw}x{sh}）。\n\n"
+                        "请用「屏幕取点」重新取一次，或把 X/Y 都填 0 表示跳过该步。",
+                        parent=parent_win)
+                    return
+            except Exception:
+                pass
+        x_var.set(str(px))
+        y_var.set(str(py))
+        try:
+            s = config.load_settings()
+            s["max_quantity_point"] = [px, py]
+            config.save_settings(s)
+            config.APP_SETTINGS.update({"max_quantity_point": [px, py]})
+            if self.app is not None and hasattr(self.app, "settings"):
+                self.app.settings.update({"max_quantity_point": [px, py]})
+            print(f"🔢 「最大数量」点击坐标已更新为 {px},{py}")
+            _tip = "（该步已跳过）" if (px <= 0 or py <= 0) else ""
+            messagebox.showinfo("已保存", f"点击坐标：{px},{py}{_tip}", parent=parent_win)
+        except Exception as e:
+            messagebox.showerror("错误", f"保存失败：{e}", parent=parent_win)
+
+    def _pick_screen_point(self, dialog, x_var, y_var, what="坐标"):
+        """屏幕取点：全屏十字准星单击一下，把屏幕坐标写进 x_var / y_var（Esc 取消）
+
+        取点期间把向导和模板设置窗口都收起来，避免挡住游戏画面；坐标用画布相对屏幕的
+        偏移换算，遮罩不在 (0,0) 时也不会整体偏。"""
+        import tkinter as tk_overlay
+
+        hiding = []
+        for w in (dialog, self.win):
+            try:
+                if w is not None and w.winfo_exists():
+                    w.grab_release()
+                    w.withdraw()
+                    hiding.append(w)
+            except Exception:
+                pass
+
+        ov = tk_overlay.Toplevel(self.win)
+        try:
+            ov.attributes('-fullscreen', True)
+            ov.attributes('-alpha', 0.3)
+            ov.attributes('-topmost', True)
+        except Exception:
+            pass
+        ov.configure(bg='black')
+        ov.config(cursor='crosshair')
+        cv = tk_overlay.Canvas(ov, highlightthickness=0, bg='black')
+        cv.pack(fill=tk.BOTH, expand=True)
+        tk_overlay.Label(ov, text=f"单击「{what}」的位置（Esc 取消）",
+                         font=('Microsoft YaHei UI', 14, 'bold'),
+                         fg='white', bg='black').place(relx=0.5, rely=0.05, anchor='center')
+
+        def _click(e):
+            try:
+                x_var.set(str(int(cv.winfo_rootx()) + int(e.x)))
+                y_var.set(str(int(cv.winfo_rooty()) + int(e.y)))
+            except Exception:
+                pass
+            ov.destroy()
+
+        cv.bind('<Button-1>', _click)
+        ov.bind('<Escape>', lambda e: ov.destroy())
+        try:
+            ov.grab_set()
+            ov.lift()
+            ov.focus_force()
+        except Exception:
+            pass
+        try:
+            self.win.wait_window(ov)
+        except Exception:
+            pass
+        finally:
+            try:
+                ov.grab_release()
+            except Exception:
+                pass
+            for w in hiding:
+                try:
+                    w.deiconify()
+                except Exception:
+                    pass
+            # 模板设置窗口是模态的，复原后要把 grab 拿回来
+            try:
+                if dialog is not None and dialog.winfo_exists():
+                    dialog.grab_set()
+                    dialog.lift()
+            except Exception:
+                pass
+
     def _open_template_setting(self, var_name, rel_path, name):
         """打开模板设置窗口：预览图片 + OCR识别/恢复默认/上传 按钮"""
         # 查找图片路径
@@ -460,21 +567,53 @@ class TemplateCaptureWizard:
                       foreground='#999').pack(padx=10, pady=(30, 5))
 
         # 信息栏
-        info_text = f"来源：{source_text}"
-        if orig_w and orig_h:
-            info_text += f"  |  尺寸：{orig_w}x{orig_h}"
+        _is_max_qty = (var_name == "Max_Quantity")
         # 最近一次成功点击坐标（运行成功后记录，供遮罩避让参考）
         try:
             import template_click_coords as _tcc
             _coord = _tcc.get_coord(rel_path)
         except Exception:
             _coord = None
-        if _coord:
-            info_text += f"  ｜坐标 {_coord[0]},{_coord[1]}"
+        _coord_text = (f"  ｜坐标 {_coord[0]},{_coord[1]}" if _coord else "  ｜坐标 未记录")
+        if _is_max_qty:
+            # 本项已改为固定坐标点击，没有图片模板：「来源：暂无模板 / 尺寸」对它没意义
+            info_text = "本项已改为固定坐标点击，不需要图片模板；坐标在下方设置" + _coord_text
         else:
-            info_text += "  ｜坐标 未记录"
+            info_text = f"来源：{source_text}"
+            if orig_w and orig_h:
+                info_text += f"  |  尺寸：{orig_w}x{orig_h}"
+            info_text += _coord_text
         ttk.Label(win, text=info_text, font=('Microsoft YaHei UI', 9),
                   foreground='#7f8c8d').pack(padx=10, pady=(0, 8))
+
+        # 「最大数量」已改为固定坐标点击：坐标就配在本窗口里（运行期不再走模板匹配）
+        if var_name == "Max_Quantity":
+            _s = config.load_settings()
+            _p = _s.get("max_quantity_point") or [1935, 740]
+            try:
+                _px, _py = int(_p[0]), int(_p[1])
+            except (TypeError, ValueError, IndexError):
+                _px, _py = 1935, 740
+            mq_x_var = tk.StringVar(value=str(_px))
+            mq_y_var = tk.StringVar(value=str(_py))
+
+            mq_frame = ttk.LabelFrame(win, text="  点击坐标  ", padding=8)
+            mq_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+            mq_row = ttk.Frame(mq_frame)
+            mq_row.pack(fill=tk.X)
+            ttk.Label(mq_row, text="X").pack(side=tk.LEFT)
+            ttk.Entry(mq_row, textvariable=mq_x_var, width=7).pack(side=tk.LEFT, padx=(4, 10))
+            ttk.Label(mq_row, text="Y").pack(side=tk.LEFT)
+            ttk.Entry(mq_row, textvariable=mq_y_var, width=7).pack(side=tk.LEFT, padx=(4, 10))
+            ttk.Button(mq_row, text="屏幕取点", width=10,
+                       command=lambda: self._pick_screen_point(
+                           win, mq_x_var, mq_y_var, "最大数量")).pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Button(mq_row, text="保存坐标", width=10,
+                       command=lambda: self._save_max_quantity_point(
+                           win, mq_x_var, mq_y_var)).pack(side=tk.LEFT)
+            ttk.Label(mq_frame, text="上架后点此坐标（0=跳过）",
+                      font=('Microsoft YaHei UI', 8),
+                      foreground='#7f8c8d').pack(anchor='w', pady=(6, 0))
 
         # 按钮区
         btn_frame = ttk.Frame(win)
@@ -512,11 +651,18 @@ class TemplateCaptureWizard:
                 pass
             self._refresh_insert_status(var_name)
 
-        # 不可文字识别的模板不显示 OCR 按钮
-        ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="插入步骤", command=do_insert_step, width=10).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="测试", command=do_test, width=8).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.RIGHT)
+        # 按钮区
+        if _is_max_qty:
+            # 本项已改为固定坐标点击、没有图片模板：「恢复默认」会误报「当前使用的是内置默认图片」、
+            # 「测试」必然报「模板加载失败」、「截取」存下的图运行期无人使用 —— 三个都隐藏。
+            # 只保留「插入步骤」（automation.sell_operations 里仍在执行 Max_Quantity 的插入步骤）。
+            ttk.Button(btn_frame, text="插入步骤", command=do_insert_step, width=10).pack(side=tk.LEFT)
+        else:
+            # 不可文字识别的模板不显示 OCR 按钮
+            ttk.Button(btn_frame, text="恢复默认", command=do_restore, width=10).pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Button(btn_frame, text="插入步骤", command=do_insert_step, width=10).pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Button(btn_frame, text="测试", command=do_test, width=8).pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Button(btn_frame, text="截取", command=do_upload, width=8).pack(side=tk.RIGHT)
 
         # 居中
         win.update_idletasks()

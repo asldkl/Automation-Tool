@@ -171,7 +171,12 @@ def enable_log_overlay(root, corner_index=0):
         _qt_app = QApplication.instance()
         if _qt_app is None:
             _qt_app = QApplication([])
-        _qt_overlay = ScreenLogOverlay(max_lines=500, translucent_bg=False)
+        _qt_overlay = ScreenLogOverlay(
+            max_lines=500, translucent_bg=False,
+            # 把遮罩从屏幕捕获里排除掉：它盖住哪个按钮都不会污染模板匹配的截图
+            # （Win10 2004+ 有效；失败自动降级，降级后仍走原来的「让位」逻辑）
+            exclude_from_capture=bool(config.APP_SETTINGS.get(
+                "log_overlay_exclude_from_capture", True)))
         try:
             _qt_overlay.cycle_corner(int(corner_index))  # 恢复上次关闭时的角落
         except Exception:
@@ -180,6 +185,12 @@ def enable_log_overlay(root, corner_index=0):
         _qt_overlay.show()
         # 开启提示：告知如何关闭（遮罩鼠标穿透，需通过托盘菜单或实验功能窗口关闭）
         _qt_overlay.info("💡 日志遮罩：默认开启，关闭请在 托盘菜单「日志遮罩」操作")
+        try:
+            print("📊 遮罩已排除在屏幕捕获之外（截图里不会出现遮罩）"
+                  if _qt_overlay.capture_excluded else
+                  "⚠️ 本机不支持遮罩捕获排除，仍使用「识别失败时让位」的兼容方案")
+        except Exception:
+            pass
         _schedule_qt_pump(root)
         _start_qt_watchdog(root)
         _start_mouse_ticker(root)
@@ -277,11 +288,24 @@ def _run_on_main(fn, timeout=2.0):
         pass
 
 
+def _overlay_capture_excluded():
+    """遮罩是否已排除在屏幕捕获之外。
+
+    排除成功后，遮罩盖在任何位置都不会污染截图 → 所有「让位」动作都没必要做。
+    """
+    try:
+        return bool(_qt_overlay is not None and _qt_overlay.capture_excluded)
+    except Exception:
+        return False
+
+
 def _overlay_avoid(x, y):
     """点击点若被日志遮罩覆盖，则临时把遮罩移到不遮挡的角落。
     返回原角落索引 token（供点完复原）；无需避让返回 None。线程安全"""
     if _qt_overlay is None:
         return None
+    if _overlay_capture_excluded():
+        return None   # 遮罩不进截图，盖在哪都不影响识别与点击
     token = {'v': None}
 
     def _do():
@@ -317,7 +341,9 @@ def _overlay_avoid_region(x, y, w, h):
     返回 token（供截图后复原）；无需避让返回 None。线程安全"""
     if _qt_overlay is None:
         return None
-    token = {'corner': None, 'hidden': False}
+    if _overlay_capture_excluded():
+        return None   # 遮罩不进截图，截图区域是否被盖住已无所谓
+    token = {'corner': None, 'offscreen': None}
 
     def _do():
         try:
@@ -339,28 +365,31 @@ def _overlay_avoid_region(x, y, w, h):
                     _qt_overlay.cycle_corner(idx)
                     token['corner'] = cur
                     return
-            # 四个角落都会挡住识别区域（区域太大）：临时隐藏遮罩
-            _qt_overlay.hide()
-            token['hidden'] = True
+            # 四个角落都会挡住识别区域（区域太大）：把遮罩临时挪到屏幕外。
+            # ⚠️ 不能用 hide()：每秒一次的遮罩看门狗只看 isVisible()，会在 1 秒内把它 show 回来
+            #（原实现就是 hide()，所以这条兜底路径一直是坏的）；移到屏幕外时窗口仍 visible，看门狗不动它。
+            token['offscreen'] = (g.x(), g.y())
+            _qt_overlay.move(-_qt_overlay.width() - 50, -_qt_overlay.height() - 50)
         except Exception:
             pass
 
     _run_on_main(_do)
-    if token['hidden']:
+    if token['offscreen'] is not None:
         return token
     return token['corner']
 
 
 def _overlay_restore_region(token):
-    """把遮罩移回/显示回来（region 版本；token 可能是角落索引或 {'hidden': True}）"""
+    """把遮罩移回/显示回来（region 版本；token 可能是角落索引或 {'offscreen': (x, y)}）"""
     if token is None or _qt_overlay is None:
         return
 
     def _do():
         try:
             if isinstance(token, dict):
-                if token.get('hidden'):
-                    _qt_overlay.show()
+                pos = token.get('offscreen')
+                if pos is not None:
+                    _qt_overlay.move(int(pos[0]), int(pos[1]))
             else:
                 _qt_overlay.cycle_corner(int(token))
         except Exception:
@@ -609,6 +638,8 @@ class App:
         self._scheduler_stop_event = threading.Event()
         self._schedule_thread = None
         self._settings_window = None
+        # 最近一次托盘气泡（同内容 3 秒内不重复发，见 _tray_notify）
+        self._last_tray_notify = {}
         self._wake_timer_handle = None
         self._last_wake_time = None
         self._ignore_cooldown_this_run = False
@@ -1072,12 +1103,29 @@ class App:
             return None
 
     def _tray_notify(self, title, message):
-        """托盘气泡提示（Windows；托盘不可用或 pystray 不支持时静默）"""
+        """托盘气泡提示（Windows）。
+
+        注意：这条路径以前把异常全吞掉了，所以「气泡没弹」时完全无从排查。
+        现在会打印失败原因（托盘未创建 / 平台不支持 / 底层异常），并在日志里记下发出的内容。
+        """
         try:
-            if self.tray_icon is not None and hasattr(self.tray_icon, 'notify'):
-                self.tray_icon.notify(str(message), str(title))
-        except Exception:
-            pass
+            if self.tray_icon is None:
+                print(f"ℹ️ 托盘气泡跳过（托盘图标未创建）：{message}")
+                return
+            if not getattr(type(self.tray_icon), "HAS_NOTIFICATION", True):
+                print(f"ℹ️ 托盘气泡跳过（当前平台/版本不支持托盘通知）：{message}")
+                return
+            # 3 秒内同内容不重复发（避免刷屏，也避免被系统当成重复通知丢弃）
+            key = (str(title), str(message))
+            now = time.time()
+            if (self._last_tray_notify.get("key") == key
+                    and now - self._last_tray_notify.get("at", 0.0) < 3.0):
+                return
+            self._last_tray_notify = {"key": key, "at": now}
+            self.tray_icon.notify(str(message), str(title))
+            print(f"🔔 托盘气泡：{message}")
+        except Exception as e:
+            print(f"⚠️ 托盘气泡发送失败：{e}（内容：{message}）")
 
     def _hide_to_tray(self):
         """隐藏主窗口到系统托盘（运行自动化时防止遮挡游戏画面）"""
@@ -1510,8 +1558,9 @@ class App:
     def _game_operations(self):
         return automation_runner.game_operations_wrapper(self)
 
-    def _sell_operations(self):
-        return automation_runner.sell_operations_wrapper(self)
+    def _sell_operations(self, skip_warehouse=False, ignore_time_window=False):
+        return automation_runner.sell_operations_wrapper(
+            self, skip_warehouse=skip_warehouse, ignore_time_window=ignore_time_window)
 
     def on_finish(self):
         automation_runner.on_finish(self)
@@ -1540,7 +1589,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v6.09.08  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v6.09.14  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')

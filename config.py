@@ -102,11 +102,14 @@ def load_sell_items_meta():
             changed = True
 
     # 移除元数据中存在但目录中已删除的图片
+    # （打日志：否则物品会「无声消失」，用户只会看到售卖时一件都没有）
     disk_set = set(disk_filenames)
-    before_count = len(existing_items)
-    existing_items = [i for i in existing_items if i["filename"] in disk_set]
-    if len(existing_items) != before_count:
+    missing = [i.get("filename", "") for i in existing_items if i["filename"] not in disk_set]
+    if missing:
+        print(f"⚠️ 以下售卖物品的图片在目录中已不存在，已从列表移除："
+              f"{'、'.join(missing)}")
         changed = True
+    existing_items = [i for i in existing_items if i["filename"] in disk_set]
 
     # 清理已废弃的「出售数量」字段（现在上架时点一下「最大数量」就挂满，不再需要）
     for i in existing_items:
@@ -163,6 +166,9 @@ DEFAULT_SETTINGS = {
     # 一键出售
     "enable_sell_after_run": False,   # 主流程完成后执行一键售卖
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
+    # 「最大数量」按钮固定点击坐标（上架后点它一次挂满数量；不找图、不叠加随机偏移）
+    # 设置 → 售卖物品 → 最大数量按钮 可改/屏幕取点；坐标任意一项为 0 表示跳过该步
+    "max_quantity_point": [1935, 740],
     "sell_time_enabled": False,       # 是否启用售卖时间区间
     "sell_time_start": "08:00",       # 售卖开始时间 (HH:MM)
     "sell_time_end": "22:00",         # 售卖结束时间 (HH:MM)
@@ -230,6 +236,10 @@ DEFAULT_SETTINGS = {
     # 日志遮罩（PyQt6 透明叠加层）
     "enable_log_overlay": True,                  # 是否启用日志遮罩（默认开启，开启时延迟加载 PyQt6）
     "log_overlay_corner": 0,                     # 日志遮罩所在角落（0=左下 1=右下 2=右上 3=左上，逆时针）
+    # 把遮罩从屏幕捕获里排除（Win10 2004+ 的 WDA_EXCLUDEFROMCAPTURE）：遮罩照常显示，
+    # 但截图里不含它 —— 否则它盖住哪个按钮，那个按钮的模板匹配就永远失败。
+    # 设 False 或系统不支持时会自动降级为「识别失败时让遮罩让位」的兼容方案。
+    "log_overlay_exclude_from_capture": True,
     # 自定义操作（主流程完成后自动执行，只要配置了工作流即启用）
     "custom_ops_confidence": 0.7,                # 自定义操作默认找图置信度
     "custom_ops_timeout": 5,                     # 自定义操作默认找图超时（秒）
@@ -516,7 +526,8 @@ TEMPLATE_CAPTURE_LIST = [
     ("Warehouse",           "picture/One_Click_Sell/Warehouse.png",       "仓库入口",     "在游戏主界面，截取「仓库」图标"),
     ("Sell",                "picture/One_Click_Sell/Sell.png",            "出售按钮",     "在物品详情界面，截取「出售」按钮"),
     ("List_Item",           "picture/One_Click_Sell/List.png",            "上架按钮",     "在出售界面，截取「上架」按钮"),
-    ("Max_Quantity",        "picture/One_Click_Sell/Max Quantity.png",    "最大数量按钮", "在上架界面，截取「最大数量」按钮"),
+    # 提示文案务必短：向导列表的行宽由最长的一行决定，写长了会把「模板设置」按钮挤到右边
+    ("Max_Quantity",        "picture/One_Click_Sell/Max Quantity.png",    "最大数量按钮", "已改为固定坐标点击"),
     ("Discount",            "picture/One_Click_Sell/Discount.png",        "降价按钮",     "在上架界面，截取「降价」按钮"),
     ("Confirm_Listing",     "picture/One_Click_Sell/Confirm Listing.png", "确认上架按钮", "在上架界面，截取「确认上架」按钮"),
 ]

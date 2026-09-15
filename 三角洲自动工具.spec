@@ -62,4 +62,7 @@ exe = EXE(
     entitlements_file=None,
     uac_admin=True,
     icon=['picture\\icon\\icon.ico'],
+    # 文件版本资源：让 exe 的「属性 → 详细信息」显示版本号
+    # （改版本号时三处要同步：本文件不涉及数字、version_info.txt 的 filevers / FileVersion / ProductVersion）
+    version='version_info.txt',
 )

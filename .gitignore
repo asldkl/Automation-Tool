@@ -54,3 +54,6 @@ best.onnx
 
 # ZCode 运行目录（工具/插件运行时，不入库）
 .zcode/
+
+# WorkBuddy 工程记忆目录（AI 助手运行时数据，不入库）
+.workbuddy/

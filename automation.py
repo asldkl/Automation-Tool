@@ -129,16 +129,29 @@ def _in_sell_window(settings):
         return True
 
 
-def sell_operations(settings, stop_event, set_operation, run_insert=None):
+def sell_operations(settings, stop_event, set_operation, run_insert=None, skip_warehouse=False,
+                    ignore_time_window=False):
     """
     一键出售流程：打开仓库，遍历售卖物品执行出售（每件物品走一遍）
+    skip_warehouse: True 时不点「仓库入口」，直接从「逐个识别物品」开始
+                    （出售测试用：由用户自行先进入仓库界面）
+    ignore_time_window: True 时不检查「售卖时间区间」（出售测试用：手动点测试就该能测，
+                    否则在区间外测试必然一件都不卖；主流程保持 False 仍受时间限制）
     run_insert: 插入步骤执行回调 ri(var_name, timing)
     返回 (success: bool, stats: dict)
-    stats: {"total": N, "sold": N, "not_found": N, "failed": N}
+    stats: {"total": N, "sold": N, "not_found": N, "failed": N,
+            "reason": "为什么会「一件都没卖」的原因码", "missing_files": N}
+           reason 取值：""(正常) / "no_items"(没配置物品) / "out_of_window"(不在售卖时段)
+                        / "warehouse_not_found"(找不到仓库入口) / "stopped"(收到停止信号)
+                        / "all_missing"(配了物品但图片文件都不在了)
+           —— 调用方（出售测试弹窗）据此给出准确提示，避免一条笼统文案套所有情况
 
-    注：上架后会点一下「最大数量」按钮（模板 Max_Quantity），一次就把数量挂满，
+    注：上架后会点一下「最大数量」把数量一次挂满 —— 已改为**固定坐标点击**
+    （settings["max_quantity_point"]，默认 [1935, 740]），不再依赖模板 Max_Quantity，
+    也不叠加拟人随机偏移；坐标为 0 表示跳过该步，坐标超出屏幕范围同样跳过（并告警）。
     所以不再有「出售数量」配置，也不再有补卖轮数。"""
-    sell_stats = {"total": 0, "sold": 0, "not_found": 0, "failed": 0}
+    sell_stats = {"total": 0, "sold": 0, "not_found": 0, "failed": 0,
+                  "reason": "", "missing_files": 0}
     print("\n--- 一键出售 ---")
     set_operation("一键出售")
 
@@ -147,23 +160,33 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
     sell_items = items_meta.get("items", [])
     if not sell_items:
         print("⚠️ 未配置任何售卖物品，跳过售卖")
+        sell_stats["reason"] = "no_items"
         return False, sell_stats
 
-    # 检查售卖时间区间
-    if not _in_sell_window(settings):
+    # 检查售卖时间区间（出售测试传 ignore_time_window=True 可跳过）
+    if ignore_time_window and not _in_sell_window(settings):
+        print(f"⏭️ 出售测试：忽略「售卖时间区间」限制"
+              f"（{settings.get('sell_time_start', '08:00')}-{settings.get('sell_time_end', '22:00')}）")
+    elif not _in_sell_window(settings):
         now = datetime.datetime.now()
         print(f"⏰ 当前时间 {now.strftime('%H:%M')} 不在售卖区间 "
               f"{settings.get('sell_time_start', '08:00')}-{settings.get('sell_time_end', '22:00')} 内，跳过售卖")
+        sell_stats["reason"] = "out_of_window"
         return False, sell_stats
 
     # 清除模板缓存，确保使用最新模板
     utils.clear_template_cache()
 
-    if _click(run_insert, "Warehouse", config.Warehouse, 15) is not True:
-        print("❌ 未找到仓库入口（或插入步骤失败），结束出售")
-        return False, sell_stats
-    # 等待仓库界面完全加载
-    time.sleep(3)
+    if skip_warehouse:
+        # 出售测试：不点「仓库入口」，由用户自行先进入仓库界面
+        print("⏭️ 跳过「打开仓库」步骤（由用户自行进入仓库界面）")
+    else:
+        if _click(run_insert, "Warehouse", config.Warehouse, 15) is not True:
+            print("❌ 未找到仓库入口（或插入步骤失败），结束出售")
+            sell_stats["reason"] = "warehouse_not_found"
+            return False, sell_stats
+        # 等待仓库界面完全加载
+        time.sleep(3)
 
     sell_confidence = settings.get("sell_confidence", 0.55)
 
@@ -172,12 +195,14 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
 
     for item in sell_items:
         if stop_event.is_set():
+            sell_stats["reason"] = "stopped"
             return False, sell_stats
 
         item_filename = item.get("filename", "")
         item_path = os.path.join(config.SELL_ITEMS_DIR, item_filename)
         if not os.path.exists(item_path):
             print(f"⚠️ 物品图片不存在：{item_filename}")
+            sell_stats["missing_files"] += 1
             continue
 
         item_name = item.get("name", item_filename)
@@ -187,6 +212,7 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
         sell_stats["total"] += 1
 
         if stop_event.is_set():
+            sell_stats["reason"] = "stopped"
             return False, sell_stats
 
         # 用户上传的出售物品图片无对应 OCR 文本，直接图像匹配
@@ -211,12 +237,32 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
         utils.human_pause()
 
         # 上架后、降价前：点一下「最大数量」，一次把数量挂满（不用再配「出售数量」）。
-        # 模板没上传时跳过本步（兼容旧流程）；上传了但没找到只告警，不算失败
-        if os.path.exists(config.Max_Quantity):
-            if _click(run_insert, "Max_Quantity", config.Max_Quantity, 5) is not True:
-                print("  ⚠️ 未找到「最大数量」按钮，本次按界面默认数量上架")
-            else:
-                print("  🔢 已选择最大数量")
+        # 已改为「固定坐标点击」（默认 1935,740；模板上传向导第 30 项「模板设置」→「点击坐标」可改）：
+        # 该按钮位置固定，走模板匹配反而会因模板缺失或识别失败而静默跳过。
+        # 这里严格点在坐标上，不叠加拟人随机偏移；坐标填 0 或超出屏幕范围都跳过本步。
+        mq = settings.get("max_quantity_point") or [1935, 740]
+        try:
+            mq_x, mq_y = int(mq[0]), int(mq[1])
+        except (TypeError, ValueError, IndexError):
+            mq_x, mq_y = 1935, 740
+        try:
+            _scr_w, _scr_h = pyautogui.size()
+        except Exception:
+            _scr_w, _scr_h = 0, 0
+        mq_out_of_range = bool(_scr_w and _scr_h and (mq_x > _scr_w or mq_y > _scr_h))
+        if not _hook(run_insert, "Max_Quantity", "before"):
+            print("  ⚠️ 「最大数量」插入步骤(点击前)失败，跳过本步")
+        elif mq_x <= 0 or mq_y <= 0:
+            print("  ℹ️ 未设置「最大数量」坐标，跳过本步")
+        elif mq_out_of_range:
+            # 越界点击会被系统截到屏幕边缘、可能点到别的东西，宁可跳过
+            print(f"  ⚠️ 「最大数量」坐标 {mq_x},{mq_y} 超出屏幕范围（{_scr_w}x{_scr_h}），已跳过该步")
+        else:
+            utils.smooth_move_to(mq_x, mq_y)
+            utils.human_click_delay()
+            pyautogui.click()
+            print(f"  🔢 已选择最大数量（固定坐标 {mq_x},{mq_y}）")
+            _hook(run_insert, "Max_Quantity", "after")
             utils.human_pause()
 
         if discount_times > 0:
@@ -236,6 +282,10 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None):
         time.sleep(1.5)
         sell_stats["sold"] += 1
         print(f"✅ {item_name} 出售完成")
+
+    # 一件都没轮到处理：说明配置的物品其图片文件都不在了（列表里每一条都被跳过）
+    if sell_stats["total"] == 0 and sell_stats["missing_files"] > 0:
+        sell_stats["reason"] = "all_missing"
 
     print(f"✅ 一键出售完成：共 {sell_stats['total']} 件，"
           f"成功 {sell_stats['sold']} 件，"

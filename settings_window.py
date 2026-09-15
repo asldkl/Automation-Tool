@@ -464,7 +464,7 @@ class SettingsWindow:
         ttk.Spinbox(net_row, from_=1, to=30, textvariable=self.network_wait_min_var, width=4).pack(side=tk.LEFT, padx=3)
         ttk.Label(net_row, text="分钟（每 30 秒探测一次）").pack(side=tk.LEFT)
         ttk.Label(autostart_frame,
-                  text="开启后：开机时若校园网尚未认证、连不上验证服务器，将不弹窗口、只驻留托盘并提示「等待网络自动重试」，连上后再验证/自动运行；超时仍不通则按原失败提示",
+                  text="开启后不弹窗、只驻留托盘重试，连上后再验证；超时仍不通按失败处理",
                   style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(2, 0))
 
         # ----- 执行操作选择 -----
@@ -2065,6 +2065,12 @@ class SettingsWindow:
         btn_frame = ttk.LabelFrame(parent, text="  物品操作  ", style='SettingsCard.TLabelframe', padding=10)
         btn_frame.pack(fill=tk.X, pady=(0, 8))
 
+        # 图片丢失提示：列表是「打开设置窗口那一刻」的内存快照，而售卖流程每次都从磁盘重读，
+        # 两者可能不一致 —— 不提示的话会出现「界面里明明有物品、跑起来一件都没有」
+        self._sell_missing_label = ttk.Label(btn_frame, text="", style='SettingsSmall.TLabel',
+                                             foreground="#c0392b", wraplength=560, justify=tk.LEFT)
+        self._sell_missing_label.pack(anchor=tk.W, pady=(0, 6))
+
         btn_row = ttk.Frame(btn_frame, style='SettingsInner.TFrame')
         btn_row.pack(fill=tk.X)
         ttk.Button(btn_row, text="添加物品", width=10,
@@ -2074,7 +2080,9 @@ class SettingsWindow:
         ttk.Button(btn_row, text="上移", width=8,
                    command=lambda: self._move_sell_item(-1)).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="下移", width=8,
-                   command=lambda: self._move_sell_item(1)).pack(side=tk.LEFT)
+                   command=lambda: self._move_sell_item(1)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="从磁盘刷新", width=12,
+                   command=self._reload_sell_items).pack(side=tk.LEFT)
 
         # ----- 邮箱货币领取 -----
         frame_email = ttk.LabelFrame(parent, text="  邮箱货币领取  ", style='SettingsCard.TLabelframe', padding=12)
@@ -2131,16 +2139,46 @@ class SettingsWindow:
         ttk.Label(sell_row3, text="说明：测试前请先回到游戏仓库界面",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT)
 
+    def _reload_sell_items(self):
+        """从磁盘重新加载售卖物品列表。
+
+        列表原本只在「设置窗口构建时」读一次（gui_app.open_settings 对已存在的窗口只做
+        lift，不重建），而售卖流程每次都从磁盘重读 —— 中途磁盘发生变化时两者会不一致。"""
+        self._sell_items_meta = config.load_sell_items_meta()
+        self._refresh_sell_treeview()
+
     def _refresh_sell_treeview(self):
-        """刷新售卖物品 Treeview"""
+        """刷新售卖物品 Treeview；图片文件已丢失的条目标红提示"""
         for item in self.sell_tree.get_children():
             self.sell_tree.delete(item)
+        try:
+            self.sell_tree.tag_configure("missing", foreground="#c0392b")
+        except Exception:
+            pass
+        missing = 0
         for item in self._sell_items_meta.get("items", []):
-            self.sell_tree.insert("", tk.END, values=(
-                item.get("name", ""),
-                item.get("discount_times", 0),
-                item.get("filename", "")
-            ))
+            filename = item.get("filename", "")
+            exists = bool(filename) and os.path.exists(
+                os.path.join(config.SELL_ITEMS_DIR, filename))
+            if not exists:
+                missing += 1
+            self.sell_tree.insert(
+                "", tk.END,
+                tags=() if exists else ("missing",),
+                values=(
+                    item.get("name", ""),
+                    item.get("discount_times", 0),
+                    filename if exists else f"{filename}（图片已丢失）"
+                ))
+        label = getattr(self, "_sell_missing_label", None)
+        if label is not None:
+            try:
+                label.config(text=(
+                    f"⚠️ 有 {missing} 个条目的图片文件已不存在（目录："
+                    f"{config.SELL_ITEMS_DIR}），这些物品不会被出售，请重新「添加物品」。"
+                    if missing else ""))
+            except Exception:
+                pass
 
     def _add_sell_item(self):
         """添加售卖物品图片（支持多选，自动跳过重复）"""
@@ -2192,9 +2230,17 @@ class SettingsWindow:
         if not sel:
             messagebox.showinfo("提示", "请先选择要删除的物品。")
             return
-        item_vals = self.sell_tree.item(sel[0], "values")
-        item_name = item_vals[0]
-        filename = item_vals[3]
+        row_id = sel[0]
+        item_name = self.sell_tree.item(row_id, "values")[0]
+        # 按下标定位（不要去解析显示文本：图片丢失的条目文件名带「（图片已丢失）」装饰，
+        # 解析文本会导致匹配不上、删不掉）。原实现还写死了 item_vals[3]（只有 3 列，越界必抛
+        # IndexError，窗口化打包后异常无处可见，表现为「点了删除没反应」）。
+        idx = self.sell_tree.index(row_id)
+        items = self._sell_items_meta.get("items", [])
+        if idx >= len(items):
+            messagebox.showinfo("提示", "列表已变化，请点「从磁盘刷新」后重试。")
+            return
+        filename = items[idx].get("filename", "")
         if not messagebox.askyesno("确认", f"确定删除售卖物品「{item_name}」？"):
             return
         try:
@@ -2202,7 +2248,7 @@ class SettingsWindow:
         except Exception:
             pass
         self._sell_items_meta["items"] = [
-            i for i in self._sell_items_meta["items"] if i["filename"] != filename
+            i for i in items if i.get("filename") != filename
         ]
         self._refresh_sell_treeview()
         self._save_sell_items_meta()
@@ -2303,25 +2349,96 @@ class SettingsWindow:
         if self.app.running:
             messagebox.showwarning("提示", "任务运行中，请等待完成后再测试。")
             return
+        # 跑之前先从磁盘重读一遍：界面上的列表只是打开设置窗口时的快照，
+        # 若磁盘已被清空（图片被删/元数据被覆盖），这里会立刻发现，而不是等流程报「共 0 件」
+        self._reload_sell_items()
         items = self._sell_items_meta.get("items", [])
         if not items:
-            messagebox.showwarning("提示", "未配置任何售卖物品，请先添加物品。")
+            messagebox.showwarning(
+                "提示",
+                "未配置任何售卖物品，请先添加物品。\n\n"
+                "注意：设置窗口里的列表可能只是打开时的旧快照，已按磁盘内容重新读取。\n"
+                f"物品目录：{config.SELL_ITEMS_DIR}")
             return
         import threading
 
         def _run():
             import pyautogui
+
+            # 出售测试原先不切换日志文件（_set_run_log_file 只在完整运行时调用），
+            # 导致测试过程只有主界面日志框/遮罩上闪过，出问题无从排查。这里单开一个日志文件。
+            try:
+                self.app._set_run_log_file()
+            except Exception:
+                pass
+            print("\n===== 出售测试开始 =====")
+            print(f"物品目录：{config.SELL_ITEMS_DIR}")
+            print(f"待售物品：{len(items)} 个")
+            print("说明：出售测试不自动打开仓库，直接从「逐个识别物品」开始，"
+                  "请先自行进入仓库界面")
+
             start_time = __import__('time').time()
             pyautogui.press("Tab")
             __import__('time').sleep(1)
-            success, sell_stats = self.app._sell_operations()
+            # skip_warehouse=True：测试不点「仓库入口」，由用户自行进入仓库界面
+            # ignore_time_window=True：手动点测试就该能测，不被「售卖时间区间」拦住
+            # （主流程仍然遵守时间区间，只有这个测试按钮例外）
+            success, sell_stats = self.app._sell_operations(
+                skip_warehouse=True, ignore_time_window=True)
             elapsed = __import__('time').time() - start_time
+
+            # 一件都没卖时，按 sell_operations 返回的 reason 给出**准确**原因。
+            # （原先是一条笼统文案套所有情况，曾把「不在售卖时间区间」误报成「请先添加物品」）
+            tip = ""
+            if sell_stats.get("sold", 0) == 0:
+                _s = config.load_settings()
+                _win_txt = (f"{_s.get('sell_time_start', '08:00')}-{_s.get('sell_time_end', '22:00')}")
+                reason_text = {
+                    "no_items": ("物品列表是空的 —— 磁盘上没有任何物品图片。\n"
+                                 f"目录：{config.SELL_ITEMS_DIR}\n"
+                                 "请先在「设置 → 售卖物品 → 添加物品」添加物品截图。"),
+                    "out_of_window": ("当前时间不在「售卖时间区间」内，一键出售被时间限制跳过了。\n"
+                                      f"当前区间：{_win_txt}\n"
+                                      "可在「设置 → 售卖物品 → 售卖时间区间」改时间或取消勾选"
+                                      "「启用时间区间限制」。"),
+                    "warehouse_not_found": ("没有找到「仓库入口」。主流程会自动开仓库，"
+                                            "但出售测试不会 —— 需要你自己先进仓库界面。"),
+                    "stopped": "流程收到了「停止」信号就退出了，请重新运行一次程序再试。",
+                    "all_missing": ("配置了物品，但它们的图片文件都已不存在（列表里每一条都被跳过）。\n"
+                                    f"目录：{config.SELL_ITEMS_DIR}"),
+                }.get(sell_stats.get("reason", ""))
+                if reason_text:
+                    tip = f"\n\n⚠️ 未执行售卖 —— {reason_text}"
+                else:
+                    tip = ("\n\n⚠️ 有识别到物品但一件都没上架，常见原因：\n"
+                           f"① 物品匹配置信度太高（当前 {self.sell_confidence_var.get():.2f}，"
+                           "可降到 0.5 左右试试）\n"
+                           "② 测试时不在仓库界面（本测试不会自动开仓库）\n"
+                           "③ 找不到「出售 / 上架 / 确认上架」模板\n"
+                           "④ 物品截图不是「物品图标」的裁剪图 —— "
+                           f"本次有 {sell_stats.get('not_found', 0)} 件未找到\n"
+                           "详见下方日志文件。")
+
             stats_text = (f"测试耗时：{elapsed:.1f} 秒\n"
                           f"共 {sell_stats['total']} 件物品\n"
                           f"成功上架：{sell_stats['sold']} 件\n"
                           f"未找到：{sell_stats['not_found']} 件\n"
                           f"失败：{sell_stats['failed']} 件")
-            self.win.after(0, lambda: messagebox.showinfo("出售测试完成", stats_text))
+            log_path = getattr(self.app, "_log_file_path", "") or ""
+            if log_path:
+                stats_text += f"\n\n日志：{log_path}"
+            stats_text += tip
+            print("===== 出售测试结束 =====")
+
+            def _done():
+                # 按磁盘真实内容重建列表：把「图片已丢失」的幽灵条目立刻清掉并标红
+                try:
+                    self._reload_sell_items()
+                except Exception:
+                    pass
+                messagebox.showinfo("出售测试完成", stats_text)
+
+            self.win.after(0, _done)
 
         threading.Thread(target=_run, daemon=True).start()
 
