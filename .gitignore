@@ -12,6 +12,8 @@ build/
 dist_nuitka/
 dist_nuitka_standalone/
 installer_output/
+# 样本采集小工具的便携版（onedir 打包产物 + 同名 .zip 已被上面的 *.zip 忽略）
+样本采集工具_便携版/
 
 # Virtual environments
 venv/
@@ -42,6 +44,8 @@ Interception-master/
 # User data (runtime generated)
 ~/.delta_auto_*
 LCA-main
+# 样本采集小工具的默认输出目录（运行时生成）
+captured_samples/
 
 # YOLO 训练工作区（本地上使用，不纳入项目仓库）
 yolo_train/

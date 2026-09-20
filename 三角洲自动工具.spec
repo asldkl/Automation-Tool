@@ -16,12 +16,15 @@ a = Analysis(
            ('picture\\Navigation', 'picture\\Navigation'),
            ('picture\\wegame_login', 'picture\\wegame_login'),
            ('picture\\icon', 'picture\\icon'),
-           ('picture\\sniper', 'picture\\sniper'),
-           ('best.onnx', '.')] + _rapidocr_datas + _onnxrt_datas,
+           ('picture\\sniper', 'picture\\sniper')]
+           # 滑块 YOLO 模型 best.onnx（约 100MB）不再打包：由用户在
+           # 设置→验证码设置→滑块验证→「导入模型」导入到 %APPDATA%/DeltaAutoTool/models/
+    + _rapidocr_datas + _onnxrt_datas,
     hiddenimports=[
         'config', 'utils', 'settings_window', 'template_capture', 'cooldown_manager', 'automation', 'machine_fingerprint', 'relative_mouse_move',
         'email_notifier', 'account_manager', 'scheduler', 'cooldown_watcher', 'server_client', 'automation_runner', 'asset_db', 'interception_keyboard',
         'custom_ops', 'custom_ops_window', 'template_insert_steps', 'announcements', 'sell_pending', 'template_click_coords', 'ai_visual_captcha', 'slider_captcha', 'captcha_router',
+        'sample_collector',
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',
         'cv2', 'numpy', 'pyautogui',

@@ -788,6 +788,25 @@ class SettingsWindow:
         ttk.Button(sniper_btn_frame, text="打开皮肤抢购", style='Accent.TButton',
                    command=lambda: self._open_sniper_window(getattr(self, '_dev_win', None)), width=14).pack(side=tk.LEFT)
 
+        # ----- 样本采集（独立小工具，嵌成子窗口） -----
+        frame_sample = ttk.LabelFrame(parent, text="  样本采集  ",
+                                      style='SettingsCard.TLabelframe', padding=12)
+        frame_sample.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame_sample,
+                  text="批量采集截图样本：先点一下指定位置（如验证码弹窗的「刷新」）→ 等 1 秒让画面加载 "
+                       "→ 截取框选区域 → 循环 N 次。\n"
+                       "用途：扩充验证码测试集（目标 50+ 张）。采集期间会自动隐藏窗口，点「停止」可随时中断。",
+                  style='SettingsSmall.TLabel', justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 8))
+        sample_row = ttk.Frame(frame_sample, style='SettingsInner.TFrame')
+        sample_row.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(sample_row, text="打开样本采集", style='Accent.TButton',
+                   command=self._open_sample_collector, width=14).pack(side=tk.LEFT)
+        ttk.Label(frame_sample,
+                  text="提示：采集前请先停掉正在跑的自动任务（会抢鼠标）；"
+                       "若已开启「日志遮罩」，采到的图可能带上遮罩内容。",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(4, 0))
+
         # ----- 图标识别点击（用模板上传的图片） -----
         frame_click = ttk.LabelFrame(parent, text="  图标识别点击  ", style='SettingsCard.TLabelframe', padding=12)
         frame_click.pack(fill=tk.X, pady=(0, 8))
@@ -815,6 +834,66 @@ class SettingsWindow:
                 self._dev_click_combo.current(0)
         except Exception:
             pass
+
+    def _open_sample_collector(self):
+        """打开「样本采集」小工具（sample_collector.py，作为子窗口嵌进实验功能界面）
+
+        走导航栈：隐藏实验功能窗口 → 打开采集窗口 → 关闭时恢复实验功能窗口。
+        """
+        parent = getattr(self, '_dev_win', None)
+        if parent is None or not parent.winfo_exists():
+            parent = self.win
+
+        def _open():
+            try:
+                import sample_collector
+            except Exception as e:
+                try:
+                    parent.deiconify()
+                except Exception:
+                    pass
+                messagebox.showerror("样本采集", f"加载 sample_collector.py 失败：{e}", parent=parent)
+                return
+
+            # 先摘掉实验功能窗口的模态 grab：它马上要被导航栈隐藏，
+            # 「隐藏的窗口持有 grab」会让整个应用收不到鼠标键盘（表现为假死）
+            try:
+                parent.grab_release()
+            except Exception:
+                pass
+
+            # 样式映射：跟实验功能界面统一（card=卡片边框 / accent=蓝色主按钮）
+            sc = sample_collector.open_in(parent, styles={
+                "card": "SettingsCard.TLabelframe",
+                "button": "TButton",
+                "accent": "Accent.TButton",
+            })
+            self._sample_collector = sc     # 留引用，避免被 GC
+            win = sc.root
+            utils.set_window_icon(win)
+            utils.restore_window_geometry(win, "sample_collector_geometry", "820x560")
+
+            def _close():
+                """关闭采集窗口：存尺寸 → 出导航栈（销毁自身并恢复实验功能窗口）→ 还回模态锁"""
+                utils.save_window_geometry(win, "sample_collector_geometry")
+                utils.nav_pop(win)
+                try:
+                    parent.grab_set()
+                except Exception:
+                    pass
+
+            sc.on_close = _close
+            # 等窗口真正映射出来再抢 grab（太早会报「window not viewable」）
+            def _grab():
+                try:
+                    win.grab_set()
+                    win.lift()
+                    win.focus_force()
+                except Exception:
+                    pass
+            win.after(80, _grab)
+
+        utils.nav_push(parent, _open)
 
     def _click_selected_template(self):
         """对下拉选中的模板（已上传自定义图优先）做识别点击（后台执行，避免卡界面）"""
@@ -1074,12 +1153,20 @@ class SettingsWindow:
         # ---------- 滑块验证（YOLO）—— 独立标签页 ----------
         frame_slider = ttk.LabelFrame(tab_slider, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
         frame_slider.pack(fill=tk.X, padx=10, pady=(10, 8))
-        ttk.Label(frame_slider, text="整屏定位缺口并拟人拖动，无需框选区域",
+        ttk.Label(frame_slider, text="整屏定位缺口并拟人拖动，无需框选区域；识别模型不随程序打包，需自行导入",
                   style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
         self._slider_enabled_var = tk.BooleanVar(value=s.get("slider_yolo_enabled", False))
-        ttk.Checkbutton(frame_slider, text="启用滑块自动拖动（需程序目录有 best.onnx）",
+        ttk.Checkbutton(frame_slider, text="启用滑块自动拖动（需先导入模型）",
                         variable=self._slider_enabled_var,
                         style='Settings.TCheckbutton').pack(anchor='w', pady=(0, 6))
+        slider_model_row = ttk.Frame(frame_slider, style='SettingsInner.TFrame')
+        slider_model_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(slider_model_row, text="识别模型：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
+        self._slider_model_status_var = tk.StringVar(value=self._slider_model_status_text())
+        ttk.Label(slider_model_row, textvariable=self._slider_model_status_var,
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(slider_model_row, text="导入模型", width=10,
+                   command=self._import_slider_model).pack(side=tk.LEFT)
         slider_row1 = ttk.Frame(frame_slider, style='SettingsInner.TFrame')
         slider_row1.pack(fill=tk.X)
         ttk.Label(slider_row1, text="检测置信度：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
@@ -1603,15 +1690,54 @@ class SettingsWindow:
             except Exception:
                 pass
 
+    def _slider_model_status_text(self):
+        """滑块 YOLO 模型当前状态文本（用户导入目录 → 程序目录 → 未导入）"""
+        import slider_captcha
+        path = slider_captcha.resolve_model_path()
+        if not path:
+            return "未导入"
+        if os.path.abspath(path) == os.path.abspath(config.SLIDER_MODEL_PATH):
+            return "已导入"
+        return "已就绪（程序目录）"
+
+    def _import_slider_model(self):
+        """导入滑块验证 YOLO 模型：复制到 %APPDATA%/DeltaAutoTool/models/best.onnx，导入立即生效"""
+        import shutil
+        _parent = self._captcha_parent()
+        src = filedialog.askopenfilename(
+            title="选择滑块验证模型（best.onnx）",
+            filetypes=[("ONNX 模型", "*.onnx"), ("所有文件", "*.*")],
+            parent=_parent)
+        if not src:
+            return
+        try:
+            os.makedirs(config.SLIDER_MODEL_DIR, exist_ok=True)
+            shutil.copy2(src, config.SLIDER_MODEL_PATH)
+            try:
+                import slider_captcha
+                slider_captcha.reset_session()   # 旧会话按路径判等，重新导入后必须丢弃
+            except Exception:
+                pass
+            self._slider_model_status_var.set(self._slider_model_status_text())
+            print(f"🧩 滑块验证模型已导入：{src} → {config.SLIDER_MODEL_PATH}")
+            messagebox.showinfo(
+                "导入成功",
+                f"模型已导入：\n{config.SLIDER_MODEL_PATH}\n\n导入立即生效，无需重启程序。",
+                parent=_parent)
+        except Exception as e:
+            messagebox.showerror("导入失败", f"模型导入失败：{e}", parent=_parent)
+
     def _test_slider_yolo(self):
         """测试滑块 YOLO：保存当前输入后对当前屏幕跑一次检测+处理。
         不要求勾选启用，只需权重文件存在（测试链路绕过开关）"""
         import slider_captcha
         self._save_captcha_settings(silent=True)
         if not slider_captcha.resolve_model_path():
-            messagebox.showwarning("缺少模型",
-                                   f"未找到 {slider_captcha.MODEL_FILENAME}，请把权重文件放到程序目录。",
-                                   parent=self._captcha_parent())
+            messagebox.showwarning(
+                "缺少模型",
+                f"未找到 {slider_captcha.MODEL_FILENAME}。\n\n"
+                "请先在「滑块验证」页点「导入模型」选择模型文件。",
+                parent=self._captcha_parent())
             return
         self._iconify_for_captcha_test()
         slider_captcha.test_slider_yolo(self.app)

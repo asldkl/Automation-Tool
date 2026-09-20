@@ -9,10 +9,12 @@ AI 视觉验证码处理（WeGame 登录点击式图片验证）
   （智谱 / 阿里百炼 / 月之暗面 / 豆包方舟 / 硅基流动 等国内接口格式一致）
 """
 import base64
+import http.client
 import json
 import os
 import random
 import re
+import socket
 import time
 import urllib.request
 import urllib.error
@@ -22,8 +24,11 @@ import numpy as np
 
 import utils
 
-# 单次请求超时（秒）
-REQUEST_TIMEOUT_SECONDS = 60.0
+# 单次请求超时（秒）。实测 glm-5.3-flash 视觉单次 16–150s、成功调用均值约 59s，
+# 原来给 60s 会让「均值正好压线」的成功调用被当超时丢弃。
+REQUEST_TIMEOUT_SECONDS = 180.0
+# 超时/网络异常的重试次数（与 429/5xx 的 retries 分开计，避免最坏耗时叠加过大）
+TIMEOUT_RETRIES = 1
 # 复核轮次间等待（点击后给页面反应时间）
 RECHECK_WAIT_SECONDS = 2.5
 # 429/5xx 重试退避基数（秒）：第 n 次重试等待 n×该值；免费模型高峰期限流常见
@@ -226,7 +231,12 @@ def get_coord_space(settings):
     return COORD_SPACE_AUTO
 
 
-def _build_prompt(width, height):
+def _build_prompt_baseline(width, height):
+    """原有方案：逐字保留改造前的提示词（内容题 / 题干未判定时使用）。
+
+    ⚠️ 本函数内的文案必须与改造前**逐字一致** —— 内容题的通过率就是在这一版上验证的。
+    要调整内容题请新开函数，别改这里（用例 test_build_prompt_splits_by_question_kind 会盯住）。
+    """
     return (
         "你是登录验证码识别助手。这是电脑屏幕截图（可能只截取了验证码所在区域），"
         f"分辨率 {width}x{height} 像素。判断图中是否出现验证码（点选/图片验证）。\n"
@@ -268,6 +278,78 @@ def _build_prompt(width, height):
         "- 图中确实没有验证码时：captcha 给 false（用于兜底判定，避免在游戏画面上乱点）；"
         "确认有验证码只是拿不准位置时：仍要给最可能的 targets，不要留空"
     )
+
+
+# ===== 题干类型 → 提示词分流 =====
+# 题干类型先由 OCR 判死（captcha_router.detect_question_kind），再据此选提示词，
+# 而不是让模型自己在 prompt 里判 mode：两类题需要的措辞是**互斥**的，
+# 混在一条 prompt 里靠「仅当…时生效」这种软约束，模型不一定遵守。
+QUESTION_KIND_CONTENT = "content"   # 内容题：题目给事物（「海浪」「红绿灯」）→ 原有方案
+QUESTION_KIND_TEXT = "text"         # 包含文字题：题目给字（「包含文字：川」）→ 原有方案 + 加强
+QUESTION_KIND_UNKNOWN = "unknown"   # OCR 没判出来 → 退回原有方案（最保守）
+
+# 「包含文字」题的 3 处加强：在上面基线上做替换，每个替换串必须恰好命中 1 次。
+# 这三处正是实测把该类题从 0/6 拉到 3/3 的改动，方向都是「宁可多选」——
+# 也正因方向激进，才必须只让包含文字题看到，绝不能留在两类题共用的措辞里。
+_TEXT_QUESTION_OVERRIDES = (
+    (
+        "或做成半透明水印，而不是「画面内容跟这个字的意思像」（山河照片不等于有川字）\n",
+        "或做成半透明水印，而不是「画面内容跟这个字的意思像」（山河照片不等于有川字）。"
+        "这类题符合要求的图片可能有 1 张，也可能有 4 张甚至 5 张，不要预设数量\n",
+    ),
+    (
+        "然后据此给出 targets。这些图里往往只有一两张、最多几张符合要求，不要因为不确定就跳过\n",
+        "然后据此给出 targets。targets 数量必须等于 checks 里判为「是」的张数："
+        "checks 里写了「形似」「隐约呈X字」「疑似」「有竖纹」的图块一律算「是」，必须出现在 targets 里；"
+        "只有明确写下「完全看不出字形」的才可以不选\n",
+    ),
+    (
+        "（例外：题目明确要求找「包含文字X」的图片时，图里的文字即使不显眼也要算）\n",
+        "【例外】题目要求找「包含文字X」的图片时反过来以「宁多勿漏」为准：只要图里能看出任何字形痕迹"
+        "（山脊/水流/纹理/阴影构成的竖向笔画、被画进景物里的字、半透明水印）就必须选，"
+        "不要因为「不显眼」「纹理杂乱」「看着像风景」而漏掉\n",
+    ),
+)
+
+
+def _build_prompt_image_text(width, height):
+    """「包含文字：X」题专用提示词 = 原有方案 + 3 处加强（实测 0/6 → 3/3）"""
+    prompt = _build_prompt_baseline(width, height)
+    for old, new in _TEXT_QUESTION_OVERRIDES:
+        if prompt.count(old) != 1:
+            raise ValueError(
+                "包含文字题加强规则替换失败：基线提示词已被改动，"
+                "请同步更新 _TEXT_QUESTION_OVERRIDES")
+        prompt = prompt.replace(old, new)
+    return prompt
+
+
+def _build_prompt(width, height, kind=QUESTION_KIND_UNKNOWN):
+    """按 OCR 判出的题干类型选提示词。
+
+    content / unknown → 原有方案（逐字未改，内容题沿用已验证的效果）
+    text              → 原有方案 + 包含文字题加强规则
+    """
+    if str(kind or "").strip().lower() == QUESTION_KIND_TEXT:
+        return _build_prompt_image_text(width, height)
+    return _build_prompt_baseline(width, height)
+
+
+def _detect_question_kind(settings):
+    """OCR 判定题干类型；任何失败都退回 unknown（= 原有方案），不让判型拖垮验证码流程"""
+    try:
+        import captcha_router
+        kind = captcha_router.detect_question_kind(settings)
+    except Exception as e:
+        print(f"⚠️ OCR 题干判型失败，改用原有提示词：{e}", flush=True)
+        return QUESTION_KIND_UNKNOWN
+    if kind == QUESTION_KIND_TEXT:
+        print("🔎 OCR 判型：「包含文字」类题目 → 使用加强提示词", flush=True)
+    elif kind == QUESTION_KIND_CONTENT:
+        print("🔎 OCR 判型：内容题 → 使用原有提示词", flush=True)
+    else:
+        print("🔎 OCR 未判出题干类型 → 使用原有提示词", flush=True)
+    return kind
 
 
 def _repair_unescaped_quotes(text):
@@ -644,7 +726,10 @@ def _capture_screen_jpeg(region=None, bgr=None):
 def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIMEOUT_SECONDS,
                retries=3, backoff_seconds=None):
     """调用 OpenAI 兼容 /chat/completions（图像走 base64 data URL），返回文本内容。
-    429 限流 / 5xx 服务器错误自动重试 retries 次（免费模型高峰期常见 429），退避等待"""
+    429 限流 / 5xx 服务器错误自动重试 retries 次（免费模型高峰期常见 429），退避等待。
+    ⚠️ 超时/连接异常同样退避重试（TIMEOUT_RETRIES 次）：视觉大模型单次耗时可达 150s，
+    原先超时被当作致命错误直接失败，会把本来能答对的调用丢掉；实测还有 RemoteDisconnected、
+    IncompleteRead 这类响应中途断开，同样不该一次就判死。"""
     url = str(base_url).strip().rstrip("/")
     if not url.endswith("/chat/completions"):
         url = url + "/chat/completions"
@@ -674,6 +759,7 @@ def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIME
         method="POST",
     )
     last_exc = None
+    timeout_left = TIMEOUT_RETRIES
     for attempt in range(retries + 1):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -697,6 +783,16 @@ def _ask_model(base_url, api_key, model, image_b64, prompt, timeout=REQUEST_TIME
                 if attempt < retries:
                     time.sleep(wait_base * (attempt + 1))
                     continue
+            raise
+        except (socket.timeout, TimeoutError, urllib.error.URLError, ConnectionError,
+                http.client.HTTPException) as e:
+            # 超时/连接异常/响应中途断开（RemoteDisconnected、IncompleteRead）：退避后重试
+            # （次数上限单独计，防止最坏耗时无限叠加）
+            last_exc = e
+            if timeout_left > 0:
+                timeout_left -= 1
+                time.sleep(wait_base * (attempt + 1))
+                continue
             raise
     raise last_exc
 
@@ -949,6 +1045,9 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
         screen_size = None
 
     overlay_hidden = _hide_overlay()
+    # 题干类型先由 OCR 判死（内容题 / 包含文字题 / 判不出），再据此选提示词：
+    # 两类题需要的措辞互斥，让模型自己在 prompt 里判 mode 不可靠。
+    question_kind = _detect_question_kind(settings)
     # 轮次安排：前 rounds 轮「识别+点击」，最后再补 1 轮「只识别不点击」的复核。
     # 复核必须单独占一轮：否则 max_rounds=1 时点完目标就直接返回失败，
     # 即使点对了也判不过（只能靠后面的人工验证等待兜底）。
@@ -975,7 +1074,8 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                     print(f"🤖 AI视觉验证 第{round_index}/{rounds}轮：请求 {model} 识别验证码..."
                           + (f"（第 {_try + 1} 次尝试）" if _try else ""))
                 try:
-                    content = _ask_model(base_url, api_key, model, image_b64, _build_prompt(w, h))
+                    content = _ask_model(base_url, api_key, model, image_b64,
+                                         _build_prompt(w, h, question_kind))
                 except urllib.error.HTTPError as e:
                     body = ""
                     try:
@@ -984,6 +1084,12 @@ def solve_captcha(app, stop_event=None, max_rounds=None, force=False, save_debug
                         pass
                     return False, f"AI接口HTTP错误 {e.code}：{body or e.reason}"
                 except Exception as e:
+                    if isinstance(e, (socket.timeout, TimeoutError)):
+                        return False, (f"AI接口超时（单次上限 {int(REQUEST_TIMEOUT_SECONDS)}s，"
+                                       f"已重试 {TIMEOUT_RETRIES} 次）：{e}")
+                    if isinstance(e, (ConnectionError, urllib.error.URLError,
+                                      http.client.HTTPException)):
+                        return False, f"AI接口网络中断（已重试 {TIMEOUT_RETRIES} 次）：{e}"
                     return False, f"AI接口调用失败：{e}"
                 parsed = parse_model_response(content, w, h, coord_space)
                 # 选图类：把坐标吸附到最近的图块中心，并给出「没把握」判定

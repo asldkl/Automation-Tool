@@ -147,8 +147,8 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None, skip_w
            —— 调用方（出售测试弹窗）据此给出准确提示，避免一条笼统文案套所有情况
 
     注：上架后会点一下「最大数量」把数量一次挂满 —— 已改为**固定坐标点击**
-    （settings["max_quantity_point"]，默认 [1935, 740]），不再依赖模板 Max_Quantity，
-    也不叠加拟人随机偏移；坐标为 0 表示跳过该步，坐标超出屏幕范围同样跳过（并告警）。
+    （settings["max_quantity_point"]，默认 [0, 0]＝跳过该步，向导第 30 项里取点/填写），
+    不再依赖模板 Max_Quantity，也不叠加拟人随机偏移；坐标超出屏幕范围同样跳过（并告警）。
     所以不再有「出售数量」配置，也不再有补卖轮数。"""
     sell_stats = {"total": 0, "sold": 0, "not_found": 0, "failed": 0,
                   "reason": "", "missing_files": 0}
@@ -237,14 +237,14 @@ def sell_operations(settings, stop_event, set_operation, run_insert=None, skip_w
         utils.human_pause()
 
         # 上架后、降价前：点一下「最大数量」，一次把数量挂满（不用再配「出售数量」）。
-        # 已改为「固定坐标点击」（默认 1935,740；模板上传向导第 30 项「模板设置」→「点击坐标」可改）：
+        # 「固定坐标点击」（模板上传向导第 30 项「模板设置」→「点击坐标」可改/屏幕取点）：
         # 该按钮位置固定，走模板匹配反而会因模板缺失或识别失败而静默跳过。
-        # 这里严格点在坐标上，不叠加拟人随机偏移；坐标填 0 或超出屏幕范围都跳过本步。
-        mq = settings.get("max_quantity_point") or [1935, 740]
+        # 这里严格点在坐标上，不叠加拟人随机偏移；坐标填 0（默认）或超出屏幕范围都跳过本步。
+        mq = settings.get("max_quantity_point") or [0, 0]
         try:
             mq_x, mq_y = int(mq[0]), int(mq[1])
         except (TypeError, ValueError, IndexError):
-            mq_x, mq_y = 1935, 740
+            mq_x, mq_y = 0, 0
         try:
             _scr_w, _scr_h = pyautogui.size()
         except Exception:

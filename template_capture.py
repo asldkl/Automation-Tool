@@ -39,6 +39,14 @@ class TemplateCaptureWizard:
             else:
                 self.status[var_name] = "pending"
 
+        # 「最大数量」没有图片模板：填了点击坐标（非 0）就视为已配置，行首打勾
+        try:
+            _mq = settings.get("max_quantity_point") or [0, 0]
+            self.status["Max_Quantity"] = (
+                "done" if (int(_mq[0]) > 0 and int(_mq[1]) > 0) else "pending")
+        except (TypeError, ValueError, IndexError):
+            self.status["Max_Quantity"] = "pending"
+
         self.win = tk.Toplevel(parent)
         self.win.title("模板上传向导")
         self.win.resizable(True, True)
@@ -441,6 +449,13 @@ class TemplateCaptureWizard:
             if self.app is not None and hasattr(self.app, "settings"):
                 self.app.settings.update({"max_quantity_point": [px, py]})
             print(f"🔢 「最大数量」点击坐标已更新为 {px},{py}")
+            # 填了有效坐标 → 行首打勾 ✅；归 0（跳过该步）→ 恢复 ⬜
+            try:
+                self.status["Max_Quantity"] = "done" if (px > 0 and py > 0) else "pending"
+                self._refresh_insert_status("Max_Quantity")
+                self._update_progress()
+            except Exception:
+                pass
             _tip = "（该步已跳过）" if (px <= 0 or py <= 0) else ""
             messagebox.showinfo("已保存", f"点击坐标：{px},{py}{_tip}", parent=parent_win)
         except Exception as e:
@@ -518,36 +533,41 @@ class TemplateCaptureWizard:
 
     def _open_template_setting(self, var_name, rel_path, name):
         """打开模板设置窗口：预览图片 + OCR识别/恢复默认/上传 按钮"""
+        # 「最大数量」已改为固定坐标点击、没有图片模板：不加载也不显示预览
+        _is_max_qty = (var_name == "Max_Quantity")
         # 查找图片路径
-        basename = os.path.basename(rel_path)
-        user_path = config.user_template_path(basename)
-        if os.path.exists(user_path):
-            img_path = user_path
-            source_text = "用户自定义模板"
-        else:
-            img_path = config.resource_path(rel_path)
-            if os.path.exists(img_path):
-                source_text = "内置默认模板"
-            else:
-                img_path = None
-                source_text = "暂无模板"
-
-        # 加载图片
+        img_path = None
+        source_text = "暂无模板"
         photo = None
         img_resized = None
         orig_w = orig_h = 0
-        if img_path:
-            try:
-                img = Image.open(img_path)
-                orig_w, orig_h = img.size
-                max_w, max_h = 500, 400
-                scale = min(max_w / orig_w, max_h / orig_h, 1.0)
-                disp_w = int(orig_w * scale)
-                disp_h = int(orig_h * scale)
-                img_resized = img.resize((disp_w, disp_h), Image.LANCZOS) if scale < 1.0 else img
-                photo = ImageTk.PhotoImage(img_resized)
-            except Exception as e:
-                source_text = f"图片加载失败：{e}"
+        if not _is_max_qty:
+            basename = os.path.basename(rel_path)
+            user_path = config.user_template_path(basename)
+            if os.path.exists(user_path):
+                img_path = user_path
+                source_text = "用户自定义模板"
+            else:
+                img_path = config.resource_path(rel_path)
+                if os.path.exists(img_path):
+                    source_text = "内置默认模板"
+                else:
+                    img_path = None
+                    source_text = "暂无模板"
+
+            # 加载图片
+            if img_path:
+                try:
+                    img = Image.open(img_path)
+                    orig_w, orig_h = img.size
+                    max_w, max_h = 500, 400
+                    scale = min(max_w / orig_w, max_h / orig_h, 1.0)
+                    disp_w = int(orig_w * scale)
+                    disp_h = int(orig_h * scale)
+                    img_resized = img.resize((disp_w, disp_h), Image.LANCZOS) if scale < 1.0 else img
+                    photo = ImageTk.PhotoImage(img_resized)
+                except Exception as e:
+                    source_text = f"图片加载失败：{e}"
 
         # 创建窗口
         win = tk.Toplevel(self.win)
@@ -557,8 +577,10 @@ class TemplateCaptureWizard:
         win.grab_set()
         self._set_dialog_icon(win)
 
-        # 图片显示区
-        if photo:
+        # 图片显示区（「最大数量」没有图片模板，整个预览区不显示）
+        if _is_max_qty:
+            pass
+        elif photo:
             img_label = ttk.Label(win, image=photo)
             img_label.image = photo
             img_label.pack(padx=10, pady=(10, 5))
@@ -567,7 +589,6 @@ class TemplateCaptureWizard:
                       foreground='#999').pack(padx=10, pady=(30, 5))
 
         # 信息栏
-        _is_max_qty = (var_name == "Max_Quantity")
         # 最近一次成功点击坐标（运行成功后记录，供遮罩避让参考）
         try:
             import template_click_coords as _tcc
@@ -589,11 +610,11 @@ class TemplateCaptureWizard:
         # 「最大数量」已改为固定坐标点击：坐标就配在本窗口里（运行期不再走模板匹配）
         if var_name == "Max_Quantity":
             _s = config.load_settings()
-            _p = _s.get("max_quantity_point") or [1935, 740]
+            _p = _s.get("max_quantity_point") or [0, 0]
             try:
                 _px, _py = int(_p[0]), int(_p[1])
             except (TypeError, ValueError, IndexError):
-                _px, _py = 1935, 740
+                _px, _py = 0, 0
             mq_x_var = tk.StringVar(value=str(_px))
             mq_y_var = tk.StringVar(value=str(_py))
 

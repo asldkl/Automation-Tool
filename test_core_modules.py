@@ -608,11 +608,12 @@ class TestSellFlowOrder(unittest.TestCase):
         self.assertFalse(mock_pyclick.called)
 
     def test_missing_max_quantity_point_uses_default(self):
-        """设置里没有 max_quantity_point 时用默认 (1935,740)"""
+        """设置里没有 max_quantity_point 时用默认 (0,0)＝跳过该步"""
         ok, stats, order, mock_smooth, mock_pyclick = self._run_sell(
             None, item_filename="_sell_item_C.png", discount=0)
         self.assertTrue(ok)
-        mock_smooth.assert_called_once_with(1935, 740)
+        mock_smooth.assert_not_called()
+        self.assertFalse(mock_pyclick.called)
 
     def test_skip_warehouse_starts_from_items(self):
         """skip_warehouse=True（出售测试）时不点「仓库入口」，直接从识别物品开始"""
@@ -814,6 +815,24 @@ class TestSellPendingAndUnverified(unittest.TestCase):
         self.assertTrue(cr.needs_verification(old, "为了您的账号安全，请验证后登录。选择所有符合描述的图片包含文字：川"))
         self.assertFalse(cr.needs_verification(old, "验证码登录"))
         self.assertFalse(cr.needs_verification(old, "短信验证"))
+
+    def test_migrate_max_quantity_point(self):
+        """「最大数量」旧默认 [1935,740] 重置为 [0,0]；用户自己取的坐标不动；异常值不炸"""
+        import config
+        # 旧默认 → 重置
+        old = {"max_quantity_point": [1935, 740]}
+        self.assertTrue(config.migrate_max_quantity_point(old))
+        self.assertEqual(old["max_quantity_point"], [0, 0])
+        # 再跑一次不再改动
+        self.assertFalse(config.migrate_max_quantity_point(old))
+        # 用户自定义坐标 → 不动
+        custom = {"max_quantity_point": [1234, 567]}
+        self.assertFalse(config.migrate_max_quantity_point(custom))
+        self.assertEqual(custom["max_quantity_point"], [1234, 567])
+        # 新默认 / 缺失 / 异常 → 不改动、不抛异常
+        for bad in ({"max_quantity_point": [0, 0]}, {}, {"max_quantity_point": None},
+                    {"max_quantity_point": "abc"}, {"max_quantity_point": [1]}):
+            self.assertFalse(config.migrate_max_quantity_point(bad))
 
     def test_restore_account_clears_unverified(self):
         """右键「恢复账号」要能解除「未验证通过」——否则账号永远恢复不了（用户实测的死锁）"""
@@ -1511,6 +1530,95 @@ class TestAiVisualCaptcha(unittest.TestCase):
                 avc._ask_model("https://x/v1", "bad-key", "m", "b64", "p")
         self.assertEqual(sleep_mock.call_count, 0)
 
+    def test_ask_model_retries_on_timeout(self):
+        """超时应自动重试：第一次超时、第二次成功（修复前超时被当致命错误直接失败）"""
+        import io
+        import socket
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        ok_payload = {"choices": [{"message": {"content": '{"captcha": false}'}}]}
+        responses = [
+            socket.timeout("timed out"),
+            io.BytesIO(json.dumps(ok_payload).encode("utf-8")),
+        ]
+        with mock.patch.object(avc.urllib.request, "urlopen", side_effect=responses), \
+             mock.patch.object(avc.time, "sleep") as sleep_mock, \
+             mock.patch.object(avc, "RETRY_BACKOFF_SECONDS", 0.0):
+            content = avc._ask_model("https://x/v1", "sk", "m", "b64", "p")
+        self.assertIn("captcha", content)
+        self.assertEqual(sleep_mock.call_count, 1)
+
+    def test_ask_model_timeout_retry_is_bounded(self):
+        """连续超时：最多重试 TIMEOUT_RETRIES 次后抛错，不会无限重试"""
+        import socket
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        with mock.patch.object(avc.urllib.request, "urlopen",
+                               side_effect=socket.timeout("timed out")) as url_mock, \
+             mock.patch.object(avc.time, "sleep"), \
+             mock.patch.object(avc, "RETRY_BACKOFF_SECONDS", 0.0):
+            with self.assertRaises((socket.timeout, TimeoutError)):
+                avc._ask_model("https://x/v1", "sk", "m", "b64", "p")
+        self.assertEqual(url_mock.call_count, avc.TIMEOUT_RETRIES + 1)
+
+    def test_ask_model_retries_on_remote_disconnected(self):
+        """响应中途断开（RemoteDisconnected）也应重试，而不是一次就判死"""
+        import io
+        import http.client
+        import unittest.mock as mock
+        import ai_visual_captcha as avc
+
+        ok_payload = {"choices": [{"message": {"content": '{"captcha": false}'}}]}
+        responses = [
+            http.client.RemoteDisconnected("Remote end closed connection without response"),
+            io.BytesIO(json.dumps(ok_payload).encode("utf-8")),
+        ]
+        with mock.patch.object(avc.urllib.request, "urlopen", side_effect=responses), \
+             mock.patch.object(avc.time, "sleep"), \
+             mock.patch.object(avc, "RETRY_BACKOFF_SECONDS", 0.0):
+            content = avc._ask_model("https://x/v1", "sk", "m", "b64", "p")
+        self.assertIn("captcha", content)
+
+    def test_build_prompt_splits_by_question_kind(self):
+        """题干类型由 OCR 判死后选提示词：内容题走原有方案（逐字未改），
+        只有包含文字题才叠加激进规则 —— 不能再靠 prompt 里的「仅当…时生效」软约束。"""
+        import ai_visual_captcha as avc
+        content = avc._build_prompt(800, 640, avc.QUESTION_KIND_CONTENT)
+        text = avc._build_prompt(800, 640, avc.QUESTION_KIND_TEXT)
+        default = avc._build_prompt(800, 640)
+        # 内容题 / 未判定：原有方案三处原样保留，激进规则一个字都不许出现
+        for p in (content, default):
+            self.assertIn("（通常 1~4 个）", p)
+            self.assertIn("这些图里往往只有一两张、最多几张符合要求", p)
+            self.assertIn("（例外：题目明确要求找「包含文字X」的图片时", p)
+            self.assertNotIn("宁多勿漏", p)
+            self.assertNotIn("不要预设数量", p)
+            self.assertNotIn("targets 数量必须等于 checks 里判为", p)
+            self.assertNotIn("仅当题目要求找", p)
+        # 判不出类型时必须等于内容题提示词（最保守，行为同改造前）
+        self.assertEqual(content, default)
+        # 包含文字题：基线 + 3 处加强
+        self.assertIn("不要预设数量", text)
+        self.assertIn("targets 数量必须等于 checks 里判为", text)
+        self.assertIn("宁多勿漏", text)
+        self.assertNotIn("这些图里往往只有一两张、最多几张符合要求", text)
+        self.assertNotEqual(content, text)
+        # 加强版是在基线之上叠加：除 3 处外的公共部分必须一致
+        for anchor in ("你是登录验证码识别助手", "target 数量 = 符合描述的图片张数（通常 1~4 个）"):
+            self.assertIn(anchor, text)
+            self.assertIn(anchor, content)
+
+    def test_question_kind_from_text(self):
+        """OCR 题面特征词 → 题干类型（判不出时必须给 unknown，调用方据此退回原有方案）"""
+        import captcha_router as cr
+        self.assertEqual(cr.question_kind_from_text("请选择所有包含文字：川 的图片"), "text")
+        self.assertEqual(cr.question_kind_from_text("选择含有文字的图片"), "text")
+        self.assertEqual(cr.question_kind_from_text("请选择所有海浪的图片"), "content")
+        self.assertEqual(cr.question_kind_from_text(""), "unknown")
+        self.assertEqual(cr.question_kind_from_text(None), "unknown")
+
     def test_is_configured_require_enabled(self):
         """require_enabled=False（测试绕过开关）时只需供应商配置完整"""
         import ai_visual_captcha as avc
@@ -1648,6 +1756,27 @@ class TestSliderCaptchaYolo(unittest.TestCase):
         path = sc.resolve_model_path()
         # 开发机上 best.onnx 在项目根目录应能找到；若被移走则为空串，不应抛异常
         self.assertIsInstance(path, str)
+
+    def test_resolve_model_path_user_dir_first_and_reset_session(self):
+        """用户导入目录优先；reset_session 丢弃旧会话"""
+        import os
+        import tempfile
+        import unittest.mock as mock
+        import slider_captcha as sc
+        import config
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            user_model = os.path.join(tmp_dir, "best.onnx")
+            with open(user_model, "wb") as f:
+                f.write(b"dummy")
+            # 重定向模型路径到临时目录，不碰真实 %APPDATA%
+            with mock.patch.object(config, "SLIDER_MODEL_PATH", user_model), \
+                 mock.patch.object(config, "SLIDER_MODEL_DIR", tmp_dir):
+                sc.reset_session()
+                self.assertEqual(sc._session, None)
+                self.assertEqual(sc._session_model_path, "")
+                self.assertEqual(os.path.abspath(sc.resolve_model_path()),
+                                 os.path.abspath(user_model))
+        sc.reset_session()
 
 
 # ==================== 验证码调度（OCR 判定 → 分发，离线） ====================

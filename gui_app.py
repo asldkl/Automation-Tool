@@ -660,6 +660,12 @@ class App:
                 config.save_settings(self.settings)
         except Exception as e:
             print(f"⚠️ 补充验证码关键词失败：{e}")
+        # 一次性把仍是旧默认值的「最大数量」坐标重置为 [0,0]（默认跳过该步）
+        try:
+            if config.migrate_max_quantity_point(self.settings):
+                config.save_settings(self.settings)
+        except Exception as e:
+            print(f"⚠️ 重置最大数量坐标失败：{e}")
 
         # 启动网络等待（校园网认证场景）：启动时连不上验证服务器则在后台自动重试
         self._silent_boot = '--auto-start' in sys.argv

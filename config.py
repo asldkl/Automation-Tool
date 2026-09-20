@@ -52,6 +52,10 @@ def resolve_template_path(config_path):
 # ==================== 售卖物品目录 ====================
 SELL_ITEMS_DIR = os.path.join(APP_DATA_DIR, "sell_items")
 
+# ==================== 滑块验证 YOLO 模型（用户自行导入，不随程序打包） ====================
+SLIDER_MODEL_DIR = os.path.join(APP_DATA_DIR, "models")
+SLIDER_MODEL_PATH = os.path.join(SLIDER_MODEL_DIR, "best.onnx")
+
 # ==================== 售卖物品元数据 ====================
 ITEMS_META_PATH = os.path.join(SELL_ITEMS_DIR, "items_meta.json")
 ITEMS_META_BACKUP = os.path.join(SELL_ITEMS_DIR, "items_meta.backup.json")
@@ -167,8 +171,9 @@ DEFAULT_SETTINGS = {
     "enable_sell_after_run": False,   # 主流程完成后执行一键售卖
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）
     # 「最大数量」按钮固定点击坐标（上架后点它一次挂满数量；不找图、不叠加随机偏移）
-    # 设置 → 售卖物品 → 最大数量按钮 可改/屏幕取点；坐标任意一项为 0 表示跳过该步
-    "max_quantity_point": [1935, 740],
+    # 模板上传向导 → 第 30 项「最大数量按钮」→ 模板设置 → 点击坐标 可改/屏幕取点；坐标任意一项为 0 表示跳过该步
+    # 默认 [0,0]＝不点该步（各机器分辨率/界面缩放不同，写死坐标容易点错，由用户自行取点）
+    "max_quantity_point": [0, 0],
     "sell_time_enabled": False,       # 是否启用售卖时间区间
     "sell_time_start": "08:00",       # 售卖开始时间 (HH:MM)
     "sell_time_end": "22:00",         # 售卖结束时间 (HH:MM)
@@ -191,6 +196,7 @@ DEFAULT_SETTINGS = {
     "asset_history_geometry": "",            # 资产记录窗口大小和位置
     "asset_monitor_geometry": "",            # 资产监测窗口大小和位置
     "dev_test_geometry": "",                 # 实验功能窗口大小和位置
+    "sample_collector_geometry": "",         # 样本采集窗口大小和位置
     "ocr_test_geometry": "",                 # 文本识别测试窗口大小和位置
     "log_window_geometry": "",               # 日志窗口大小和位置
     "global_ocr_geometry": "",               # 全局OCR设置窗口大小和位置
@@ -338,6 +344,27 @@ def migrate_captcha_keywords(settings):
         print(f"🔑 已补充图片点选验证码关键词：{'、'.join(added)}")
     settings["captcha_kw_supplemented"] = True
     return True
+
+
+# 「最大数量」旧默认坐标（6.09.14 及以前）；新版本默认改为 [0,0]=跳过该步
+_OLD_MAX_QUANTITY_POINT = [1935, 740]
+
+
+def migrate_max_quantity_point(settings):
+    """把「最大数量」仍为旧默认值 [1935,740] 的配置重置为新默认 [0,0]（跳过该步）。
+
+    只重置与旧默认完全一致的值——用户自己取过点的（其他坐标）不动；
+    返回是否发生改动（调用方决定要不要落盘）"""
+    pt = settings.get("max_quantity_point")
+    if isinstance(pt, (list, tuple)) and len(pt) == 2:
+        try:
+            if [int(pt[0]), int(pt[1])] == _OLD_MAX_QUANTITY_POINT:
+                settings["max_quantity_point"] = [0, 0]
+                print("🔢 「最大数量」点击坐标已重置为 0,0（默认跳过该步，需要时请在模板向导第 30 项里重新取点）")
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
 
 
 def save_settings(settings):

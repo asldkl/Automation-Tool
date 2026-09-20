@@ -137,6 +137,32 @@ _DEFAULT_VERIFY_KEYWORDS = ("验证", "滑块", "拼图", "拖动", "滑动")
 _DEFAULT_MANUAL_KEYWORDS = ("包含文字", "含有文字", "含文字")
 
 
+# 「包含文字」题面的判型特征词（决定 AI 用哪套提示词）——
+# 与上面 _DEFAULT_MANUAL_KEYWORDS（决定「是否直接转人工」）无关：后者已被用户清空
+# （= 这类题也交给 AI 处理），所以判型需要一套独立的、稳定的特征词。
+_TEXT_QUESTION_KEYWORDS = ("包含文字", "含有文字", "含文字")
+
+
+def question_kind_from_text(text):
+    """OCR 题面文字 → 题干类型：'text'（包含文字类）/ 'content'（内容类）/ 'unknown'（读不到字）"""
+    t = str(text or "")
+    if not t:
+        return "unknown"
+    return "text" if any(k in t for k in _TEXT_QUESTION_KEYWORDS) else "content"
+
+
+def detect_question_kind(settings=None):
+    """按「验证码识别区域」OCR 后判题干类型，供 AI 提示词分流
+    （见 ai_visual_captcha._build_prompt：内容题走原有方案，包含文字题走加强版）。
+
+    OCR 出问题时返回 'unknown'，调用方会退回原有提示词。"""
+    try:
+        return question_kind_from_text(gather_region_text(settings))
+    except Exception as e:
+        print(f"⚠️ 题干判型 OCR 失败：{e}")
+        return "unknown"
+
+
 def needs_manual_verification(settings, screen_text):
     """OCR 文字是否表明这是「图片文字选择」类验证码 → True 时应直接转人工、不调 AI
 

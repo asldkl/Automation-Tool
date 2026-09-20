@@ -37,8 +37,12 @@ def is_enabled(settings):
 
 
 def resolve_model_path():
-    """定位 best.onnx：resource_path（兼容打包）→ exe/项目目录 → 当前目录"""
+    """定位 best.onnx：用户导入目录 → resource_path（兼容旧版打包）→ exe/项目目录 → 当前目录
+
+    用户导入的模型存放在 %APPDATA%/DeltaAutoTool/models/best.onnx（设置→验证码设置→滑块验证→导入模型），
+    程序本体不再打包 best.onnx 以减小体积。"""
     candidates = [
+        config.SLIDER_MODEL_PATH,
         config.resource_path(MODEL_FILENAME),
         os.path.join(os.path.dirname(os.path.abspath(config.__file__)), MODEL_FILENAME),
         os.path.join(os.getcwd(), MODEL_FILENAME),
@@ -47,6 +51,14 @@ def resolve_model_path():
         if path and os.path.exists(path):
             return path
     return ""
+
+
+def reset_session():
+    """丢弃已缓存的推理会话（重新导入模型后调用，避免旧会话按路径判等被误复用）"""
+    global _session, _session_model_path, _session_names
+    _session = None
+    _session_model_path = ""
+    _session_names = None
 
 
 def _parse_names_from_metadata(meta_map):
@@ -142,7 +154,7 @@ def detect_targets(image_bgr, confidence=0.35, model_path=None):
     [{"class": "gap"/"slider"/"puzzle", "conf": 0.xx, "box": [x1,y1,x2,y2], "center": (cx,cy)}]"""
     path = model_path or resolve_model_path()
     if not path:
-        raise RuntimeError("未找到模型权重文件 best.onnx（请放到程序目录）")
+        raise RuntimeError("未找到滑块验证模型 best.onnx（请到 设置→验证码设置→滑块验证→「导入模型」导入）")
     sess, names = _get_session(path)
     img_h, img_w = image_bgr.shape[:2]
     tensor, scale, dw, dh = letterbox(image_bgr)
@@ -295,7 +307,7 @@ def solve_slider_yolo(app, stop_event=None, max_attempts=None, manage_overlay=Tr
         return False, False, "滑块YOLO处理未启用"
     model_path = resolve_model_path()
     if not model_path:
-        return False, False, f"未找到权重文件 {MODEL_FILENAME}"
+        return False, False, f"未找到滑块验证模型 {MODEL_FILENAME}（设置→验证码设置→滑块验证→导入模型）"
     try:
         confidence = float(settings.get("slider_yolo_confidence", 0.35) or 0.35)
     except (TypeError, ValueError):
