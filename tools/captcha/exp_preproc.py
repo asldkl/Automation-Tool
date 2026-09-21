@@ -183,8 +183,11 @@ def main():
 
     order = list(cache)
     fold_of = {k: i % 2 for i, k in enumerate(order)}
+    only = os.environ.get("ONLY", "").strip()
+    todo = ([v for v in VARIANTS if v[0] in [x.strip() for x in only.split(",")]]
+            if only else VARIANTS)
     report = {}
-    for vname, preps, fuse in VARIANTS:
+    for vname, preps, fuse in todo:
         t0 = time.time()
         sc, ans, lab = [], [], []
         for key in order:
@@ -209,17 +212,26 @@ def main():
             te_idx = [i for i, k in enumerate(order) if fold_of[k] == f]
             _, thr = best_thr_on([sc[j] for j in tr_idx], [ans[j] for j in tr_idx])
             cv_k += exact_at([sc[j] for j in te_idx], [ans[j] for j in te_idx], thr)
-        report[vname] = {"auc": a, "tpr": tpr, "tnr": tnr,
+        # 逐图排序口径：图内按分数取前 k 名（k=答案块数，oracle 上界）。
+        # ⚠️ 融合变体做了「逐图 minmax 归一化」→ 分数**跨图不可比**，
+        #    全局 AUC / 全局阈值对它天然无效（测出来会假性崩到 0.5）。
+        #    融合的正确评价口径就是这个图内排序；文档里旧记录也是 14/14 排序。
+        rank_k = sum(1 for s, a in zip(sc, ans)
+                     if sorted(sorted(range(1, len(s) + 1), key=lambda i: -s[i - 1])[:len(a)]) == a)
+        report[vname] = {"auc": a, "tpr": tpr, "tnr": tnr, "rank": rank_k,
                          "fit": (fit_k, fit_t), "cv": cv_k, "n": len(order),
                          "sec": round(time.time() - t0, 1)}
         print(f"  {vname:22s} AUC={a:.3f}  TPR/TNR={tpr:.2f}/{tnr:.2f}  "
               f"全对(CV)={cv_k:2d}/{len(order)}  全对(拟合)={fit_k:2d}/{len(order)}"
-              f"@thr={fit_t:.2f}  {report[vname]['sec']}s", flush=True)
+              f"@thr={fit_t:.2f}  排序上界={rank_k:2d}/{len(order)}  "
+              f"{report[vname]['sec']}s", flush=True)
 
     print("\n按 AUC 排序：", flush=True)
     for v, r in sorted(report.items(), key=lambda kv: -kv[1]["auc"]):
-        print(f"  {r['auc']:.3f}  {v:22s} CV全对 {r['cv']:2d}/25   拟合全对 {r['fit'][0]:2d}/25", flush=True)
-    with open(os.path.join(OUT, "exp_preproc.json"), "w", encoding="utf-8") as fh:
+        print(f"  {r['auc']:.3f}  {v:22s} CV全对 {r['cv']:2d}/{r['n']}   "
+              f"拟合全对 {r['fit'][0]:2d}/{r['n']}   排序上界 {r['rank']:2d}/{r['n']}", flush=True)
+    suffix = "_sub" if only else ""
+    with open(os.path.join(OUT, f"exp_preproc{suffix}.json"), "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=1)
 
 
