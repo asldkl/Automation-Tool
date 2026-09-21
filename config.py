@@ -272,6 +272,9 @@ DEFAULT_SETTINGS = {
     "captcha_refresh_max": 2,                   # 刷新重试次数
     "captcha_confirm_enabled": False,           # 选图类验证码：点完所有目标图后再点「确认」按钮
     "captcha_confirm_point": [0, 0],            # 「确认/提交」按钮坐标（屏幕取点/手填）
+    "captcha_glyph_enabled": False,             # 本地字形匹配（离线零 API）：有把握就点、没把握就换一组
+    "captcha_glyph_threshold": 0.37,            # 字形匹配阈值：分数≥它才算「这块写着目标字」
+    "captcha_glyph_gate": 0.16,                 # 置信度门限：conf 不超过它就不提交、改点「换一组」
     # AI 视觉验证（WeGame 登录点击式验证码，配置完整才生效）
     "ai_visual_captcha_enabled": False,          # 是否启用 AI 视觉验证处理
     "ai_visual_captcha_provider": "",            # 供应商预设名（智谱GLM/阿里百炼/月之暗面Kimi/豆包（火山方舟）/硅基流动/自定义）

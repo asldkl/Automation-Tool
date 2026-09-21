@@ -78,6 +78,13 @@ DEFAULT_THRESHOLD = 0.37   # 14 张合并样本的阈值扫描：0.34→10/14（
                            # 0.42+ 迅速退化。默认取平台中点 0.37，别为了 10/14 去赌 0.34。
 MIN_TEMPLATE_PX = 20
 
+# ---- 门控：「有把握才提交，没把握就换一组」----
+# conf = 选中块最低分 − 未选中块最高分；只有 conf > GATE_DEFAULT 才允许提交。
+# 25 张实测（阈值 0.37）门限递进：0.12 → 覆盖 76% / 精度 84.2%；0.14 → 68% / 94.1%；
+# 0.16 → 60% / **100%**；0.18 → 36% / 100%。默认取「精度 100% 里覆盖率最高」的 0.16。
+# ⚠️ 这组数字是在同一批 25 张上扫出来的（属调参、不是成绩）；改门限请用 held-out 集重新标定。
+GATE_DEFAULT = 0.16
+
 
 def _font_dir() -> str:
     win = os.environ.get("WINDIR") or r"C:\Windows"
@@ -240,6 +247,36 @@ def solve(tiles_bgr: list[np.ndarray], ch: str,
         mode = "2means"
     return {"picked": picked, "scores": scores, "mode": mode,
             "confidence": confidence(scores, picked)}
+
+
+def decide(scores: list[float], threshold: float = DEFAULT_THRESHOLD,
+           gate: float = GATE_DEFAULT) -> dict:
+    """「有较大把握就提交、没把握就换一组」的判定（纯函数、无副作用，便于离线测）。
+
+    action="submit"   conf > gate → 上层可以放心点击提交
+    action="refresh"  conf <= gate / 选不出块 / 全选 → 上层应换一组重新出题，别硬提交
+
+    ⚠️ confidence() 在「全部图块都被选中」时返回 1.0（没有未选中项可比），
+    所以必须先单独处理「空选 / 全选」，否则会把「没把握」误判成「很有把握」。
+    """
+    n = len(scores)
+    picked = pick_by_threshold(scores, threshold)
+    mode = "threshold"
+    if not picked or len(picked) == n:
+        picked = pick_by_2means(scores)
+        mode = "2means"
+    conf = confidence(scores, picked)
+    if not picked:
+        return {"action": "refresh", "picked": [], "scores": scores, "conf": conf,
+                "mode": mode, "reason": "没有任何图块达到阈值，定位不到目标"}
+    if len(picked) == n:
+        return {"action": "refresh", "picked": picked, "scores": scores, "conf": conf,
+                "mode": mode, "reason": f"{n} 个图块全被选中，分不出档"}
+    if conf <= gate:
+        return {"action": "refresh", "picked": picked, "scores": scores, "conf": conf,
+                "mode": mode, "reason": f"置信度 {conf:+.3f} 未超过门限 {gate:.2f}"}
+    return {"action": "submit", "picked": picked, "scores": scores, "conf": conf,
+            "mode": mode, "reason": f"置信度 {conf:+.3f} > 门限 {gate:.2f}"}
 
 
 # --------------------------------------------------------------------------- #

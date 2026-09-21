@@ -1107,6 +1107,21 @@ class SettingsWindow:
         self._cap_refresh_max_var = tk.IntVar(value=_rm)
         ttk.Spinbox(_rrow, from_=1, to=5, textvariable=self._cap_refresh_max_var, width=4).pack(side=tk.LEFT)
 
+        self._cap_glyph_enabled_var = tk.BooleanVar(value=s.get("captcha_glyph_enabled", False))
+        ttk.Checkbutton(frame_fallback, text="「包含文字」类走本地字形匹配（离线零 API，有把握才点）",
+                        variable=self._cap_glyph_enabled_var,
+                        style='Settings.TCheckbutton').pack(anchor='w', pady=(6, 0))
+        ttk.Label(frame_fallback, text="开启后这类题不再需要 AI：读题面目标字 → 用系统字体渲染模板逐块比对，"
+                                       "置信度超过门限才提交，没把握交给上面的「换一组」",
+                  style='SettingsSmall.TLabel').pack(anchor='w', pady=(0, 2))
+
+        _grow = ttk.Frame(frame_fallback, style='SettingsInner.TFrame')
+        _grow.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(_grow, text="测试本地字形匹配", style='TButton', width=16,
+                   command=self._test_glyph_captcha).pack(side=tk.LEFT)
+        ttk.Label(_grow, text="3 秒后对当前屏幕跑一次；没把握时不会点击任何东西",
+                  style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(6, 0))
+
         # ---------- 基本④：高级选项（默认收起，避免主界面太乱） ----------
         adv_box = ttk.LabelFrame(tab_basic, text="  OCR 判定关键词（一般不用改）  ",
                                  style='SettingsCard.TLabelframe', padding=8)
@@ -1602,6 +1617,7 @@ class SettingsWindow:
         except Exception:
             target["captcha_manual_wait_seconds"] = 60
         target["captcha_refresh_enabled"] = self._cap_refresh_enabled_var.get()
+        target["captcha_glyph_enabled"] = self._cap_glyph_enabled_var.get()
         try:
             _rx = int(float(self._cap_refresh_x_var.get() or 0))
             _ry = int(float(self._cap_refresh_y_var.get() or 0))
@@ -1760,6 +1776,14 @@ class SettingsWindow:
         self._iconify_for_captcha_test()
         ai_visual_captcha.test_captcha(self.app)
         # 不弹窗：3 秒后自动开始，结果与标注图见主界面日志
+
+    def _test_glyph_captcha(self):
+        """测试本地字形匹配：保存当前输入后对当前屏幕跑一次。
+        不要求勾选启用（测试链路 force 绕过开关）；没把握时不会点击任何东西。"""
+        import captcha_glyph_flow
+        self._save_captcha_settings(silent=True)
+        self._iconify_for_captcha_test()
+        captcha_glyph_flow.test_glyph_captcha(self.app)
 
     def _test_captcha_router(self):
         """测试完整流程：OCR 判定类型 → 对应处理（与登录时链路一致）。

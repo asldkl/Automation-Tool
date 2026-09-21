@@ -3,6 +3,9 @@
 登录验证码统一调度（OCR 判定 → 分发）
 
 登录第三态（既未见重登按钮也未见三角洲图标）触发后：
+0. 「包含文字」类（选择所有写着某个字的图片）→ 优先走**本地字形匹配**（captcha_glyph_flow，离线零 API）：
+   有把握就把目标图点了并点确认；**没把握不点任何图**，返回失败交给外层「刷新重试」去点「换一组」。
+   需启用 captcha_glyph_enabled；未启用时该步完全不参与。
 1. OCR 识别屏幕文字，按关键词判定验证类型：
    - 命中滑块关键词（拖动/滑动/滑块…）→ 滑块 YOLO 自动拖动（slider_captcha）
    - 命中点击关键词（依次点击/请点击…）→ AI 视觉验证点击（ai_visual_captcha）
@@ -208,6 +211,33 @@ def _ai_module_state(settings, force=False):
         return None, False
 
 
+def _glyph_module_state(settings, force=False):
+    """(模块可用, 是否启用)。本地字形匹配无外部依赖，模块可用性只看导入是否成功"""
+    try:
+        import captcha_glyph_flow
+        return captcha_glyph_flow, captcha_glyph_flow.is_enabled(settings) or force
+    except Exception:
+        return None, False
+
+
+def refresh_available(settings):
+    """「换一组」当前是否真的可用（开关开 + 坐标有效 + 次数>0）。
+
+    决定本地字形匹配「没把握」时是走刷新、还是退回 AI：
+    不能刷新时若还硬返回失败，就会把原本能交给 AI 处理的图也一起卡死。"""
+    try:
+        pt = (settings or {}).get("captcha_refresh_point", [0, 0]) or [0, 0]
+        # ⚠️ 刻意沿用 route_and_solve / ai_visual_captcha 的 ``int(x or 2)`` 写法：
+        # 于是用户把 captcha_refresh_max 填 0 也会被当成 2（0 是 falsy）——这是既有行为，
+        # 本函数必须与它一致，否则「本地判定可刷新」和「外层实际刷不刷」会对不上。
+        # 真要修这个坑，必须三处一起改（router 外层 + ai_visual_captcha 内部 + 这里）。
+        times = int((settings or {}).get("captcha_refresh_max", 2) or 2)
+        return (bool((settings or {}).get("captcha_refresh_enabled", False))
+                and int(pt[0]) > 0 and int(pt[1]) > 0 and times > 0)
+    except (TypeError, ValueError, IndexError):
+        return False
+
+
 def route_and_solve(app, stop_event=None, screen_text=None, force=False):
     """对外入口：先判定并处理验证；若失败且启用「刷新重试」，点击刷新坐标后再试。
 
@@ -273,6 +303,22 @@ def _route_once(app, stop_event=None, screen_text=None, force=False):
         if settings.get("captcha_type3_save_image", False):
             save_type3_sample(settings, text)
         return False, "图片文字选择类验证码，转人工验证"
+
+    # 0.5) 「包含文字」类 → 本地字形匹配（离线零 API）。
+    #      有把握就提交；没把握**不点任何图**，交给外层 route_and_solve 的「刷新重试」换一组。
+    #      放在「直接转人工」规则之后：显式配了人工关键词时，仍以用户的人工策略为准。
+    glyph_mod, glyph_on = _glyph_module_state(settings, force=force)
+    if glyph_on and question_kind_from_text(text) == "text":
+        print("🔤 判定为「包含文字」类，优先走本地字形匹配（离线零 API）")
+        g_ok, g_detail = glyph_mod.solve_glyph_captcha(
+            app, stop_event=stop_event, force=force)
+        if g_ok:
+            return True, f"本地字形匹配：{g_detail}"
+        print(f"ℹ️ 本地字形匹配未提交：{g_detail}")
+        if refresh_available(settings):
+            # 「没把握就换一组」：本函数不点图也不点刷新，交由外层统一处理
+            return False, f"本地字形匹配没把握，交给外层换一组重来（{g_detail}）"
+        print("ℹ️ 「换一组」未启用/未配坐标，退回 AI 视觉兜底")
 
     slider_kws = _parse_keywords(settings.get("captcha_slider_keywords"))
     click_kws = _parse_keywords(settings.get("captcha_click_keywords"))

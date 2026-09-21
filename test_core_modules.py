@@ -1932,5 +1932,233 @@ class TestCaptchaRouter(unittest.TestCase):
         finally:
             ai_visual_captcha.solve_captcha = original_ai
 
+class TestGlyphGateFlow(unittest.TestCase):
+    """本地字形匹配的「有把握就点、没把握就换一组」策略（全 mock：不载字体、不点屏幕、不发请求）"""
+
+    # ---------- 决策函数（纯逻辑） ----------
+    def test_decide_submits_when_conf_above_gate(self):
+        """conf = 选中最低 − 未选中最高 = 0.45 − 0.20 = +0.25 > 0.16 → 提交"""
+        from captcha_glyph_match import decide
+        d = decide([0.60, 0.55, 0.50, 0.45, 0.20, 0.10], threshold=0.37, gate=0.16)
+        self.assertEqual(d["action"], "submit")
+        self.assertEqual(d["picked"], [1, 2, 3, 4])
+        self.assertAlmostEqual(d["conf"], 0.25, places=3)
+
+    def test_decide_refreshes_when_conf_below_gate(self):
+        """conf = 0.45 − 0.30 = +0.15 ≤ 0.16 → 换一组（差一点点也不赌）"""
+        from captcha_glyph_match import decide
+        d = decide([0.60, 0.55, 0.45, 0.30, 0.25, 0.20], threshold=0.37, gate=0.16)
+        self.assertEqual(d["action"], "refresh")
+        self.assertEqual(d["picked"], [1, 2, 3])
+        self.assertIn("门限", d["reason"])
+
+    def test_decide_never_submits_on_degenerate_scores(self):
+        """退化输入（全选/全不选/全同分）一律不允许提交。
+
+        ⚠️ confidence() 在「没有未选中块」时会返回 1.0，若不单独拦就会把「没把握」
+        误判成「很有把握」——这条测试就是钉这个坑。"""
+        from captcha_glyph_match import decide
+        for scores in ([0.9] * 6, [0.5] * 6, [0.1] * 6, []):
+            d = decide(scores, threshold=0.37, gate=0.16)
+            self.assertEqual(d["action"], "refresh", f"scores={scores} 不该提交")
+
+    # ---------- 题面目标字 ----------
+    def test_extract_target_char(self):
+        from captcha_glyph_flow import extract_target_char
+        self.assertEqual(extract_target_char("请选择所有包含文字：“忠”的图片"), "忠")
+        self.assertEqual(extract_target_char("含有文字：昆"), "昆")
+        self.assertEqual(extract_target_char("含文字: 田"), "田")
+        self.assertEqual(extract_target_char("选择所有符合描述的图片 海浪"), "")
+        self.assertEqual(extract_target_char(""), "")
+        self.assertEqual(extract_target_char(None), "")
+
+    # ---------- 「换一组」可用性 ----------
+    def test_refresh_available(self):
+        from captcha_router import refresh_available
+        self.assertFalse(refresh_available({}))
+        self.assertFalse(refresh_available({"captcha_refresh_enabled": True,
+                                            "captcha_refresh_point": [0, 0]}))
+        self.assertFalse(refresh_available({"captcha_refresh_enabled": False,
+                                            "captcha_refresh_point": [1629, 1116],
+                                            "captcha_refresh_max": 2}))
+        # ⚠️ 既有语义：max 填 0 会被 ``int(x or 2)`` 当成 2（0 是 falsy），所以这里是 True。
+        # 本函数刻意与 route_and_solve 保持一致；要改成「0 就是不刷」，三处必须一起改。
+        self.assertTrue(refresh_available({"captcha_refresh_enabled": True,
+                                           "captcha_refresh_point": [1629, 1116],
+                                           "captcha_refresh_max": 0}))
+        self.assertFalse(refresh_available({"captcha_refresh_enabled": True,
+                                            "captcha_refresh_point": ["x", "y"],
+                                            "captcha_refresh_max": 2}))
+        self.assertTrue(refresh_available({"captcha_refresh_enabled": True,
+                                           "captcha_refresh_point": [1629, 1116],
+                                           "captcha_refresh_max": 2}))
+
+    # ---------- 路由集成（mock 掉真实点击/请求） ----------
+    def _app(self, **over):
+        import types
+        s = {"captcha_auto_enabled": True, "captcha_manual_keywords": ""}
+        s.update(over)
+        return types.SimpleNamespace(settings=s)
+
+    def test_router_text_question_uses_glyph_and_submits(self):
+        """「包含文字」类 → 走本地字形匹配；它说提交就提交（不碰 AI）"""
+        import captcha_glyph_flow as gf
+        import captcha_router as cr
+        calls = {}
+        original = gf.solve_glyph_captcha
+
+        def _mock(app, stop_event=None, force=False):
+            calls["glyph"] = True
+            return True, "已提交 [1, 3] 块（conf=+0.25）"
+
+        gf.solve_glyph_captcha = _mock
+        try:
+            ok, detail = cr._route_once(
+                self._app(captcha_glyph_enabled=True),
+                screen_text="选择所有包含文字：“忠”的图片", force=True)
+            self.assertTrue(calls.get("glyph"))
+            self.assertTrue(ok)
+            self.assertIn("本地字形匹配", detail)
+        finally:
+            gf.solve_glyph_captcha = original
+
+    def test_router_low_conf_defers_to_refresh_without_calling_ai(self):
+        """没把握 + 「换一组」可用 → 返回失败交给外层刷新，且**不去调 AI**（省一次调用）"""
+        import captcha_glyph_flow as gf
+        import ai_visual_captcha as avc
+        import captcha_router as cr
+        original_g, original_ai = gf.solve_glyph_captcha, avc.solve_captcha
+        hit = {}
+
+        def _mock_glyph(app, stop_event=None, force=False):
+            return False, "置信度 +0.030 未超过门限 0.16"
+
+        def _mock_ai(*a, **k):
+            hit["ai"] = True
+            return True, "AI 兜底"
+
+        gf.solve_glyph_captcha = _mock_glyph
+        avc.solve_captcha = _mock_ai
+        try:
+            ok, detail = cr._route_once(
+                self._app(captcha_glyph_enabled=True,
+                          captcha_refresh_enabled=True,
+                          captcha_refresh_point=[1629, 1116],
+                          captcha_refresh_max=2),
+                screen_text="包含文字：“忠”", force=True)
+            self.assertFalse(ok)
+            self.assertIn("换一组", detail)
+            self.assertFalse(hit.get("ai"), "低置信时不该再去调 AI")
+        finally:
+            gf.solve_glyph_captcha = original_g
+            avc.solve_captcha = original_ai
+
+    def test_router_low_conf_falls_back_to_ai_when_refresh_unavailable(self):
+        """没把握 + 「换一组」不可用 → 退回 AI，别把本来能处理的情况卡死"""
+        import captcha_glyph_flow as gf
+        import ai_visual_captcha as avc
+        import captcha_router as cr
+        original_g, original_ai = gf.solve_glyph_captcha, avc.solve_captcha
+        hit = {}
+
+        def _mock_glyph(app, stop_event=None, force=False):
+            return False, "没检出图块"
+
+        def _mock_ai(*a, **k):
+            hit["ai"] = True
+            return True, "AI 兜底"
+
+        gf.solve_glyph_captcha = _mock_glyph
+        avc.solve_captcha = _mock_ai
+        try:
+            ok, detail = cr._route_once(
+                self._app(captcha_glyph_enabled=True,
+                          ai_visual_captcha_enabled=True,
+                          ai_visual_captcha_base_url="https://x/v1",
+                          ai_visual_captcha_api_key="sk",
+                          ai_visual_captcha_model="glm-4v-flash"),
+                screen_text="包含文字：“忠”", force=True)
+            self.assertTrue(hit.get("ai"), "换一组不可用时应退回 AI")
+            self.assertTrue(ok)
+        finally:
+            gf.solve_glyph_captcha = original_g
+            avc.solve_captcha = original_ai
+
+    def test_router_skips_glyph_for_content_question(self):
+        """内容类题（不含「包含文字」）→ 不进本地路径，仍走原链路"""
+        import captcha_glyph_flow as gf
+        import captcha_router as cr
+        calls = {}
+        original = gf.solve_glyph_captcha
+
+        def _mock(app, stop_event=None, force=False):
+            calls["glyph"] = True
+            return True, "不该被调用"
+
+        gf.solve_glyph_captcha = _mock
+        try:
+            ok, detail = cr._route_once(self._app(captcha_glyph_enabled=True),
+                                        screen_text="选择所有符合描述的图片 海浪", force=True)
+            self.assertFalse(calls.get("glyph"), "内容类题不该走本地字形匹配")
+            self.assertTrue(ok)   # 无验证码特征 → 放行
+        finally:
+            gf.solve_glyph_captcha = original
+
+    def test_router_glyph_disabled_behaves_as_before(self):
+        """开关关闭 → 本地路径完全不参与（回到 AI 兜底）"""
+        import captcha_glyph_flow as gf
+        import ai_visual_captcha as avc
+        import captcha_router as cr
+        original_g, original_ai = gf.solve_glyph_captcha, avc.solve_captcha
+        hit = {}
+
+        def _mock_glyph(app, stop_event=None, force=False):
+            hit["glyph"] = True
+            return True, "不该被调用"
+
+        def _mock_ai(*a, **k):
+            hit["ai"] = True
+            return True, "AI 兜底"
+
+        gf.solve_glyph_captcha = _mock_glyph
+        avc.solve_captcha = _mock_ai
+        try:
+            # ⚠️ 这里必须 force=False：force 是设置窗口「测试完整流程」用的，会绕过所有子开关
+            # （滑块/AI/本地字形都一样），也就测不到「开关关闭时不参与」这件事。
+            ok, detail = cr._route_once(
+                self._app(ai_visual_captcha_enabled=True,
+                          ai_visual_captcha_base_url="https://x/v1",
+                          ai_visual_captcha_api_key="sk",
+                          ai_visual_captcha_model="glm-4v-flash"),
+                screen_text="包含文字：“忠”", force=False)
+            self.assertFalse(hit.get("glyph"), "开关关闭时不该进本地路径")
+            self.assertTrue(hit.get("ai"))
+            self.assertTrue(ok)
+        finally:
+            gf.solve_glyph_captcha = original_g
+            avc.solve_captcha = original_ai
+
+    def test_glyph_test_button_is_wired(self):
+        """设置界面必须真的挂了「测试本地字形匹配」入口
+        （否则 captcha_glyph_flow.test_glyph_captcha 就是没人调用的孤儿函数，用户无从实测）"""
+        import captcha_glyph_flow as gf
+        import settings_window as sw
+        self.assertTrue(callable(getattr(gf, "test_glyph_captcha", None)))
+        self.assertTrue(callable(getattr(sw.SettingsWindow, "_test_glyph_captcha", None)))
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings_window.py")
+        with open(path, "r", encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("command=self._test_glyph_captcha", src)
+
+    def test_spec_bundles_glyph_modules(self):
+        """打包 spec 必须显式收录本地字形匹配的两个模块
+        （两者都只在函数内动态 import；漏了会在打包后静默失效——开关打开也没反应）"""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "三角洲自动工具.spec")
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        for name in ("captcha_glyph_flow", "captcha_glyph_match"):
+            self.assertIn("'%s'" % name, text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

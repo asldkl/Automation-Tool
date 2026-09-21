@@ -24,7 +24,7 @@ a = Analysis(
         'config', 'utils', 'settings_window', 'template_capture', 'cooldown_manager', 'automation', 'machine_fingerprint', 'relative_mouse_move',
         'email_notifier', 'account_manager', 'scheduler', 'cooldown_watcher', 'server_client', 'automation_runner', 'asset_db', 'interception_keyboard',
         'custom_ops', 'custom_ops_window', 'template_insert_steps', 'announcements', 'sell_pending', 'template_click_coords', 'ai_visual_captcha', 'slider_captcha', 'captcha_router',
-        'sample_collector',
+        'sample_collector', 'captcha_glyph_flow', 'captcha_glyph_match',
         'psutil', 'win32gui', 'win32con', 'win32api', 'win32event', 'win32security',
         'pystray', 'PIL', 'PIL.Image',
         'cv2', 'numpy', 'pyautogui',
