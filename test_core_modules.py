@@ -1993,6 +1993,44 @@ class TestGlyphGateFlow(unittest.TestCase):
                                            "captcha_refresh_point": [1629, 1116],
                                            "captcha_refresh_max": 2}))
 
+    # ---------- 图像处理模式（prep_tile / GlyphMatcher） ----------
+    def test_prep_tile_bh_matches_legacy_formula(self):
+        """mode="bh" 必须与「形态学黑帽 + ±3σ」原公式逐位一致（生产行为不变的守卫）"""
+        import cv2
+        import numpy as np
+        from captcha_glyph_match import BH_KERNEL, TILE_H, TILE_W, prep_tile
+        rng = np.random.default_rng(20260921)
+        for _ in range(3):
+            t = rng.integers(0, 256, (140, 140, 3), dtype=np.uint8)
+            got = prep_tile(t, BH_KERNEL, "bh")
+            g = cv2.cvtColor(cv2.resize(t, (TILE_W, TILE_H),
+                                        interpolation=cv2.INTER_CUBIC),
+                             cv2.COLOR_BGR2GRAY).astype(np.float32)
+            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (BH_KERNEL, BH_KERNEL))
+            x = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, k).astype(np.float32)
+            std = float(x.std()) or 1.0
+            want = np.clip((x - float(x.mean())) / (3.0 * std), -1.0, 1.0)
+            self.assertTrue(np.array_equal(got, want))
+            self.assertTrue(np.array_equal(got, prep_tile(t)), "默认参数必须走同一条路")
+
+    def test_prep_tile_unknown_mode_falls_back(self):
+        """非法 mode 必须回落默认，不能静默变成另一种处理"""
+        import numpy as np
+        from captcha_glyph_match import prep_tile
+        rng = np.random.default_rng(1)
+        t = rng.integers(0, 256, (140, 140, 3), dtype=np.uint8)
+        self.assertTrue(np.array_equal(prep_tile(t, 25, "根本没有这种模式"), prep_tile(t)))
+
+    def test_matcher_mode_and_kernel(self):
+        """GlyphMatcher 的 mode/kernel：显式值保留，非法值回落默认"""
+        from captcha_glyph_match import BH_KERNEL, PREP_DEFAULT, GlyphMatcher
+        m = GlyphMatcher(kernel=35, mode="clahe")
+        self.assertEqual(m.mode, "clahe")
+        self.assertEqual(m.kernel, 35)
+        self.assertEqual(GlyphMatcher().mode, PREP_DEFAULT)
+        self.assertEqual(GlyphMatcher().kernel, BH_KERNEL)
+        self.assertEqual(GlyphMatcher(mode="乱写").mode, PREP_DEFAULT)
+
     # ---------- 路由集成（mock 掉真实点击/请求） ----------
     def _app(self, **over):
         import types

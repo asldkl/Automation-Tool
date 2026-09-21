@@ -270,8 +270,13 @@ def main():
 
     with open(REPORT_TXT, "w", encoding="utf-8") as f:
         f.write("\n".join(LOG) + "\n")
+    with open(os.path.join(OUT, "exp_gate_sweep_summary.json"), "w", encoding="utf-8") as f:
+        json.dump({"summary": summary, "keys": keys,
+                   "threshold": DEFAULT_THRESHOLD, "gate": GATE_DEFAULT,
+                   "n": len(keys)}, f, ensure_ascii=False, indent=1)
     P("")
     P("已写出 %s" % os.path.relpath(REPORT_TXT, ROOT))
+    P("已写出 out/exp_gate_sweep_summary.json（画图用）")
 
 
 if __name__ == "__main__":
