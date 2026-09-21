@@ -2053,8 +2053,8 @@ class TestGlyphGateFlow(unittest.TestCase):
             gf.solve_glyph_captcha = original_g
             avc.solve_captcha = original_ai
 
-    def test_router_low_conf_falls_back_to_ai_when_refresh_unavailable(self):
-        """没把握 + 「换一组」不可用 → 退回 AI，别把本来能处理的情况卡死"""
+    def test_router_low_conf_goes_manual_instead_of_ai(self):
+        """没把握 + 「换一组」不可用 → 转人工验证，**绝不回退 AI**"""
         import captcha_glyph_flow as gf
         import ai_visual_captcha as avc
         import captcha_router as cr
@@ -2071,6 +2071,7 @@ class TestGlyphGateFlow(unittest.TestCase):
         gf.solve_glyph_captcha = _mock_glyph
         avc.solve_captcha = _mock_ai
         try:
+            # 就算 AI 配置齐全（供应商/url/key/model 全给）也不许被调用
             ok, detail = cr._route_once(
                 self._app(captcha_glyph_enabled=True,
                           ai_visual_captcha_enabled=True,
@@ -2078,8 +2079,9 @@ class TestGlyphGateFlow(unittest.TestCase):
                           ai_visual_captcha_api_key="sk",
                           ai_visual_captcha_model="glm-4v-flash"),
                 screen_text="包含文字：“忠”", force=True)
-            self.assertTrue(hit.get("ai"), "换一组不可用时应退回 AI")
-            self.assertTrue(ok)
+            self.assertFalse(ok, "没把握且不能换一组时应返回失败，交给上层等人工")
+            self.assertIn("人工", detail)
+            self.assertFalse(hit.get("ai"), "该类题永不回退 AI")
         finally:
             gf.solve_glyph_captcha = original_g
             avc.solve_captcha = original_ai
@@ -2104,8 +2106,8 @@ class TestGlyphGateFlow(unittest.TestCase):
         finally:
             gf.solve_glyph_captcha = original
 
-    def test_router_glyph_disabled_behaves_as_before(self):
-        """开关关闭 → 本地路径完全不参与（回到 AI 兜底）"""
+    def test_router_text_question_goes_manual_when_glyph_disabled(self):
+        """「包含文字」类 + 本地字形匹配关闭 → 直接转人工，**也不回退 AI**"""
         import captcha_glyph_flow as gf
         import ai_visual_captcha as avc
         import captcha_router as cr
@@ -2124,7 +2126,7 @@ class TestGlyphGateFlow(unittest.TestCase):
         avc.solve_captcha = _mock_ai
         try:
             # ⚠️ 这里必须 force=False：force 是设置窗口「测试完整流程」用的，会绕过所有子开关
-            # （滑块/AI/本地字形都一样），也就测不到「开关关闭时不参与」这件事。
+            # （滑块/AI/本地字形都一样），也就测不到「开关关闭时怎么走」这件事。
             ok, detail = cr._route_once(
                 self._app(ai_visual_captcha_enabled=True,
                           ai_visual_captcha_base_url="https://x/v1",
@@ -2132,8 +2134,9 @@ class TestGlyphGateFlow(unittest.TestCase):
                           ai_visual_captcha_model="glm-4v-flash"),
                 screen_text="包含文字：“忠”", force=False)
             self.assertFalse(hit.get("glyph"), "开关关闭时不该进本地路径")
-            self.assertTrue(hit.get("ai"))
-            self.assertTrue(ok)
+            self.assertFalse(hit.get("ai"), "该类题永不回退 AI")
+            self.assertFalse(ok)
+            self.assertIn("人工", detail)
         finally:
             gf.solve_glyph_captcha = original_g
             avc.solve_captcha = original_ai

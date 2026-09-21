@@ -109,14 +109,41 @@ def normalize_3sigma(x: np.ndarray) -> np.ndarray:
     return ((x + 1.0) * 127.5).astype(np.uint8)
 
 
+PREP_DEFAULT = "bh"          # 生产默认的图像处理方式；改它之前先读 memory/验证码字形匹配-实验结论.md
+PREP_MODES = ("bh", "flat", "clahe")
+
+
+def _ellipse(kernel: int) -> np.ndarray:
+    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel))
+
+
+def _blackhat(gray: np.ndarray, kernel: int) -> np.ndarray:
+    """形态学黑帽：剥出「浅底上的深色细笔画」，同时压掉大块风景低频。"""
+    return cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, _ellipse(kernel)).astype(np.float32)
+
+
 def prep_tile(tile_bgr: np.ndarray,
-              kernel: int = BH_KERNEL) -> np.ndarray:
-    """图块 → 固定尺寸灰度 → 形态学黑帽 → 归一化（float32，值域约 ±1）。"""
+              kernel: int = BH_KERNEL,
+              mode: str = PREP_DEFAULT) -> np.ndarray:
+    """图块 → 固定尺寸灰度 → **图像处理**（默认黑帽）→ ±3σ 归一化（float32，值域约 ±1）。
+
+    mode 是「图像处理」这一步的可选项，默认 "bh" 与历史实现**逐位一致**：
+      "bh"    形态学黑帽（生产默认。K=25 阈值法最优、K=35 排序满分）
+      "flat"  平场除（先除掉低频光照）再黑帽 —— 抹掉图块之间的整体明暗差
+      "clahe" 局部直方图均衡再黑帽 —— 逐块 AUC 更高，但**压缩 conf 分离度、门控形态反而更差**，
+              故不作默认（实测见 memory/验证码字形匹配-实验结论.md）
+    """
     t = cv2.resize(tile_bgr, (TILE_W, TILE_H), interpolation=cv2.INTER_CUBIC)
-    gray = cv2.cvtColor(t, cv2.COLOR_BGR2GRAY)
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel))
-    bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, k).astype(np.float32)
-    x = bh.astype(np.float32)
+    gray_u8 = cv2.cvtColor(t, cv2.COLOR_BGR2GRAY)
+    if mode == "flat":
+        g = gray_u8.astype(np.float32)
+        low = cv2.GaussianBlur(g, (0, 0), 15.0)
+        x = _blackhat(g / np.maximum(low, 1e-3), kernel)
+    elif mode == "clahe":
+        cl = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray_u8).astype(np.float32)
+        x = _blackhat(cl, kernel)
+    else:
+        x = _blackhat(gray_u8.astype(np.float32), kernel)
     std = float(x.std()) or 1.0
     return np.clip((x - float(x.mean())) / (NORM_SIGMA * std), -1.0, 1.0)
 
@@ -169,12 +196,15 @@ class GlyphMatcher:
     """按字缓存模板族，避免每次验证码都重新渲染。
 
     kernel: 黑帽核直径。``BH_KERNEL``(25) 阈值法最优；``ORDER_KERNEL``(35) 排序满分。
+    mode:   图像处理方式（``PREP_DEFAULT``="bh"，见 ``prep_tile``）。非法值回落默认。
     """
 
     def __init__(self, fonts: list[str] | None = None,
-                 kernel: int = BH_KERNEL) -> None:
+                 kernel: int = BH_KERNEL,
+                 mode: str = PREP_DEFAULT) -> None:
         self.fonts = fonts if fonts is not None else resolve_fonts()
         self.kernel = kernel
+        self.mode = mode if mode in PREP_MODES else PREP_DEFAULT
         self._cache: dict[str, list[np.ndarray]] = {}
 
     def templates(self, ch: str) -> list[np.ndarray]:
@@ -194,7 +224,8 @@ class GlyphMatcher:
         return best
 
     def score_tiles(self, tiles_bgr: list[np.ndarray], ch: str) -> list[float]:
-        return [self.score_tile(prep_tile(t, self.kernel), ch) for t in tiles_bgr]
+        return [self.score_tile(prep_tile(t, self.kernel, self.mode), ch)
+                for t in tiles_bgr]
 
 
 # --------------------------------------------------------------------------- #

@@ -3,9 +3,10 @@
 登录验证码统一调度（OCR 判定 → 分发）
 
 登录第三态（既未见重登按钮也未见三角洲图标）触发后：
-0. 「包含文字」类（选择所有写着某个字的图片）→ 优先走**本地字形匹配**（captcha_glyph_flow，离线零 API）：
-   有把握就把目标图点了并点确认；**没把握不点任何图**，返回失败交给外层「刷新重试」去点「换一组」。
-   需启用 captcha_glyph_enabled；未启用时该步完全不参与。
+0. 「包含文字」类（选择所有写着某个字的图片）→ **只走本地字形匹配**（captcha_glyph_flow，离线零 API），
+   **永不回退 AI**：有把握就把目标图点了并点确认；没把握不点任何图，返回失败交给外层「刷新重试」去点
+   「换一组」；「换一组」不可用时**直接转人工验证**（AI 对这类题实测只有 ~24%，调它只是白花一轮、还可能误点）。
+   需启用 captcha_glyph_enabled；未启用时这类题一律转人工，也不会落到 AI。
 1. OCR 识别屏幕文字，按关键词判定验证类型：
    - 命中滑块关键词（拖动/滑动/滑块…）→ 滑块 YOLO 自动拖动（slider_captcha）
    - 命中点击关键词（依次点击/请点击…）→ AI 视觉验证点击（ai_visual_captcha）
@@ -304,11 +305,18 @@ def _route_once(app, stop_event=None, screen_text=None, force=False):
             save_type3_sample(settings, text)
         return False, "图片文字选择类验证码，转人工验证"
 
-    # 0.5) 「包含文字」类 → 本地字形匹配（离线零 API）。
-    #      有把握就提交；没把握**不点任何图**，交给外层 route_and_solve 的「刷新重试」换一组。
-    #      放在「直接转人工」规则之后：显式配了人工关键词时，仍以用户的人工策略为准。
-    glyph_mod, glyph_on = _glyph_module_state(settings, force=force)
-    if glyph_on and question_kind_from_text(text) == "text":
+    # 0.5) 「包含文字」类 → **只走本地字形匹配**（离线零 API），该类题永不回退 AI。
+    #      有把握就提交；没把握**不点任何图**，交给外层 route_and_solve 的「刷新重试」换一组；
+    #      换一组不可用/用完了 → 直接转人工验证（外层 automation_runner 会等 captcha_manual_wait_seconds）。
+    #      放在「直接转人工」规则之后，且**在滑块/点击/AI 分支之前就 return**，
+    #      保证这类题在本函数里永远碰不到 AI。
+    if question_kind_from_text(text) == "text":
+        glyph_mod, glyph_on = _glyph_module_state(settings, force=force)
+        if not glyph_on:
+            print("🛡️ 「包含文字」类：本地字形匹配未启用/不可用 → 转人工验证（不回退 AI）")
+            if settings.get("captcha_type3_save_image", False):
+                save_type3_sample(settings, text)
+            return False, "「包含文字」类：本地字形匹配未启用，转人工验证"
         print("🔤 判定为「包含文字」类，优先走本地字形匹配（离线零 API）")
         g_ok, g_detail = glyph_mod.solve_glyph_captcha(
             app, stop_event=stop_event, force=force)
@@ -316,9 +324,13 @@ def _route_once(app, stop_event=None, screen_text=None, force=False):
             return True, f"本地字形匹配：{g_detail}"
         print(f"ℹ️ 本地字形匹配未提交：{g_detail}")
         if refresh_available(settings):
-            # 「没把握就换一组」：本函数不点图也不点刷新，交由外层统一处理
+            # 「没把握就换一组」：本函数不点图也不点刷新，交由外层统一处理；
+            # 外层会用满 captcha_refresh_max 次预算，每次都会再进来重算一遍。
             return False, f"本地字形匹配没把握，交给外层换一组重来（{g_detail}）"
-        print("ℹ️ 「换一组」未启用/未配坐标，退回 AI 视觉兜底")
+        print("ℹ️ 本地字形匹配没把握且「换一组」不可用 → 转人工验证（不回退 AI）")
+        if settings.get("captcha_type3_save_image", False):
+            save_type3_sample(settings, text)
+        return False, f"「包含文字」类：本地字形匹配没把握，转人工验证（{g_detail}）"
 
     slider_kws = _parse_keywords(settings.get("captcha_slider_keywords"))
     click_kws = _parse_keywords(settings.get("captcha_click_keywords"))
