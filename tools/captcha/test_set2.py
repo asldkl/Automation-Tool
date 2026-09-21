@@ -66,16 +66,19 @@ def P(*a, **kw):
 
 
 def pick_files():
-    """取今晚 00:05 那批样本（100 张）；排除 preview_* 与 09-21 的旧样本"""
+    """本批 100 张；排除 preview_* 与非 09-22 的旧样本。
+    ⚠️ 目录可能已被改名成 001.png…100.png（见 tools/captcha/rename_test2.py），两种命名都要认。"""
     allf = sorted(f for f in os.listdir(FOLDER) if f.lower().endswith(".png"))
     keep, skip = [], []
     for f in allf:
         if f.startswith("preview_"):
             skip.append((f, "UI 预览图"))
-        elif "20260922-" not in f:
-            skip.append((f, "非本批（时间戳不是 09-22）"))
+        elif len(f) == 7 and f[:3].isdigit() and f.endswith(".png"):
+            keep.append(f)                      # 已改名：001.png …
+        elif "20260922-" in f:
+            keep.append(f)                      # 原名：sample_001_20260922-000507.png
         else:
-            keep.append(f)
+            skip.append((f, "非本批（时间戳不是 09-22）"))
     return keep, skip
 
 
@@ -149,9 +152,13 @@ def make_sheets(recs):
             y0 = HEAD + ri * ROW_H
             act = "提交" if r["action"] == "submit" else "换一组"
             col = GREEN if r["action"] == "submit" else ORANGE
-            d.text((28, y0), "%s  目标「%s」  选中 %s  conf %+.3f  → %s"
-                   % (r["file"].replace("sample_", "s").replace(".png", ""), r["ch"],
-                      str(r["picked"]), r["conf"], act), font=f_s, fill=col)
+            seq = os.path.splitext(r["file"])[0]
+            if len(seq) == 3 and seq.isdigit():
+                seq = "#" + seq
+            elif seq.startswith("sample_"):
+                seq = "s" + seq[7:]
+            d.text((28, y0), "%s   目标「%s」   选中 %s   conf %+.3f   → %s"
+                   % (seq, r["ch"], str(r["picked"]), r["conf"], act), font=f_s, fill=col)
             d.line([(28, y0 + 22), (W - 28, y0 + 22)], fill=(232, 232, 232), width=1)
             bgr = np.array(Image.open(os.path.join(FOLDER, r["file"])).convert("RGB"))[:, :, ::-1].copy()
             coords = avc.detect_image_tiles(bgr)
