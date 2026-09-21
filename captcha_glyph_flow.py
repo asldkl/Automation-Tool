@@ -89,6 +89,28 @@ def extract_target_char(text):
     return m.group(1) if m else ""
 
 
+def verify_submitted(settings, stop_event=None, tries=2, wait=1.5):
+    """提交后复核：返回 (passed, detail)。
+
+    **判据保守**：只有连续 ``tries`` 次都仍然读到「包含文字」题面，才判未通过；
+    读不到文字 / 读到别的内容 / 复核异常 / 已停止 —— 一律按**通过**处理。
+    理由：这类题面在提交后会立刻消失，false negative（误判没过）会去点「换一组」把
+    已经通过的验证码搞乱，比 false positive 危险得多。
+    """
+    import captcha_router as router
+    for i in range(max(1, int(tries))):
+        if stop_event is not None and stop_event.is_set():
+            return True, "已停止（按通过处理）"
+        time.sleep(max(0.0, float(wait)))
+        try:
+            text = str(router.gather_region_text(settings) or "")
+        except Exception as e:            # noqa: BLE001
+            return True, f"复核异常（{e}），按通过处理"
+        if not (_TARGET_RE.search(text) or "包含文字" in text):
+            return True, "复核：已读不到该题面"
+    return False, f"复核：连续 {tries} 次仍读得到题面"
+
+
 def solve_glyph_captcha(app, stop_event=None, force=False):
     """本地字形匹配一条龙。返回 (ok, detail)。
 
@@ -161,6 +183,13 @@ def solve_glyph_captcha(app, stop_event=None, force=False):
                 avc._click_screen_point(confirm_point[0], confirm_point[1])
             except Exception as e:
                 return False, f"点击确认失败：{e}"
+            # 提交后复核：k 不可知、错例都是「多选了一块」，这里回看一眼，
+            # 没过就返回失败，交给外层「换一组」重试 / 转人工，而不是硬说成功
+            if bool(settings.get("captcha_glyph_verify_submit", True)):
+                _passed, _why = verify_submitted(settings, stop_event=stop_event)
+                if not _passed:
+                    return False, f"已点击确认，但{_why} → 交给外层换一组/转人工"
+                print(f"🔤 提交后复核：{_why}")
         return True, (f"已提交 {picked} 块（conf={decision['conf']:+.3f}，"
                       f"模式={decision['mode']}"
                       f"{'' if confirm_point else '，未配确认坐标'}）")

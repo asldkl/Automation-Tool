@@ -280,6 +280,7 @@ DEFAULT_SETTINGS = {
     "captcha_glyph_gate": 0.09,                 # 置信度门限：conf 不超过它就不提交、改点「换一组」
     "captcha_glyph_prep": "clahe",              # 图像处理：bh（黑帽）/ flat（平场除）/ clahe（局部均衡）
     "captcha_glyph_kernel": 35,                 # 黑帽核直径（奇数；25 阈值法最优、35 排序满分）
+    "captcha_glyph_verify_submit": True,        # 点完确认后复核题面是否消失；没过则交外层重试/转人工
     # AI 视觉验证（WeGame 登录点击式验证码，配置完整才生效）
     "ai_visual_captcha_enabled": False,          # 是否启用 AI 视觉验证处理
     "ai_visual_captcha_provider": "",            # 供应商预设名（智谱GLM/阿里百炼/月之暗面Kimi/豆包（火山方舟）/硅基流动/自定义）

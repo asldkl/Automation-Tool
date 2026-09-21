@@ -2052,6 +2052,35 @@ class TestGlyphGateFlow(unittest.TestCase):
         self.assertAlmostEqual(bad["threshold"], cgm.DEFAULT_THRESHOLD)
         self.assertAlmostEqual(bad["gate"], cgm.GATE_DEFAULT, "越界门限必须回落默认")
 
+    def test_verify_submitted_conservative(self):
+        """复核必须保守：只有连续读到题面才判没过；异常/读不到/已停止都算通过"""
+        import captcha_router as cr
+        import captcha_glyph_flow as gf
+        original = cr.gather_region_text
+        try:
+            cr.gather_region_text = lambda s: "请选择所有包含文字：“忠”的图片"
+            self.assertFalse(gf.verify_submitted({}, tries=2, wait=0)[0], "连续读到题面 → 没过")
+            seq = ["包含文字：“忠”", "登录中…"]
+            cr.gather_region_text = lambda s: seq.pop(0) if seq else ""
+            self.assertTrue(gf.verify_submitted({}, tries=2, wait=0)[0], "第二次就没有了 → 通过")
+            cr.gather_region_text = lambda s: ""
+            self.assertTrue(gf.verify_submitted({}, tries=2, wait=0)[0], "读不到文字 → 通过")
+
+            def _boom(_s):
+                raise RuntimeError("截图炸了")
+            cr.gather_region_text = _boom
+            ok, why = gf.verify_submitted({}, tries=2, wait=0)
+            self.assertTrue(ok, "复核异常必须按通过处理，不能去点换一组")
+            self.assertIn("异常", why)
+
+            class _Stop:
+                def is_set(self):
+                    return True
+            cr.gather_region_text = lambda s: "包含文字：“忠”"
+            self.assertTrue(gf.verify_submitted({}, stop_event=_Stop(), tries=2, wait=0)[0])
+        finally:
+            cr.gather_region_text = original
+
     # ---------- 路由集成（mock 掉真实点击/请求） ----------
     def _app(self, **over):
         import types
