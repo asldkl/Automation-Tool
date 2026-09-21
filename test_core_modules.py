@@ -2031,6 +2031,27 @@ class TestGlyphGateFlow(unittest.TestCase):
         self.assertEqual(GlyphMatcher().kernel, BH_KERNEL)
         self.assertEqual(GlyphMatcher(mode="乱写").mode, PREP_DEFAULT)
 
+    def test_read_profile_defaults_and_fallbacks(self):
+        """可调四项：缺省取算法基线；非法值回落（用户手填的值不能信）；核强制奇数"""
+        import captcha_glyph_match as cgm
+        from captcha_glyph_flow import read_profile
+        d = read_profile({})
+        self.assertEqual(d["mode"], cgm.PREP_DEFAULT)
+        self.assertEqual(d["kernel"], cgm.BH_KERNEL)
+        self.assertAlmostEqual(d["threshold"], cgm.DEFAULT_THRESHOLD)
+        self.assertAlmostEqual(d["gate"], cgm.GATE_DEFAULT)
+        p = read_profile({"captcha_glyph_prep": "clahe", "captcha_glyph_kernel": 35,
+                          "captcha_glyph_threshold": 0.40, "captcha_glyph_gate": 0.09})
+        self.assertEqual(p["mode"], "clahe")
+        self.assertEqual(p["kernel"], 35)
+        # 非法值
+        bad = read_profile({"captcha_glyph_prep": "根本没有", "captcha_glyph_kernel": 34,
+                            "captcha_glyph_threshold": "不是数字", "captcha_glyph_gate": 9})
+        self.assertEqual(bad["mode"], cgm.PREP_DEFAULT, "非法图像处理必须回落基线")
+        self.assertEqual(bad["kernel"], 35, "偶数核应向上取奇数")
+        self.assertAlmostEqual(bad["threshold"], cgm.DEFAULT_THRESHOLD)
+        self.assertAlmostEqual(bad["gate"], cgm.GATE_DEFAULT, "越界门限必须回落默认")
+
     # ---------- 路由集成（mock 掉真实点击/请求） ----------
     def _app(self, **over):
         import types

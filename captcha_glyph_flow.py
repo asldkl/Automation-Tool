@@ -13,6 +13,9 @@
 与 AI 路径共用同一套配置：``captcha_confirm_point`` / ``captcha_refresh_point`` / ``captcha_refresh_max``。
 
 开关：``captcha_glyph_enabled``（默认关）。关闭时本模块完全不参与，链路行为与从前一致。
+
+可调四项（见 ``read_profile``）：``captcha_glyph_threshold`` / ``_gate`` / ``_prep`` / ``_kernel``。
+当前生产档位 = clahe + 核 35 + 阈值 0.40 + 门限 0.09（25 张上门控口径选出，见 config.py 注释）。
 """
 import random
 import re
@@ -25,7 +28,7 @@ import config  # noqa: F401  (与其它子模块保持一致：设置从 app.set
 _TARGET_RE = re.compile(
     r"(?:包含文字|含有文字|含文字)[\uff1a:\s]*[\u201c\u201d\"']?\s*([\u4e00-\u9fff])")
 
-_matcher = None
+_matchers: dict = {}          # (黑帽核, 图像处理模式) -> GlyphMatcher
 _matcher_lock = threading.Lock()
 
 
@@ -47,15 +50,37 @@ def _num(settings, key, default, lo=None, hi=None):
     return v
 
 
-def _get_matcher():
-    """进程内复用同一 GlyphMatcher（模板族按字缓存，避免每轮重新渲染）"""
-    global _matcher
-    if _matcher is None:
+def read_profile(settings):
+    """读「字形匹配」的可调四项并做校验，非法值一律回落默认。
+
+    阈值 / 门限 / 图像处理 / 黑帽核都允许用户在 settings.json 里改（手填的值不能信）。
+    返回 {"mode", "kernel", "threshold", "gate"}。
+    """
+    import captcha_glyph_match as cgm
+    raw = str((settings or {}).get("captcha_glyph_prep", "") or "").strip().lower()
+    mode = raw if raw in cgm.PREP_MODES else cgm.PREP_DEFAULT
+    kernel = int(_num(settings, "captcha_glyph_kernel", cgm.BH_KERNEL, lo=3, hi=99))
+    if kernel % 2 == 0:
+        kernel += 1                      # 形态学核必须是奇数
+    return {"mode": mode, "kernel": kernel,
+            "threshold": _num(settings, "captcha_glyph_threshold",
+                              cgm.DEFAULT_THRESHOLD, lo=0.0, hi=1.0),
+            "gate": _num(settings, "captcha_glyph_gate",
+                         cgm.GATE_DEFAULT, lo=0.0, hi=1.0)}
+
+
+def _get_matcher(profile):
+    """按 (黑帽核, 图像处理模式) 复用 GlyphMatcher（模板族按字缓存，避免每轮重新渲染）"""
+    key = (int(profile.get("kernel", 25)), str(profile.get("mode", "bh")))
+    m = _matchers.get(key)
+    if m is None:
         with _matcher_lock:
-            if _matcher is None:
+            m = _matchers.get(key)
+            if m is None:
                 import captcha_glyph_match as cgm
-                _matcher = cgm.GlyphMatcher()
-    return _matcher
+                m = cgm.GlyphMatcher(kernel=key[0], mode=key[1])
+                _matchers[key] = m
+    return m
 
 
 def extract_target_char(text):
@@ -83,8 +108,8 @@ def solve_glyph_captcha(app, stop_event=None, force=False):
     region = avc.get_capture_region(settings)
     offset_x, offset_y = (region[0], region[1]) if region else (0, 0)
     confirm_point = avc.get_confirm_point(settings)
-    threshold = _num(settings, "captcha_glyph_threshold", cgm.DEFAULT_THRESHOLD, lo=0.0, hi=1.0)
-    gate = _num(settings, "captcha_glyph_gate", cgm.GATE_DEFAULT, lo=0.0, hi=1.0)
+    prof = read_profile(settings)
+    threshold, gate = prof["threshold"], prof["gate"]
     if region:
         print(f"🔤 本地字形匹配：使用识别区域 {region}（坐标已换算全屏）")
     if not confirm_point:
@@ -107,7 +132,7 @@ def solve_glyph_captcha(app, stop_event=None, force=False):
         if not coords:
             return False, "没检出图块"
         tiles = [bgr[y:y + h, x:x + w] for (x, y, w, h) in coords]
-        scores = _get_matcher().score_tiles(tiles, ch)
+        scores = _get_matcher(prof).score_tiles(tiles, ch)
         print("🔤 本地字形匹配：目标「{}」逐块分数 {}".format(
             ch, " ".join(f"{i}:{v:+.3f}" for i, v in enumerate(scores, 1))))
         decision = cgm.decide(scores, threshold=threshold, gate=gate)

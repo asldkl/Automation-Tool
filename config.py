@@ -273,8 +273,13 @@ DEFAULT_SETTINGS = {
     "captcha_confirm_enabled": False,           # 选图类验证码：点完所有目标图后再点「确认」按钮
     "captcha_confirm_point": [0, 0],            # 「确认/提交」按钮坐标（屏幕取点/手填）
     "captcha_glyph_enabled": False,             # 本地字形匹配（离线零 API）：有把握就点、没把握就换一组
-    "captcha_glyph_threshold": 0.37,            # 字形匹配阈值：分数≥它才算「这块写着目标字」
-    "captcha_glyph_gate": 0.16,                 # 置信度门限：conf 不超过它就不提交、改点「换一组」
+    # —— 以下四项是「生产档位」，由 tools/captcha/exp_gate_sweep.py 在 25 张上按门控口径选出
+    #    （阈值与门限都在训练折挑、测试折评估）：clahe+核35 的阈值法 CV 22/25、oracle 25/25，
+    #    拟合 22/25 精度 100%，而旧档位 bh25+核25 是 16/25、23/25、15/25。⚠️n=25，仍需真机复验。
+    "captcha_glyph_threshold": 0.40,            # 字形匹配阈值：分数≥它才算「这块写着目标字」
+    "captcha_glyph_gate": 0.09,                 # 置信度门限：conf 不超过它就不提交、改点「换一组」
+    "captcha_glyph_prep": "clahe",              # 图像处理：bh（黑帽）/ flat（平场除）/ clahe（局部均衡）
+    "captcha_glyph_kernel": 35,                 # 黑帽核直径（奇数；25 阈值法最优、35 排序满分）
     # AI 视觉验证（WeGame 登录点击式验证码，配置完整才生效）
     "ai_visual_captcha_enabled": False,          # 是否启用 AI 视觉验证处理
     "ai_visual_captcha_provider": "",            # 供应商预设名（智谱GLM/阿里百炼/月之暗面Kimi/豆包（火山方舟）/硅基流动/自定义）
