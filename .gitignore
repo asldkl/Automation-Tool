@@ -61,3 +61,8 @@ best.onnx
 
 # WorkBuddy 工程记忆目录（AI 助手运行时数据，不入库）
 .workbuddy/
+
+# 仅本地保留、不入库（2026-09-22 按要求从 GitHub 移除）
+tools/captcha/
+图片文字点击验证例图/
+自动滑块验证/
