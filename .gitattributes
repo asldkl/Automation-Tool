@@ -1,0 +1,4 @@
+# Windows 批处理文件：cmd.exe 对行尾敏感（LF-only 的 .bat 里 goto/if 块会被错误解析），
+# 而且 GitHub 的「Download ZIP」和 raw 下载**不经过 core.autocrlf**，只会拿到 blob 里的字节。
+# → 标记为 binary：禁止一切行尾转换，把 CRLF 原样存进 blob。
+*.bat binary
