@@ -2251,5 +2251,86 @@ class TestGlyphGateFlow(unittest.TestCase):
             self.assertIn("'%s'" % name, text)
 
 
+
+class TestCaptchaKeywordFieldsUI(unittest.TestCase):
+    """验证码设置窗口：OCR 判定关键词三个输入框必须默认可见、可编辑、能存取
+
+    （历史 bug：它们被放在默认收起的「高级选项」里 → winfo_ismapped=0，用户以为改不了）"""
+
+    def _open(self):
+        """用 stub 宿主真实构建验证码设置窗口，并把 config 的读写换成假的（不碰用户 settings.json）"""
+        import types
+        import tkinter as tk
+        import config
+        import settings_window as sw
+        fake = dict(config.DEFAULT_SETTINGS)
+        saved = {}
+        orig = (config.load_settings, config.save_settings, sw.config.load_settings,
+                sw.config.save_settings)
+        config.load_settings = lambda: dict(fake)
+        config.save_settings = lambda d: saved.update(d)
+        sw.config.load_settings = config.load_settings
+        sw.config.save_settings = config.save_settings
+        root = tk.Tk()
+        root.withdraw()
+        stub = types.SimpleNamespace(
+            win=root, app=types.SimpleNamespace(settings=dict(fake)),
+            _captcha_win=None, _captcha_status_var=None, _active_canvas=None)
+        for name in dir(sw.SettingsWindow):
+            if name.startswith('_') and callable(getattr(sw.SettingsWindow, name, None)):
+                try:
+                    setattr(stub, name, types.MethodType(getattr(sw.SettingsWindow, name), stub))
+                except Exception:
+                    pass
+        sw.SettingsWindow._open_captcha_settings(stub)
+        root.update_idletasks()
+        root.update()
+        return root, stub, saved, orig, config, sw
+
+    def test_keyword_fields_visible_editable_and_saved(self):
+        try:
+            root, stub, saved, orig, config, sw = self._open()
+        except Exception as e:               # noqa: BLE001
+            self.skipTest('无图形环境，跳过：%s' % e)
+            return
+        try:
+            vars_ = [stub._cap_slider_kw_var, stub._cap_click_kw_var, stub._cap_manual_kw_var]
+
+            def walk(w):
+                for c in w.winfo_children():
+                    yield c
+                    for g in walk(c):
+                        yield g
+
+            found = {}
+            for e in walk(stub._captcha_win):
+                if e.winfo_class() != 'TEntry':
+                    continue
+                vn = str(e.cget('textvariable'))
+                for i, v in enumerate(vars_):
+                    if vn == str(v):
+                        found[i] = e
+            self.assertEqual(len(found), 3, '三个关键词输入框都应存在于窗口中')
+            for i, e in sorted(found.items()):
+                self.assertEqual(str(e.cget('state')), 'normal', '输入框必须可编辑')
+                self.assertTrue(e.winfo_ismapped(),
+                                '输入框必须默认可见（不能藏在默认收起的面板里）')
+            # 改值 → 保存 → 回读
+            vars_[0].set('拖动,滑动,自定义A')
+            vars_[1].set('依次点击,自定义B')
+            vars_[2].set('包含文字,自定义C')
+            sw.SettingsWindow._save_captcha_settings(stub, True)
+            self.assertEqual(saved.get('captcha_slider_keywords'), '拖动,滑动,自定义A')
+            self.assertEqual(saved.get('captcha_click_keywords'), '依次点击,自定义B')
+            self.assertEqual(saved.get('captcha_manual_keywords'), '包含文字,自定义C')
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            (config.load_settings, config.save_settings,
+             sw.config.load_settings, sw.config.save_settings) = orig
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

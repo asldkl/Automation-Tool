@@ -1122,9 +1122,23 @@ class SettingsWindow:
         ttk.Label(_grow, text="3 秒后对当前屏幕跑一次；没把握时不会点击任何东西",
                   style='SettingsSmall.TLabel').pack(side=tk.LEFT, padx=(6, 0))
 
-        # ---------- 基本④：高级选项（默认收起，避免主界面太乱） ----------
+        # ---------- 基本④：OCR 判定关键词 ----------
+        # ⚠️ 必须**默认展开**：以前默认收起（adv_box 不 pack），字段 winfo_ismapped=0，
+        # 用户根本看不到/点不到，误以为「关键词无法修改」。
         adv_box = ttk.LabelFrame(tab_basic, text="  OCR 判定关键词（一般不用改）  ",
                                  style='SettingsCard.TLabelframe', padding=8)
+        adv_var = tk.BooleanVar(value=True)
+
+        def _toggle_adv():
+            if adv_var.get():
+                adv_box.pack(fill=tk.X, padx=10, pady=(0, 8))
+            else:
+                adv_box.pack_forget()
+
+        # 折叠开关放在框**之前**：展开后关键词区域出现在开关下方，不会被挤到窗口外
+        ttk.Checkbutton(tab_basic, text="显示高级选项（OCR 判定关键词）", variable=adv_var,
+                        style='Settings.TCheckbutton', command=_toggle_adv).pack(
+            anchor='w', padx=12, pady=(0, 6))
         ttk.Label(adv_box, text="登录异常时先 OCR 判定验证类型：命中滑块关键词→滑块 YOLO，命中点击关键词→AI 视觉，"
                                 "都没命中由 AI 兜底",
                   style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(0, 6))
@@ -1143,8 +1157,23 @@ class SettingsWindow:
         ttk.Label(ocr_row3, text="转人工关键词：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 6))
         self._cap_manual_kw_var = tk.StringVar(value=s.get("captcha_manual_keywords", ""))
         ttk.Entry(ocr_row3, textvariable=self._cap_manual_kw_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(adv_box, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击；"
-                                "转人工关键词命中则【直接等你手动处理、不调用 AI】（清空=关闭本规则）",
+        # 实时显示「转人工关键词」当前的效果，避免「空着不知道什么意思」
+        self._cap_manual_hint_var = tk.StringVar()
+
+        def _refresh_manual_hint(*_a):
+            v = self._cap_manual_kw_var.get().strip()
+            if not v:
+                self._cap_manual_hint_var.set(
+                    "当前：空 = 关闭本规则 → 「包含文字」类交给本地字形匹配（没把握则换一组 / 转人工）")
+            else:
+                self._cap_manual_hint_var.set(
+                    "当前：命中即【直接等你手动处理】，不走 AI、也不走本地字形匹配")
+
+        self._cap_manual_kw_var.trace_add("write", _refresh_manual_hint)
+        _refresh_manual_hint()
+        ttk.Label(adv_box, textvariable=self._cap_manual_hint_var, style='SettingsSmall.TLabel',
+                  wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(2, 0))
+        ttk.Label(adv_box, text="多个关键词用英文逗号分隔，任一命中即生效；滑块优先于点击",
                   style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w', pady=(4, 0))
         # 命中第③类（图片文字选择）时存样本图，用于收集训练数据
         self._cap_type3_save_var = tk.BooleanVar(value=s.get("captcha_type3_save_image", False))
@@ -1155,15 +1184,7 @@ class SettingsWindow:
                                 "「目录及数据/日期/图片/文字选择验证_时间.png」，并附一份同名 .txt 记 OCR 文字",
                   style='SettingsSmall.TLabel', wraplength=680, justify=tk.LEFT).pack(anchor='w')
 
-        def _toggle_adv():
-            if adv_var.get():
-                adv_box.pack(fill=tk.X, padx=10)
-            else:
-                adv_box.pack_forget()
-
-        adv_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(tab_basic, text="显示高级选项（OCR 判定关键词）", variable=adv_var,
-                        style='Settings.TCheckbutton', command=_toggle_adv).pack(anchor='w', padx=12, pady=(0, 10))
+        _toggle_adv()          # 构建完立即展开（默认可见可改）
 
         # ---------- 滑块验证（YOLO）—— 独立标签页 ----------
         frame_slider = ttk.LabelFrame(tab_slider, text="  滑块验证（YOLO 缺口定位）  ", style='SettingsCard.TLabelframe', padding=8)
@@ -1645,6 +1666,20 @@ class SettingsWindow:
             if getattr(self, "_captcha_status_var", None) is not None:
                 self._captcha_status_var.set(
                     f"当前状态：{'✅ 已启用' if target.get('captcha_auto_enabled') else '⛔ 未启用'}")
+        except Exception:
+            pass
+        # ⚠️ 冲突提示：转人工关键词含「包含文字」会让「包含文字」类**先**命中人工规则，
+        # 本地字形匹配（captcha_glyph_flow）就再也不会运行 —— 只提示，不动用户配置。
+        try:
+            _mw = str(target.get("captcha_manual_keywords") or "")
+            if (not silent and target.get("captcha_glyph_enabled")
+                    and any(k in _mw for k in ("包含文字", "含有文字", "含文字"))):
+                messagebox.showwarning(
+                    "两条规则会冲突",
+                    "「转人工关键词」里含「包含文字」，它会先命中，\n"
+                    "「包含文字」类验证码将直接等你手动处理 —— 本地字形匹配不会再运行。\n\n"
+                    "想让它走本地字形匹配：把「转人工关键词」清空即可。",
+                    parent=self._captcha_parent())
         except Exception:
             pass
         if not silent:
