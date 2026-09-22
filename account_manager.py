@@ -4,6 +4,7 @@
 """
 import os
 import json
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -212,6 +213,73 @@ def load_accounts(app):
                 load_accounts(app)  # 递归重试
             except Exception as be:
                 print(f"⚠️ 备份恢复也失败: {be}")
+
+
+def _dispatch_to_main(app, fn):
+    """把 UI 改动转发到主线程执行（worker 线程直接操作 Tk 控件会崩）"""
+    root = getattr(app, "root", None)
+    if root is None or threading.current_thread() is threading.main_thread():
+        try:
+            fn()
+        except Exception:
+            pass
+        return
+    try:
+        root.after(0, fn)
+    except Exception:
+        pass
+
+
+def reload_accounts_from_disk(app):
+    """运行期间安全重读 accounts.json（冷却等待时轮询用）。
+
+    为什么不能直接复用 load_accounts：
+      - **只做「新增」**：绝不清空列表、不删除账号、不覆盖内存里已有的备注/资产值。
+        运行中随手重读磁盘，不能把还没落盘的内存状态、或正在跑的账号冲掉。
+      - 列表与 UI 的改动**一律转发到主线程**执行（worker 线程直接动 Tk 控件会崩）。
+
+    用途：等待冷却期间，用「账号上传网页」新传的账号、或在别处追加进 accounts.json 的
+    账号，这里能立刻发现（不用重启主程序）。
+
+    返回 True 表示本次确实发现了新账号。
+    """
+    try:
+        with open(ACCOUNTS_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False        # 读不到 / 文件正在被写坏 → 保持现状（绝不清空）
+
+    images = list(data.get("qq", []) or [])
+    current = list(getattr(app, "qq_account_images", []) or [])
+    added = [p for p in images if p not in current]
+    if not added:
+        return False
+
+    # 只「补缺」：内存里已有的键一律不动（避免覆盖未落盘的改动）
+    notes = dict(getattr(app, "_account_notes", {}) or {})
+    for k, v in (data.get("notes") or {}).items():
+        notes.setdefault(k, v)
+    assets = dict(getattr(app, "_account_assets", {}) or {})
+    for k, v in (data.get("assets") or {}).items():
+        assets.setdefault(k, v)
+    history = dict(getattr(app, "_asset_history", {}) or {})
+    for k, v in (data.get("asset_history") or {}).items():
+        history.setdefault(k, v)
+
+    def _apply():
+        try:
+            app.qq_account_images = current + added
+            app._account_notes = notes
+            app._account_assets = assets
+            app._asset_history = history
+            refresh_account_tree(app)
+        except Exception:
+            pass
+
+    _dispatch_to_main(app, _apply)
+    names = "、".join(_account_key_from_path(p) for p in added[:5])
+    print(f"🔄 等待期间重读账号列表：新增 {len(added)} 个账号（{names}）")
+    return True
 
 
 def add_account(app):
@@ -876,14 +944,13 @@ def toggle_account_pause(app):
 
 
 def start_periodic_tree_refresh(app):
-    """启动账号列表定时刷新（每60秒），每次同时轮换底部提示"""
+    """启动账号列表定时刷新（每60秒）
+
+    ⚠️ 底部提示的轮换已从这里摘出去：以前它挂在这个 60 秒定时器上，
+    而列表刷新是事件驱动的、并不保证每分钟都发生 → 提示看着像卡住不动。
+    现在由 gui_app._start_hint_ticker 用独立定时器驱动（默认 8 秒）。
+    """
     refresh_account_tree(app)
-    # 轮换底部提示文字（若 App 支持）
-    try:
-        if hasattr(app, '_rotate_hint'):
-            app._rotate_hint()
-    except Exception:
-        pass
     app._tree_refresh_timer = app.root.after(60000, lambda: start_periodic_tree_refresh(app))
 
 

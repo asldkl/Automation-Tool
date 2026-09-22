@@ -35,17 +35,35 @@ try:
 except ImportError:
     TRAY_AVAILABLE = False
 
-# 底部轮换提示（每段显示时前拼「提示：」，总长不超过30字）
+# 底部轮换提示（使用指引）。显示时会自动前拼「提示：」，
+# 所以每条务必控制在 **22 字以内**（标签宽度有限，写长了右边的控件会被挤出去）。
+# 由 _start_hint_ticker() 用独立定时器驱动轮换（默认 8 秒一条），
+# 与账号列表的 60 秒刷新解耦 —— 以前挂在列表刷新上，看着像卡住不动。
 _HINT_TIPS = [
+    # —— 账号列表操作 ——
     "双击「现有资产」查看资产记录",
     "双击「下次运行时间」设冷却",
     "双击「名称/备注」设账号信息",
     "右键账号可上移下移删除暂停",
-    "右键单账号可快速进入游戏大厅",
-    "日志截图保存在目录及数据中",
+    "右键「运行此账号」快速进大厅",
+    # —— 数据与日志 ——
+    "日志截图按日期存在日志目录",
     "账号数据自动备份防崩溃丢失",
+    "设置中可配冷却/出售/邮箱",
+    # —— 运行与冷却 ——
     "冷却到期会自动运行任务",
-    "设置中可配置冷却出售邮箱等",
+    "等冷却时自动重扫列表，新账号立刻跑",
+    "分组运行：每 N 个一组，组间等待",
+    "冷却等待窗口可在设置里调整",
+    # —— 账号上传网页 ——
+    "网页批量上传账号：双击启动账号上传网页",
+    "网页新传账号默认暂停，启用后才运行",
+    # —— 验证码 ——
+    "「包含文字」类走本地匹配，不耗 AI",
+    "验证码没把握会自动换一组，不乱点",
+    # —— 日志遮罩 ——
+    "遮罩盖住目标时会自动让开",
+    "遮罩位置：实验功能→更换角落",
 ]
 
 # -------------------- 有效期由服务器端统一校验 --------------------
@@ -140,6 +158,12 @@ def _qt_watchdog_tick(root):
                 enable_log_overlay(root, config.APP_SETTINGS.get("log_overlay_corner", 0))
                 root.after(1000, lambda: _qt_watchdog_tick(root))
                 return
+            # 「排除捕获」标志会在窗口重建（show/setWindowFlag）后静默丢失 →
+            # 每秒读回一次，丢了立刻补上（一次 Win32 调用，开销可忽略）
+            try:
+                _qt_overlay.ensure_capture_exclusion()
+            except Exception:
+                pass
             if not visible and not _qt_manual_hide:
                 # 遮罩被 Windows 隐藏（如游戏独占全屏）→ 重新显示；手动隐藏时跳过
                 try:
@@ -185,12 +209,9 @@ def enable_log_overlay(root, corner_index=0):
         _qt_overlay.show()
         # 开启提示：告知如何关闭（遮罩鼠标穿透，需通过托盘菜单或实验功能窗口关闭）
         _qt_overlay.info("💡 日志遮罩：默认开启，关闭请在 托盘菜单「日志遮罩」操作")
-        try:
-            print("📊 遮罩已排除在屏幕捕获之外（截图里不会出现遮罩）"
-                  if _qt_overlay.capture_excluded else
-                  "⚠️ 本机不支持遮罩捕获排除，仍使用「识别失败时让位」的兼容方案")
-        except Exception:
-            pass
+        # 端到端实测「遮罩到底进不进截图」（品红探针对照实验，约 1 秒，只测这一次）
+        # 不再只看 SetWindowDisplayAffinity 的返回值 —— 它返回成功≠真的生效
+        _verify_capture_exclusion()
         _schedule_qt_pump(root)
         _start_qt_watchdog(root)
         _start_mouse_ticker(root)
@@ -291,12 +312,78 @@ def _run_on_main(fn, timeout=2.0):
 def _overlay_capture_excluded():
     """遮罩是否已排除在屏幕捕获之外。
 
-    排除成功后，遮罩盖在任何位置都不会污染截图 → 所有「让位」动作都没必要做。
+    ⚠️ 只看**读回**的标志（GetWindowDisplayAffinity），不看 SetWindowDisplayAffinity 的
+    返回值 —— 后者会返回成功，但标志在窗口重建后可能静默丢失。
+    ensure_capture_exclusion() 会顺手把丢掉的标志补回去。
     """
     try:
-        return bool(_qt_overlay is not None and _qt_overlay.capture_excluded)
+        if _qt_overlay is None:
+            return False
+        return bool(_qt_overlay.ensure_capture_exclusion())
     except Exception:
         return False
+
+
+# 「遮罩到底进不进截图」的端到端实测结论（启动时测一次并缓存）
+#   None = 还没测；True/False = 实测结论
+_capture_probe_result = None
+
+
+def _verify_capture_exclusion():
+    """端到端实测「遮罩是否真的不进截图」，结果缓存，只测一次。
+
+    为什么要实测：`SetWindowDisplayAffinity` 返回 True **不等于**系统真的生效。
+    这里用对照实验（品红探针窗口：不打标志必须拍得到、打上标志必须拍不到）来拿事实。
+    ⚠️ 必须在主线程调用（要 show 探针窗口 + 泵事件），会短暂闪一个 60×60 品红方块。
+    """
+    global _capture_probe_result
+    if _capture_probe_result is not None:
+        return _capture_probe_result
+    if _qt_overlay is None:
+        return False
+    if not _overlay_capture_excluded():
+        _capture_probe_result = False   # 标志都没设上，不用再探了
+        return False
+    try:
+        from screen_log_overlay import probe_exclude_from_capture
+        ok = bool(probe_exclude_from_capture(log=lambda m: print("   " + m)))
+    except Exception:
+        ok = False
+    _capture_probe_result = ok
+    msg = ("📊 遮罩捕获排除实测：✅ 生效（遮罩确实不会出现在截图里）" if ok else
+           "⚠️ 遮罩捕获排除实测：❌ 失效 → 已启用「截图前让位 / 匹配失败换角落」兜底")
+    try:
+        print(msg)
+    except Exception:
+        pass
+    try:
+        _qt_overlay.info(msg)
+    except Exception:
+        pass
+    return _capture_probe_result
+
+
+# 是否「不管实测结果，都强制让遮罩让位」。
+#   False（默认）= 实测确认遮罩不进截图时就跳过让位 —— 遮罩不会在运行中来回跳。
+#   True         = 只要遮罩盖住目标就主动挪开。纯为「看得清画面」，
+#                  代价是运行中遮罩会跳位置（每次点击都可能跳一下再挪回来）。
+# ⚠️ 改这一行即可切换；若想做成设置里的勾选框，再加 config 键 + 界面项。
+OVERLAY_FORCE_AVOID = False
+
+
+def _overlay_skippable():
+    """是否可以跳过让位 / 换位动作。
+
+    必须**两项都满足**才敢跳过：
+      1) 标志读回成功（GetWindowDisplayAffinity 确认标志此刻还在）；
+      2) 端到端品红探针实测通过（证明这台机器上截图真的拍不到遮罩）。
+    任何一项不确定 → 老老实实让位：宁可多动一下，也不能让遮罩污染截图。
+    """
+    if OVERLAY_FORCE_AVOID:
+        return False
+    if not _capture_probe_result:
+        return False
+    return _overlay_capture_excluded()
 
 
 def _overlay_avoid(x, y):
@@ -304,8 +391,8 @@ def _overlay_avoid(x, y):
     返回原角落索引 token（供点完复原）；无需避让返回 None。线程安全"""
     if _qt_overlay is None:
         return None
-    if _overlay_capture_excluded():
-        return None   # 遮罩不进截图，盖在哪都不影响识别与点击
+    if _overlay_skippable():
+        return None   # 实测确认遮罩不进截图，盖在哪都不影响识别与点击
     token = {'v': None}
 
     def _do():
@@ -341,8 +428,8 @@ def _overlay_avoid_region(x, y, w, h):
     返回 token（供截图后复原）；无需避让返回 None。线程安全"""
     if _qt_overlay is None:
         return None
-    if _overlay_capture_excluded():
-        return None   # 遮罩不进截图，截图区域是否被盖住已无所谓
+    if _overlay_skippable():
+        return None   # 实测确认遮罩不进截图，截图区域是否被盖住已无所谓
     token = {'corner': None, 'offscreen': None}
 
     def _do():
@@ -412,10 +499,63 @@ def _overlay_restore(token):
     _run_on_main(_do)
 
 
+def _overlay_rect():
+    """遮罩当前占据的屏幕矩形 (x, y, w, h)；不可用/未显示返回 None。线程安全"""
+    if _qt_overlay is None:
+        return None
+    box = {'v': None}
+
+    def _do():
+        try:
+            if not _qt_overlay.isVisible():
+                return
+            g = _qt_overlay.geometry()
+            box['v'] = (g.x(), g.y(), g.width(), g.height())
+        except Exception:
+            pass
+
+    _run_on_main(_do)
+    return box['v']
+
+
+def _overlay_nudge(reason=""):
+    """把遮罩换到下一个角落（目标位置未知时的试探性换位）。
+
+    与「让位」的区别：让位是**知道目标矩形**后的精确避让；全屏模板匹配时目标位置未知，
+    只有「匹配失败 + 遮罩确实会进截图」这个信号可用 —— 那就换个角落再试一次。
+    返回 True 表示确实换了位置。
+    """
+    if _qt_overlay is None:
+        return False
+    done = {'v': False}
+
+    def _do():
+        try:
+            if not _qt_overlay.isVisible():
+                return
+            if _overlay_skippable():
+                return   # 实测确认遮罩不进截图 → 换位没有任何意义
+            _qt_overlay.cycle_corner((int(_qt_overlay.corner_index) + 1) % 4)
+            done['v'] = True
+        except Exception:
+            pass
+
+    # 超时给足：_overlay_skippable() 首次可能触发约 1 秒的探针实测
+    _run_on_main(_do, timeout=6.0)
+    if done['v']:
+        try:
+            print(f"🔀 遮罩疑似盖住目标（{reason}）→ 已换到其他角落重试")
+        except Exception:
+            pass
+    return done['v']
+
+
 # 注册日志遮罩避让钩子（点击点被遮罩覆盖时临时移开，点完复原）
 utils.set_overlay_avoid_hooks(_overlay_avoid, _overlay_restore)
 # 截图区域避让（资产识别只截图不点击，区域被遮罩盖住时同样要移开）
 utils.set_overlay_avoid_region_hooks(_overlay_avoid_region, _overlay_restore_region)
+# 遮罩几何查询 / 换角落（全屏匹配失败时的兜底，见 utils._find_and_click_core）
+utils.set_overlay_info_hooks(_overlay_rect, _overlay_nudge)
 
 
 def _overlay_status_text(app):
@@ -541,6 +681,50 @@ def _stop_mouse_ticker():
         except Exception:
             pass
     _ov_mouse_ticker_id = None
+
+
+# ==================== 底部提示轮换（独立定时器） ====================
+# 历史缺陷：底部提示原先只在 account_manager.start_periodic_tree_refresh()（每 60 秒）
+# 里顺带轮换一次，而账号列表刷新是**事件驱动**的、并不保证每分钟都发生
+# → 提示长期停在第一条，看着像卡死。这里给它独立定时器，与列表刷新彻底解耦。
+HINT_ROTATE_MS = 8000          # 轮换间隔（毫秒）；想快/想慢就改这一个数
+_hint_ticker_id = None
+_hint_ticker_root = None
+
+
+def _start_hint_ticker(app):
+    """启动底部提示轮换（独立定时器，默认 8 秒一条）"""
+    global _hint_ticker_id, _hint_ticker_root
+    _stop_hint_ticker()
+    _hint_ticker_root = app.root
+
+    def _tick():
+        global _hint_ticker_id
+        try:
+            if not app.root.winfo_exists():
+                _hint_ticker_id = None
+                return
+            app._rotate_hint()
+            _hint_ticker_id = app.root.after(HINT_ROTATE_MS, _tick)
+        except Exception:
+            _hint_ticker_id = None   # 窗口已销毁 / 退出中，静默收摊
+
+    try:
+        _hint_ticker_id = app.root.after(HINT_ROTATE_MS, _tick)
+    except Exception:
+        _hint_ticker_id = None
+
+
+def _stop_hint_ticker():
+    """停止底部提示轮换（退出时调用，避免 after 回调打到已销毁的窗口上）"""
+    global _hint_ticker_id, _hint_ticker_root
+    if _hint_ticker_id and _hint_ticker_root is not None:
+        try:
+            _hint_ticker_root.after_cancel(_hint_ticker_id)
+        except Exception:
+            pass
+    _hint_ticker_id = None
+    _hint_ticker_root = None
 
 
 class RedirectText:
@@ -820,6 +1004,8 @@ class App:
         self.load_accounts()
         self.update_account_count()
         self._start_periodic_tree_refresh()
+        # 底部提示单独一个更快的定时器（默认 8 秒），不再依赖账号列表的 60 秒刷新
+        self._start_hint_ticker()
 
         # 托盘：等待网络期间可能已经创建过（_check_validate_result 里驻留托盘），
         # 这里不能再清空重建——旧图标还在自己的线程里跑着，重建会让托盘出现两个图标
@@ -1283,6 +1469,7 @@ class App:
     def _quit_all(self):
         self._shutdown = True
         _stop_mouse_ticker()
+        _stop_hint_ticker()   # 底部提示轮换定时器（避免 after 回调打到已销毁的窗口）
         # 保存窗口大小和位置（最小化/托盘状态时先恢复再保存）
         try:
             if self.root.state() == 'iconic' or self.root.state() == 'withdrawn':
@@ -1433,9 +1620,21 @@ class App:
     def _start_periodic_tree_refresh(self):
         account_manager.start_periodic_tree_refresh(self)
 
+    def _start_hint_ticker(self):
+        """启动底部提示轮换（独立定时器，见模块级 _start_hint_ticker）"""
+        _start_hint_ticker(self)
+
+    def _stop_hint_ticker(self):
+        _stop_hint_ticker()
+
     def _rotate_hint(self):
-        """轮换底部提示文字（每次周期性刷新时切换到下一条）"""
+        """轮换底部提示文字（由独立定时器 _start_hint_ticker 驱动，默认 8 秒一条）"""
         if not _HINT_TIPS:
+            return
+        try:
+            if not self._hint_label.winfo_exists():
+                return
+        except Exception:
             return
         self._hint_index = (getattr(self, '_hint_index', 0) + 1) % len(_HINT_TIPS)
         try:

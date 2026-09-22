@@ -7,11 +7,14 @@ import os
 import sys
 import json
 import time
+import threading
 import datetime
 import tempfile
 import shutil
 import unittest
 from unittest.mock import patch, MagicMock
+
+import numpy as np
 
 TEST_DIR = tempfile.mkdtemp(prefix="delta_core_test_")
 
@@ -2330,6 +2333,331 @@ class TestCaptchaKeywordFieldsUI(unittest.TestCase):
                 pass
             (config.load_settings, config.save_settings,
              sw.config.load_settings, sw.config.save_settings) = orig
+
+
+# ==================== 2026-09-22：用户报的四项 bug ====================
+class TestHintTipsRotation(unittest.TestCase):
+    """③ 底部提示：文案约束 + 独立轮换定时器（不再挂在 60 秒账号列表刷新上）"""
+
+    def test_tips_within_label_width(self):
+        """每条提示都要够短，否则会把右侧控件挤出布局；且不能自带「提示：」前缀"""
+        import gui_app
+        self.assertTrue(gui_app._HINT_TIPS, "提示文案不能为空")
+        for tip in gui_app._HINT_TIPS:
+            self.assertLessEqual(len(tip), 22, f"「{tip}」过长（{len(tip)} 字），标签会挤掉右侧控件")
+            self.assertFalse(tip.startswith("提示："), "显示时会自动前拼「提示：」，不要重复写")
+        self.assertEqual(len(set(gui_app._HINT_TIPS)), len(gui_app._HINT_TIPS), "提示文案有重复")
+
+    def test_rotation_has_own_ticker(self):
+        import gui_app
+        self.assertIsInstance(gui_app.HINT_ROTATE_MS, int)
+        self.assertLessEqual(gui_app.HINT_ROTATE_MS, 15000, "轮换必须明显快于原来的 60 秒")
+        self.assertTrue(callable(gui_app._start_hint_ticker))
+        self.assertTrue(callable(gui_app._stop_hint_ticker))
+        self.assertTrue(hasattr(gui_app.App, "_start_hint_ticker"))
+
+    def test_tree_refresh_no_longer_drives_hint(self):
+        """提示轮换必须与账号列表刷新解耦，否则列表不刷新时提示就卡住不动"""
+        import inspect
+        import account_manager
+        src = inspect.getsource(account_manager.start_periodic_tree_refresh)
+        self.assertNotIn("_rotate_hint", src)
+
+    def test_rotate_hint_advances_index(self):
+        import gui_app
+        app = MagicMock()
+        app._hint_index = 0
+        app._hint_label = MagicMock()
+        app._hint_label.winfo_exists.return_value = True
+        gui_app.App._rotate_hint(app)
+        self.assertEqual(app._hint_index, 1)
+        app._hint_label.config.assert_called_once()
+        # 窗口已销毁 → 静默返回，不能抛异常
+        app._hint_label.winfo_exists.return_value = False
+        gui_app.App._rotate_hint(app)
+        self.assertEqual(app._hint_index, 1)
+
+
+class TestAccountResultRefreshesTree(unittest.TestCase):
+    """② 账号跑完必须立刻派发列表刷新（否则已进入冷却的账号还显示「可运行」）"""
+
+    def _make_app(self):
+        app = MagicMock()
+        app.settings = {"enable_cooldown": False}
+        app.run_stats = {"success": 0, "fail": 0}
+        app._consecutive_failures = {}
+        app._user_stopped_cooldown = False
+        app._last_account_error = ""
+        app.root = MagicMock()
+        app._refresh_account_tree = MagicMock()
+        return app
+
+    def test_success_path_dispatches_refresh(self):
+        import automation_runner as ar
+        app = self._make_app()
+        processed = []
+        with patch.object(ar.server_client, "update_account_status"), \
+                patch.object(ar.cooldown_manager, "is_cooling_down", return_value=(False, "")):
+            ar._process_account_result(app, "账号A", False, False, processed)
+        self.assertTrue(app.root.after.called, "跑完/失败后没有派发列表刷新")
+        args = app.root.after.call_args[0]
+        self.assertEqual(args[0], 0, "必须用 after(0, ...) 派发，worker 线程不能直接动 Tk")
+        args[1]()
+        app._refresh_account_tree.assert_called_once()
+
+    def test_failure_path_also_dispatches_refresh(self):
+        import automation_runner as ar
+        app = self._make_app()
+        processed = []
+        with patch.object(ar.server_client, "update_account_status"), \
+                patch.object(ar.cooldown_manager, "is_cooling_down", return_value=(False, "")), \
+                patch.object(ar, "_ocr_capture_screen_text", return_value=""), \
+                patch.object(ar.email_notifier, "send_account_failure_email"):
+            ar._process_account_result(app, "账号B", True, False, processed)
+        self.assertTrue(app.root.after.called, "失败路径同样要刷新列表")
+
+
+class TestReloadAccountsFromDisk(unittest.TestCase):
+    """⑤ 运行期间安全重读 accounts.json：只做新增，绝不清空 / 不覆盖内存值"""
+
+    def setUp(self):
+        import account_manager as am
+        self.am = am
+        self._orig_path = am.ACCOUNTS_JSON_PATH
+        self.path = os.path.join(TEST_DIR, "reload_accounts.json")
+        am.ACCOUNTS_JSON_PATH = self.path
+        self.app = MagicMock()
+        self.app.qq_account_images = ["account:A"]
+        self.app._account_notes = {"A": {"account": "内存里的A"}}
+        self.app._account_assets = {"A": "123"}
+        self.app._asset_history = {"A": ["x"]}
+        self.app.root = MagicMock()
+
+    def tearDown(self):
+        self.am.ACCOUNTS_JSON_PATH = self._orig_path
+        if os.path.exists(self.path):
+            os.remove(self.path)
+
+    def _write(self, obj):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+
+    def _call(self):
+        # 刷新列表会去读真实冷却数据 → 这里屏蔽掉，保证测试自洽
+        with patch.object(self.am.cooldown_manager, "get_all_cooldowns", return_value={}):
+            return self.am.reload_accounts_from_disk(self.app)
+
+    def test_only_adds_and_keeps_memory_values(self):
+        self._write({"qq": ["account:A", "account:B"],
+                     "notes": {"A": {"account": "磁盘上的A"}, "B": {"account": "B"}},
+                     "assets": {"A": "999", "B": "5"},
+                     "asset_history": {"B": ["y"]}})
+        self.assertTrue(self._call())
+        self.assertEqual(self.app.qq_account_images, ["account:A", "account:B"])
+        # 内存里已有的值不能被磁盘覆盖（避免丢掉还没落盘的改动）
+        self.assertEqual(self.app._account_notes["A"]["account"], "内存里的A")
+        self.assertEqual(self.app._account_assets["A"], "123")
+        # 新账号要补进来
+        self.assertEqual(self.app._account_notes["B"]["account"], "B")
+        self.assertEqual(self.app._account_assets["B"], "5")
+
+    def test_no_change_returns_false(self):
+        self._write({"qq": ["account:A"]})
+        self.assertFalse(self._call())
+        self.assertEqual(self.app.qq_account_images, ["account:A"])
+
+    def test_corrupt_file_never_clears_list(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("{ 这不是 json")
+        self.assertFalse(self._call())
+        self.assertEqual(self.app.qq_account_images, ["account:A"], "坏文件绝不能清空列表")
+
+    def test_missing_file_never_clears_list(self):
+        self.assertFalse(self._call())
+        self.assertEqual(self.app.qq_account_images, ["account:A"])
+
+    def test_removed_account_is_kept(self):
+        """磁盘上没有的账号不会被删掉 —— 运行中不能把账号从循环里抽走"""
+        self._write({"qq": ["account:B"]})
+        self.assertTrue(self._call())
+        self.assertIn("account:A", self.app.qq_account_images)
+        self.assertIn("account:B", self.app.qq_account_images)
+
+
+class TestCooldownWaitPolling(unittest.TestCase):
+    """⑤ 等待冷却期间轮询：出现可运行账号就提前结束等待，不必等满窗口"""
+
+    def setUp(self):
+        import automation_runner as ar
+        self.ar = ar
+        self.app = MagicMock()
+        self.app._stop_event = threading.Event()
+
+    def _cooldowns(self, remaining_seconds):
+        nxt = datetime.datetime.now() + datetime.timedelta(seconds=remaining_seconds)
+        return {"账号X": {"next_run_time": nxt.strftime("%Y-%m-%d %H:%M:%S")}}
+
+    def test_returns_true_early_when_runnable(self):
+        with patch.object(self.ar.cooldown_manager, "get_all_cooldowns",
+                          return_value=self._cooldowns(-5)), \
+                patch.object(self.ar, "set_operation"):
+            self.assertTrue(self.ar._wait_cooldown_with_polling(
+                self.app, 600, poll_seconds=0.05))
+
+    def test_returns_false_while_still_cooling(self):
+        with patch.object(self.ar.cooldown_manager, "get_all_cooldowns",
+                          return_value=self._cooldowns(3600)), \
+                patch.object(self.ar, "set_operation"):
+            self.assertFalse(self.ar._wait_cooldown_with_polling(
+                self.app, 0.06, poll_seconds=0.02))
+
+    def test_paused_accounts_are_ignored(self):
+        """暂停/出租的账号即使到期也不算「可运行」"""
+        cd = self._cooldowns(-5)
+        cd["账号X"]["account_paused"] = True
+        with patch.object(self.ar.cooldown_manager, "get_all_cooldowns", return_value=cd), \
+                patch.object(self.ar, "set_operation"):
+            self.assertFalse(self.ar._wait_cooldown_with_polling(
+                self.app, 0.06, poll_seconds=0.02))
+
+    def test_stop_event_aborts_immediately(self):
+        self.app._stop_event.set()
+        with patch.object(self.ar, "set_operation"):
+            self.assertFalse(self.ar._wait_cooldown_with_polling(
+                self.app, 600, poll_seconds=0.05))
+
+    def test_poll_interval_is_short(self):
+        self.assertLessEqual(self.ar.COOLDOWN_POLL_SECONDS, 10,
+                             "轮询间隔太久就失去「立刻发现可运行账号」的意义")
+
+
+class TestOverlayAvoidBeforeScreenshot(unittest.TestCase):
+    """④ 区域避让必须发生在截图**之前**
+
+    历史缺陷：避让写在 `if matched:` 里面（匹配成功之后），而遮罩污染的是匹配之前的
+    截图 —— 于是遮罩一盖住目标就永远匹配不上，也就永远走不到避让。
+    """
+
+    def test_source_order(self):
+        import inspect
+        import utils
+        src = inspect.getsource(utils._find_and_click_core)
+        self.assertLess(src.index("_avoid_overlay_for_region"),
+                        src.index("_screenshot_gray(region)"),
+                        "区域避让必须排在截图之前")
+
+    def test_runtime_order_avoid_then_shot_then_restore(self):
+        import utils
+        events = []
+        orig = (utils._avoid_overlay_for_region, utils._restore_overlay_after_region,
+                utils._screenshot_gray, utils._match_template, utils._cache_get,
+                utils._imread_unicode, utils._overlay_rect,
+                utils._OVERLAY_NUDGE_MIN_INTERVAL)
+        try:
+            utils._avoid_overlay_for_region = (
+                lambda x, y, w, h: events.append("avoid") or "TOKEN")
+            utils._restore_overlay_after_region = lambda t: events.append("restore")
+            utils._screenshot_gray = lambda region=None: (
+                events.append("shot") or np.zeros((20, 20), dtype="uint8"))
+            utils._match_template = lambda g, t, th: (False, 0.1, (0, 0), (2, 2))
+            utils._cache_get = lambda p: np.zeros((4, 4), dtype="uint8")
+            utils._imread_unicode = lambda p: None
+            utils._overlay_rect = lambda: None
+            utils._OVERLAY_NUDGE_MIN_INTERVAL = 0.0
+            ok = utils._find_and_click_core("绝不存在的模板.png", timeout=0.35,
+                                            region=(100, 100, 40, 40))
+            self.assertFalse(ok)
+            self.assertEqual(events[:3], ["avoid", "shot", "restore"],
+                             "顺序必须是：先让位 → 再截图 → 截图后复原")
+        finally:
+            (utils._avoid_overlay_for_region, utils._restore_overlay_after_region,
+             utils._screenshot_gray, utils._match_template, utils._cache_get,
+             utils._imread_unicode, utils._overlay_rect,
+             utils._OVERLAY_NUDGE_MIN_INTERVAL) = orig
+
+    def test_nudge_only_when_overlay_present_and_limited(self):
+        """换角落兜底：遮罩不在时一次都不换；在时也必须限量"""
+        import utils
+        orig = (utils._screenshot_gray, utils._match_template, utils._cache_get,
+                utils._imread_unicode, utils._overlay_rect, utils._nudge_overlay,
+                utils._OVERLAY_NUDGE_MIN_INTERVAL)
+        nudges = []
+        try:
+            utils._screenshot_gray = lambda region=None: np.zeros((20, 20), dtype="uint8")
+            utils._match_template = lambda g, t, th: (False, 0.1, (0, 0), (2, 2))
+            utils._cache_get = lambda p: np.zeros((4, 4), dtype="uint8")
+            utils._imread_unicode = lambda p: None
+            utils._nudge_overlay = lambda reason="": nudges.append(reason) or True
+            utils._OVERLAY_NUDGE_MIN_INTERVAL = 0.0
+
+            utils._overlay_rect = lambda: None
+            utils._find_and_click_core("绝不存在的模板.png", timeout=0.35)
+            self.assertEqual(nudges, [], "遮罩不在（rect=None）时不应换角落")
+
+            utils._overlay_rect = lambda: (0, 0, 400, 200)
+            utils._find_and_click_core("绝不存在的模板.png", timeout=0.4)
+            self.assertGreaterEqual(len(nudges), 1, "遮罩在且疑似盖住时应尝试换角落")
+            self.assertLessEqual(len(nudges), utils._OVERLAY_NUDGE_MAX,
+                                 "换角落必须限量，否则遮罩会在屏上乱跳")
+        finally:
+            (utils._screenshot_gray, utils._match_template, utils._cache_get,
+             utils._imread_unicode, utils._overlay_rect, utils._nudge_overlay,
+             utils._OVERLAY_NUDGE_MIN_INTERVAL) = orig
+
+    def test_overlay_info_hooks_register_and_fail_safe(self):
+        import utils
+        orig = (utils._overlay_rect_fn, utils._overlay_nudge_fn)
+        try:
+            utils.set_overlay_info_hooks(lambda: (1, 2, 3, 4), lambda reason="": True)
+            self.assertEqual(utils._overlay_rect(), (1, 2, 3, 4))
+            self.assertTrue(utils._nudge_overlay("x"))
+
+            def _boom(*_a):
+                raise RuntimeError("x")
+            utils.set_overlay_info_hooks(_boom, _boom)
+            self.assertIsNone(utils._overlay_rect())
+            self.assertFalse(utils._nudge_overlay("x"))
+
+            utils.set_overlay_info_hooks(None, None)
+            self.assertIsNone(utils._overlay_rect())
+            self.assertFalse(utils._nudge_overlay("x"))
+            self.assertFalse(utils._point_in_rect(5, 5, None))
+            self.assertTrue(utils._point_in_rect(5, 5, (0, 0, 10, 10)))
+            self.assertFalse(utils._point_in_rect(50, 5, (0, 0, 10, 10)))
+        finally:
+            utils._overlay_rect_fn, utils._overlay_nudge_fn = orig
+
+
+class TestCaptureExclusionTruth(unittest.TestCase):
+    """④ 不再无条件相信 SetWindowDisplayAffinity 的返回值"""
+
+    def test_readback_invalid_hwnd_is_false(self):
+        import screen_log_overlay as slo
+        self.assertFalse(slo.is_excluded_from_capture(0))
+        self.assertFalse(slo.is_excluded_from_capture(-1))
+
+    def test_count_magenta(self):
+        from PIL import Image
+        import screen_log_overlay as slo
+        self.assertGreater(slo._count_magenta(Image.new("RGB", (10, 10), (255, 0, 255))), 0)
+        self.assertEqual(slo._count_magenta(Image.new("RGB", (10, 10), (0, 0, 0))), 0)
+        self.assertEqual(slo._count_magenta(Image.new("RGB", (10, 10), (250, 250, 250))), 0)
+
+    def test_skippable_needs_probe_and_readback(self):
+        """没有端到端实测结论时，绝不允许「跳过让位」（保守优先）"""
+        import gui_app
+        orig_probe, orig_ov = gui_app._capture_probe_result, gui_app._qt_overlay
+        try:
+            gui_app._capture_probe_result = None
+            self.assertFalse(gui_app._overlay_skippable(),
+                             "还没实测就不许跳过让位")
+            gui_app._capture_probe_result = True
+            gui_app._qt_overlay = None
+            self.assertFalse(gui_app._overlay_skippable(),
+                             "遮罩不存在时也不该「跳过」")
+        finally:
+            gui_app._capture_probe_result = orig_probe
+            gui_app._qt_overlay = orig_ov
 
 
 if __name__ == "__main__":

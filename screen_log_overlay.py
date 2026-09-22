@@ -92,6 +92,167 @@ def set_exclude_from_capture(hwnd: int, enable: bool = True) -> bool:
         return False
 
 
+def is_excluded_from_capture(hwnd: int) -> bool:
+    """读回窗口当前的「显示亲和性」，判断排除捕获的标志**此刻**是否还在。
+
+    比只信 SetWindowDisplayAffinity 的返回值可靠得多：该标志会在
+    setWindowFlag()/show() 重建原生窗口后**静默丢失**，而当初 Set 是返回成功的。
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetWindowDisplayAffinity.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+        user32.GetWindowDisplayAffinity.restype = wt.BOOL
+        affinity = wt.DWORD(0)
+        if not user32.GetWindowDisplayAffinity(wt.HWND(int(hwnd)),
+                                               ctypes.byref(affinity)):
+            return False
+        return affinity.value == _WDA_EXCLUDEFROMCAPTURE
+    except Exception:
+        return False
+
+
+PROBE_SIZE = 60
+
+
+def _count_magenta(img) -> int:
+    """统计近似品红像素数（异常返回 -1，调用方按「不可信」处理）
+
+    品红在游戏画面 / 桌面里几乎不可能出现 → 拿它当「有没有被拍进截图」的强信号。
+    ⚠️ 不要 astype(int)：本机整屏 2880×1800 做一次会多花上百 MB 内存，
+    uint8 直接比较即可。
+    """
+    try:
+        import numpy as np
+        arr = np.asarray(img.convert("RGB"))
+        r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+        return int(((r > 200) & (g < 80) & (b > 200)).sum())
+    except Exception:
+        return -1
+
+
+def probe_exclude_from_capture(size: int = PROBE_SIZE, log=None) -> bool:
+    """端到端实测「本机是否真的把窗口排除在屏幕捕获之外」。
+
+    为什么必须实测：**SetWindowDisplayAffinity 返回 True ≠ 系统真的生效**。
+
+    做法是「全屏找品红」，**不做任何坐标换算**：
+      0) 底噪：整屏里本来有多少品红像素（正常应接近 0）
+      1) 对照相位：显示探针但**不打**标志 → 品红必须明显增多；
+                   没增多说明探针本身没跑通 → 保守返回 False（当作没生效）
+      2) 实验相位：打上标志 → 品红必须回落到与底噪相当
+    1、2 都符合才算「排除真的生效」。
+
+    ⚠️ 为什么不用坐标取区域：本机是 2880×1800 @200% 缩放，Qt 用**逻辑像素**、
+    pyautogui 用**物理像素**，按坐标取区域会整体错位（踩过：比对的是桌面和桌面，
+    看似全绿其实什么都没测）。全屏扫描彻底绕开这个坑。
+
+    Args:
+        size: 探针方块边长（Qt 逻辑像素）
+        log:  可选的阶段日志回调 log(str)，便于自检脚本/主程序打印细节
+
+    任何异常一律返回 False（保守：宁可多让位，也不要让遮罩污染截图）。
+    ⚠️ 需要在主线程调用（会 show 窗口 + 泵事件 + 截屏）。
+    """
+    def _say(msg):
+        if log is not None:
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    try:
+        import time as _t
+        app = QApplication.instance()
+        if app is None:
+            _say("没有 QApplication 实例，无法实测")
+            return False
+        import pyautogui
+    except Exception as e:      # noqa: BLE001
+        _say(f"依赖不可用，跳过实测：{e!r}")
+        return False
+
+    probe = None
+
+    def _pump(seconds, steps=6):
+        for _ in range(steps):
+            try:
+                app.processEvents()
+            except Exception:
+                pass
+            _t.sleep(seconds / steps)
+
+    def _magenta_fullscreen(attempts=2):
+        best = -1
+        for _ in range(attempts):
+            best = max(best, _count_magenta(pyautogui.screenshot()))
+            _pump(0.1)
+        return best
+
+    try:
+        # ---- 步骤 0：底噪 ----
+        base = _magenta_fullscreen()
+        if base < 0:
+            _say("整屏截图失败，无法实测")
+            return False
+
+        # ---- 步骤 1：对照相位（不打标志，必须能找到品红）----
+        probe = QWidget()
+        probe.setWindowFlags(Qt.WindowType.FramelessWindowHint
+                             | Qt.WindowType.WindowStaysOnTopHint
+                             | Qt.WindowType.Tool)
+        probe.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        probe.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        probe.setStyleSheet("background-color: rgb(255, 0, 255); border: none;")
+        probe.resize(int(size), int(size))
+        scr = QApplication.primaryScreen().availableGeometry()
+        probe.move(scr.x() + scr.width() // 2, scr.y() + scr.height() // 2)
+        probe.show()
+        _pump(0.4)
+
+        ctrl = _magenta_fullscreen()
+        # 探针是 60×60 逻辑像素；@200% 就是 120×120=14400 物理像素，阈值取 1000 很宽裕
+        if ctrl - base < 1000:
+            _say(f"对照相位失败：未打标志时品红像素只从 {base} 变成 {ctrl}"
+                 f"（探针没被画出来/没被拍到）→ 探针本身没跑通，不敢下结论")
+            return False
+        _say(f"对照相位：未打标志时品红像素 {base} → {ctrl}（应明显增多）✅")
+
+        # ---- 步骤 2：实验相位（打上标志，必须拍不到）----
+        hwnd = int(probe.winId())
+        if not set_exclude_from_capture(hwnd, True):
+            _say("实验相位失败：SetWindowDisplayAffinity 直接返回失败")
+            return False
+        if not is_excluded_from_capture(hwnd):
+            _say("实验相位失败：Set 返回成功，但读回的亲和性不是 EXCLUDEFROMCAPTURE")
+            return False
+        _pump(0.4)
+
+        # 判定线与底噪比较（用「底噪 + 100」而不是绝对 0，容忍偶发噪点）
+        limit = base + 100
+        hits = _magenta_fullscreen(attempts=3)
+        if hits <= limit:
+            _say(f"实验相位：打上标志后品红像素 {hits}（底噪 {base}，判定线 ≤ {limit}）✅")
+            return True
+        _say(f"实验相位：打上标志后品红像素仍有 {hits}（底噪 {base}，判定线 ≤ {limit}）"
+             f"→ ❌ 遮罩仍被拍进截图")
+        return False
+    except Exception as e:      # noqa: BLE001
+        _say(f"实测过程异常，按「未生效」处理：{e!r}")
+        return False
+    finally:
+        if probe is not None:
+            try:
+                probe.hide()
+                probe.deleteLater()
+                app = QApplication.instance()
+                if app is not None:
+                    app.processEvents()
+            except Exception:
+                pass
+
+
 # ==================== 主组件类 ====================
 class ScreenLogOverlay(QWidget):
     """
@@ -263,14 +424,38 @@ class ScreenLogOverlay(QWidget):
         """确保遮罩已被排除在屏幕捕获之外。
 
         必须每次 show 后补设：setWindowFlag()/show() 会重建原生窗口，WDA 标志会随之丢失。
+        ⚠️ 这里不看 SetWindowDisplayAffinity 的返回值，而是**读回**标志来判定是否真的设上了
+        —— 该 API 会返回成功，但标志在部分窗口操作后并不真正生效。
         """
         if not self._exclude_from_capture:
+            self._capture_excluded = False
             return
         try:
             hwnd = int(self.winId())
         except Exception:
+            self._capture_excluded = False
             return
-        self._capture_excluded = set_exclude_from_capture(hwnd, True)
+        set_exclude_from_capture(hwnd, True)
+        self._capture_excluded = is_excluded_from_capture(hwnd)
+
+    def ensure_capture_exclusion(self) -> bool:
+        """读回标志，丢了立刻补设；返回「此刻是否确实排除在捕获之外」。
+
+        供看门狗每秒调用（一次 Win32 调用，开销可忽略），也供 gui_app 判断
+        「是否可以跳过让位动作」——只有确实排除在外，让位才是多余的。
+        """
+        if not self._exclude_from_capture:
+            self._capture_excluded = False
+            return False
+        try:
+            hwnd = int(self.winId())
+        except Exception:
+            self._capture_excluded = False
+            return False
+        if self._capture_excluded and is_excluded_from_capture(hwnd):
+            return True
+        self._apply_capture_exclusion()
+        return self._capture_excluded
 
     @property
     def capture_excluded(self) -> bool:

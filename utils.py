@@ -342,6 +342,16 @@ def find_image_on_screen(img_path, timeout=2, confidence=None, region=None, stop
 _overlay_avoid_fn = None      # avoid_fn(x, y) -> token|None（返回原角落等用于复原）
 _overlay_restore_fn = None    # restore_fn(token)
 _overlay_region_avoid_fn = None   # avoid_fn(x, y, w, h) —— 矩形区域避让（截图用）
+_overlay_rect_fn = None       # rect_fn() -> (x, y, w, h) | None：遮罩当前占据的屏幕矩形
+_overlay_nudge_fn = None      # nudge_fn(reason) -> bool：遮罩换到下一个角落（全屏匹配兜底）
+
+# 一次调用里最多「换角落重试」几次。换位是目标位置未知时的试探手段，必须限量，
+# 否则遮罩会在屏上乱跳、还会拖长整个查找时间。
+_OVERLAY_NUDGE_MAX = 2
+# 两次「换角落尝试」之间的最小间隔（秒）：查询遮罩几何要走主线程，按此限流
+_OVERLAY_NUDGE_MIN_INTERVAL = 1.5
+# 上一次尝试换角落的时间戳（模块级，跨调用沿用；仅用于限流）
+_last_nudge_try = 0.0
 
 
 def set_overlay_avoid_hooks(avoid_fn, restore_fn):
@@ -356,6 +366,48 @@ def set_overlay_avoid_region_hooks(avoid_fn, restore_fn):
     global _overlay_region_avoid_fn, _overlay_restore_fn
     _overlay_region_avoid_fn = avoid_fn
     _overlay_restore_fn = restore_fn
+
+
+def set_overlay_info_hooks(rect_fn, nudge_fn):
+    """注册遮罩「几何查询 / 换角落」回调（由 gui_app 调用，避免循环导入）
+
+    rect_fn()        -> (x, y, w, h) | None  遮罩当前占据的屏幕矩形
+    nudge_fn(reason) -> bool                 把遮罩换到下一个角落；换了返回 True
+    """
+    global _overlay_rect_fn, _overlay_nudge_fn
+    _overlay_rect_fn = rect_fn
+    _overlay_nudge_fn = nudge_fn
+
+
+def _overlay_rect():
+    """遮罩当前占据的屏幕矩形（无钩子 / 不可用返回 None）"""
+    if _overlay_rect_fn:
+        try:
+            return _overlay_rect_fn()
+        except Exception:
+            return None
+    return None
+
+
+def _nudge_overlay(reason=""):
+    """让遮罩换个角落（目标位置未知时的兜底）；返回是否真的换了"""
+    if _overlay_nudge_fn:
+        try:
+            return bool(_overlay_nudge_fn(reason))
+        except Exception:
+            return False
+    return False
+
+
+def _point_in_rect(x, y, rect):
+    """点是否落在矩形内"""
+    if not rect:
+        return False
+    try:
+        rx, ry, rw, rh = rect
+        return rx <= x <= rx + rw and ry <= y <= ry + rh
+    except Exception:
+        return False
 
 
 def _avoid_overlay_for_region(x, y, w, h):
@@ -412,11 +464,26 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
             return (False, None) if return_pos else False
         _cache_put(resolved, template)
 
+    global _last_nudge_try
     start = time.time()
+    nudges = 0
     while time.time() - start < timeout:
         if stop_event is not None and stop_event.is_set():
             return (False, None) if return_pos else False
-        gray = _screenshot_gray(region)
+
+        # ⚠️ 区域避让必须在**截图之前**做完。
+        # 历史缺陷：避让原来写在下面 `if matched:` 里面（匹配成功之后才移开遮罩），
+        # 而遮罩污染的是**匹配之前**的那张截图 —— 于是一旦遮罩盖住目标就永远匹配不上、
+        # 永远走不到避让，遮罩也就永远不挪开。这里把顺序倒过来。
+        _shot_token = None
+        if region:
+            _shot_token = _avoid_overlay_for_region(region[0], region[1],
+                                                    region[2], region[3])
+        try:
+            gray = _screenshot_gray(region)
+        finally:
+            if _shot_token is not None:
+                _restore_overlay_after_region(_shot_token)
         if gray is None:
             time.sleep(0.5)
             continue
@@ -474,6 +541,29 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
             print(f"✅ 点击 {_label}（{x},{y}）")
             time.sleep(WAIT_TIME)
             return (True, (x, y)) if return_pos else True
+
+        # —— 未匹配：给「遮罩盖住目标」一次兜底 ——
+        # 全屏匹配（region 为空）既没有已知矩形可避让，也不知道目标在哪；
+        # 但若遮罩确实会进截图，「目标正好压在遮罩下面」就会永久失败 → 换个角落再试。
+        # ⚠️ 查询遮罩几何要走一次主线程，所以按 _OVERLAY_NUDGE_MIN_INTERVAL 限流，
+        #    不能每次失败都问（否则主线程繁忙时会把查找拖慢）。
+        if (nudges < _OVERLAY_NUDGE_MAX
+                and (time.time() - _last_nudge_try) >= _OVERLAY_NUDGE_MIN_INTERVAL):
+            _last_nudge_try = time.time()
+            rect = _overlay_rect()
+            if rect is not None:      # None = 遮罩没开/不可见 → 与本问题无关
+                cand_x = max_loc[0] + w // 2 + (region[0] if region else 0)
+                cand_y = max_loc[1] + h // 2 + (region[1] if region else 0)
+                if _point_in_rect(cand_x, cand_y, rect):
+                    # 最佳候选点落在遮罩矩形内 → 几乎可以确定就是被它盖住了
+                    if _nudge_overlay("最佳候选点落在遮罩内"):
+                        nudges += 1
+                        continue
+                elif max_val >= threshold * 0.7:
+                    # 分数接近门限（像是有东西、但被遮住了）→ 同样值得换个角落再试
+                    if _nudge_overlay(f"匹配分数接近门限（{max_val:.2f}）"):
+                        nudges += 1
+                        continue
         time.sleep(0.3)
     _cn = _template_cn(img_path)
     print(f"⏳ 超时未找到：{_cn if _cn else img_path}")

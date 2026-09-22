@@ -32,6 +32,11 @@ DELTA_TITLES = ["三角洲行动", "DeltaForce", "Delta Force", "三角洲", "De
 # 统一使用 cooldown_manager.normalize_key
 _get_cooldown_key = cooldown_manager.normalize_key
 
+# 冷却等待期间的轮询间隔（秒）。
+# 等待不再「一次睡满」：每 N 秒重扫一次冷却状态并重读磁盘上的账号列表，
+# 一旦发现已可运行的账号就立刻执行，不必等满整个等待窗口。
+COOLDOWN_POLL_SECONDS = 5
+
 
 def _ensure_wegame_focused():
     """确保 WeGame 窗口在前台，失去焦点时自动重新激活。返回 True=已聚焦"""
@@ -1294,6 +1299,15 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         app._tray_notify("三角洲行动自动化",
                          f"✅ 账号 {account_name} 完成（下次运行：{next_run_str}）")
 
+    # 账号跑完立刻刷新账号列表。
+    # 冷却在上面的 record_run() 里已经写盘，但列表原先只在「整轮跑完」（on_finish）或
+    # 60 秒定时器时才刷新 —— 多账号连跑时，第一个账号早已进入冷却、界面却还是绿色「可运行」，
+    # 用户会误判成「没跑」。这里统一收口，成功/失败/中断以及主循环、单账号两条路径全覆盖。
+    try:
+        app.root.after(0, app._refresh_account_tree)
+    except Exception:
+        pass
+
 
 def _wait_and_run_nearby_cooldowns(app, processed_accounts):
     """检查冷却列表：先运行已到期账号，再等待 N 分钟内到期的账号
@@ -1355,11 +1369,23 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
     if app.settings.get("smart_schedule_enabled", False) and wait_window_minutes < 10:
         wait_window_minutes = 15
     wait_window_seconds = wait_window_minutes * 60
+    # 本轮已尝试过的账号不再重复尝试：防止「跑完没进冷却」（如被中断）导致空转死循环
+    attempted = set()
     while not app._stop_event.is_set():
-        all_cooldowns = cooldown_manager.get_all_cooldowns()
+        # 每轮先重读磁盘上的账号列表：等待期间用「账号上传网页」新传的账号、
+        # 或在别处追加进 accounts.json 的账号，这里能立刻发现（不用重启主程序）。
+        # 安全版重读：只做新增，不清空列表、不删账号、不覆盖内存里已有的备注/资产。
+        try:
+            account_manager.reload_accounts_from_disk(app)
+        except Exception:
+            pass
+
+        all_cooldowns = cooldown_manager.get_all_cooldowns()   # 按 mtime 缓存，重算不额外读盘
         now = datetime.datetime.now()
         nearby = []  # (剩余秒数, 账号名)
         for name, entry in all_cooldowns.items():
+            if name in attempted:
+                continue
             if entry.get("account_paused") or entry.get("paused"):
                 continue
             # 用短名称再检查一次暂停状态
@@ -1388,22 +1414,21 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
         wait_seconds = max(0, int(nearby[0][0]))
         if wait_seconds > 0:
             print(f"⏳ 检测到 {len(names)} 个账号将在 {wait_window_minutes} 分钟内冷却结束：{', '.join(names)}")
-            print(f"⏳ 等待 {wait_seconds} 秒后执行...")
+            print(f"⏳ 等待 {wait_seconds} 秒（每 {COOLDOWN_POLL_SECONDS} 秒重扫一次，"
+                  f"出现可运行账号就立刻执行）...")
             set_operation(app, f"等待冷却结束 ({wait_seconds}秒)")
+            # 分段等待 + 轮询：期间只要出现「已可运行」的账号就立刻回来跑，不必等满窗口
+            if _wait_cooldown_with_polling(app, wait_seconds):
+                continue
         else:
             print(f"🔔 检测到 {len(runnable_now)} 个账号已冷却完成，立即执行：{', '.join(runnable_now)}")
             set_operation(app, "执行已冷却账号")
-
-        waited = 0
-        while wait_seconds > 0 and waited < wait_seconds and not app._stop_event.is_set():
-            chunk = min(5, wait_seconds - waited)
-            time.sleep(chunk)
-            waited += chunk
 
         if app._stop_event.is_set():
             break
 
         # 冷却到期，逐个运行到期账号
+        ran_any = False
         for _, name in nearby:
             if app._stop_event.is_set():
                 break
@@ -1419,8 +1444,54 @@ def _wait_and_run_nearby_cooldowns(app, processed_accounts):
                     break
             if not img_path:
                 continue
+            attempted.add(name)
+            ran_any = True
             print(f"\n🔔 账号 {name} 冷却到期，开始执行...")
             _run_single_account(app, img_path, len(app.qq_account_images), processed_accounts)
+
+        # 空转保护：本轮一个都没跑起来（例如都拿不到图片路径）→ 结束，避免死循环
+        if not ran_any:
+            print("ℹ️ 本轮没有可执行的账号，结束冷却等待")
+            break
+
+
+def _wait_cooldown_with_polling(app, wait_seconds, poll_seconds=None):
+    """分段等待冷却，每 poll_seconds 重扫一次冷却状态。
+
+    返回 True  = 等待期间发现有账号已经可以运行（外层应立即回到循环头去跑它）；
+    返回 False = 正常等满 / 被停止。
+
+    ⚠️ 冷却数据本身是「按 mtime 缓存」的（cooldown_manager._load_data），
+    所以这里的重扫不产生额外读盘开销。等待期间被取消暂停的账号、被右键
+    「重置冷却」的账号、或新到期的账号，都能在下一个 poll 周期被发现。
+    """
+    if poll_seconds is None:
+        poll_seconds = COOLDOWN_POLL_SECONDS
+    waited = 0
+    while waited < wait_seconds and not app._stop_event.is_set():
+        time.sleep(min(poll_seconds, wait_seconds - waited))
+        waited += poll_seconds
+        if app._stop_event.is_set():
+            return False
+        try:
+            now = datetime.datetime.now()
+            for name, entry in cooldown_manager.get_all_cooldowns().items():
+                if entry.get("account_paused") or entry.get("paused"):
+                    continue
+                next_run_str = entry.get("next_run_time", "")
+                if not next_run_str:
+                    continue
+                try:
+                    if (datetime.datetime.strptime(next_run_str, "%Y-%m-%d %H:%M:%S")
+                            - now).total_seconds() <= 0:
+                        print(f"⏱️ 等待中发现账号 {name} 已可运行，提前结束等待")
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        set_operation(app, f"等待冷却中（已等 {min(waited, wait_seconds)}/{wait_seconds} 秒）")
+    return False
 
 
 def _run_single_account(app, img_path, total, processed_accounts):
