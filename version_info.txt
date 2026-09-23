@@ -3,8 +3,8 @@
 # 注意：改版本号时这里的三处都要同步（filevers / FileVersion / ProductVersion）。
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(6, 9, 14, 0),
-    prodvers=(6, 9, 14, 0),
+    filevers=(6, 9, 23, 0),
+    prodvers=(6, 9, 23, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -20,11 +20,11 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', '三角洲自动化工具'),
             StringStruct('FileDescription', '三角洲行动自动化工具'),
-            StringStruct('FileVersion', '6.09.14.0'),
+            StringStruct('FileVersion', '6.09.23.0'),
             StringStruct('InternalName', '三角洲自动工具'),
             StringStruct('OriginalFilename', '三角洲自动工具.exe'),
             StringStruct('ProductName', '三角洲行动自动化工具'),
-            StringStruct('ProductVersion', '6.09.14')
+            StringStruct('ProductVersion', '6.09.23')
           ])
       ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])
