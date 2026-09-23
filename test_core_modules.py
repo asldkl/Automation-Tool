@@ -2799,19 +2799,39 @@ class TestDriverKeyboardChain(unittest.TestCase):
         self.dk._settings, self.dk._CHOSEN = self._orig
 
     def test_auto_order_prefers_stm32(self):
-        """auto 顺序必须是 STM32 → Interception → SendInput
+        """auto 顺序必须是 STM32 → Interception
         （STM32 同样是硬件级输入，但不会把系统键盘栈搞挂）"""
         self.dk.set_settings({})
-        self.assertEqual(self.dk._order(), ("stm32", "interception", "sendinput"))
+        self.assertEqual(self.dk._order(), ("stm32", "interception"))
         self.dk.set_settings({"keyboard_backend": "auto"})
-        self.assertEqual(self.dk._order(), ("stm32", "interception", "sendinput"))
+        self.assertEqual(self.dk._order(), ("stm32", "interception"))
 
     def test_explicit_backend_restricts_order(self):
-        for name in ("stm32", "interception", "sendinput"):
+        for name in ("stm32", "interception"):
             self.dk.set_settings({"keyboard_backend": name})
             self.assertEqual(self.dk._order(), (name,))
         self.dk.set_settings({"keyboard_backend": "乱填"})      # 非法值 → 回默认顺序
-        self.assertEqual(self.dk._order(), ("stm32", "interception", "sendinput"))
+        self.assertEqual(self.dk._order(), ("stm32", "interception"))
+
+    def test_no_software_simulation_backend(self):
+        """⚠️ 回归断言：**不许**再引入 SendInput 这类纯软件模拟后端。
+
+        理由（用户明确要求）：软件模拟的按键带注入标记，WeGame 这类目标不认 →
+        会出现「以为输入了、其实账号密码没进去」，比直接失败更糟。
+        所以两者都不可用时必须**直接判失败**。
+        """
+        self.assertNotIn("sendinput", self.dk.BACKENDS)
+        self.assertNotIn("sendinput", self.dk._SENDERS)
+        self.assertNotIn("sendinput", self.dk._LABEL)
+        import inspect
+        src = inspect.getsource(self.dk)
+        self.assertNotIn("SendInput(", src, "不该再有 SendInput 调用")
+        self.assertNotIn("KEYEVENTF_UNICODE", src, "不该再有软件模拟实现")
+        # 两个硬件后端都不可用 → send_string 必须直接返回 False
+        with patch.object(self.dk, "_available", return_value=False):
+            self.dk.set_settings({})
+            self.assertFalse(self.dk.is_available())
+            self.assertFalse(self.dk.send_string("pw"))
 
     def test_pick_uses_first_available(self):
         with patch.object(self.dk, "_available", side_effect=lambda n: n == "interception"):
@@ -2858,20 +2878,13 @@ class TestDriverKeyboardChain(unittest.TestCase):
 
     def test_backend_report_shape(self):
         lines, chosen = self.dk.backend_report()
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 2)      # 只有 STM32 与 Interception 两个硬件后端
         for mark, name, detail in lines:
             self.assertIn(mark, ("✓", "✗"))
             self.assertTrue(name)
             self.assertIsInstance(detail, str)
         self.assertTrue(lines[0][1].startswith("STM32"), "第一项应是 STM32")
-
-    def test_sendinput_struct_size_matches_win64(self):
-        """x64 下 INPUT 必须是 40 字节 —— 结构体定义错了 SendInput 会全部失败（返回 0）"""
-        import ctypes
-        if ctypes.sizeof(ctypes.c_void_p) == 8:
-            self.assertEqual(ctypes.sizeof(self.dk._INPUT), 40)
-        self.assertEqual(ctypes.sizeof(self.dk._KEYBDINPUT),
-                         24 if ctypes.sizeof(ctypes.c_void_p) == 8 else 16)
+        self.assertTrue(lines[1][1].startswith("Interception"), "第二项应是 Interception")
 
 
 class TestKeyboardSettingsWindowUI(unittest.TestCase):
@@ -2981,6 +2994,18 @@ class TestKeyboardSettingsWindowUI(unittest.TestCase):
             (config.load_settings, config.save_settings,
              ks.config.load_settings, ks.config.save_settings,
              driver_keyboard._settings, driver_keyboard._CHOSEN) = orig
+
+
+class TestKeyboardSettingsOptions(unittest.TestCase):
+    """键盘设置界面：选项里不许再出现 SendInput（已按要求从后端链移除）"""
+
+    def test_options_have_no_sendinput(self):
+        import keyboard_settings as ks
+        values = [v for v, _label, _hint in ks._BACKEND_OPTIONS]
+        self.assertEqual(values, ["auto", "stm32", "interception"])
+        for _v, label, hint in ks._BACKEND_OPTIONS:
+            self.assertNotIn("SendInput", label + hint)
+            self.assertNotIn("SendInput", hint)
 
 
 if __name__ == "__main__":

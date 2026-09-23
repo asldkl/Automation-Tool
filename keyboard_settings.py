@@ -70,11 +70,10 @@ def _ime_restore(old):
         pass
 
 _BACKEND_OPTIONS = [
-    ("auto", "自动（推荐）", "按 STM32 硬件键盘 → Interception 驱动 → SendInput 依次挑第一个可用的。\n"
+    ("auto", "自动（推荐）", "按 STM32 硬件键盘 → Interception 驱动 依次挑第一个可用的。\n"
                         "STM32 排在前面：它同样是硬件级输入，但不会把系统键盘栈搞挂。"),
     ("stm32", "只用 STM32 硬件键盘", "强制走外部硬件键盘；没插板子就输入失败（不回退到别的后端）。"),
     ("interception", "只用 Interception 驱动", "强制走内核驱动级输入；驱动不可用时输入失败。"),
-    ("sendinput", "只用 SendInput", "纯软件模拟，不需要任何驱动/硬件，但按键带注入标记，部分游戏不认。"),
 ]
 
 
@@ -88,12 +87,13 @@ class KeyboardSettingsWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("键盘输入设置")
         self.win.transient(parent)
+        self.win.resizable(True, True)      # 显式声明可缩放（默认就是，写出来防以后被改）
         try:
             geom = str((app.settings or {}).get("keyboard_settings_geometry", "") or "")
         except Exception:
             geom = ""
-        self.win.geometry(geom or "620x660")
-        self.win.minsize(560, 560)
+        self.win.geometry(geom or "640x680")   # 记忆上次的大小与位置
+        self.win.minsize(520, 420)             # 别设太大：先前 560x560 会把用户想缩小的尺寸顶回去
         try:
             self.win.iconbitmap(config.resource_path("picture/icon/icon.ico"))
         except Exception:
@@ -109,10 +109,36 @@ class KeyboardSettingsWindow:
             self.app.settings.get("stm32_timeout", 3.0) or 3.0))
 
         self._build()
-        self.win.protocol("WM_DELETE_WINDOW", self._on_close)
+        # 关闭时**自动保存**（含窗口大小/位置记忆）—— 与验证码设置窗口同一约定：
+        # 用户点了右上角 X 也算确认，不该把刚改的设置丢掉。
+        self.win.protocol("WM_DELETE_WINDOW", lambda: self._on_close(save=True))
         self._refresh_status()
-        self.win.lift()
-        self.win.focus_force()
+        self._ensure_on_screen()
+        # ⚠️ 必须把 grab 从父窗口抢过来：设置窗口自己是模态的（settings_window 里 grab_set），
+        #    不抢的话本窗口收不到鼠标事件 —— 表现为「没法缩放」且「点了不获焦」（实测确认）。
+        #    项目里其它子窗口（验证码/自定义操作等）也都是建完就 grab_set，照这个约定来。
+        try:
+            self.win.wait_visibility()
+            self.win.lift()
+            self.win.focus_force()
+            self.win.grab_set()
+        except Exception:
+            pass
+
+    def _ensure_on_screen(self):
+        """还原记忆的几何后，确保窗口没跑到屏幕外（换分辨率/拔掉显示器后就会）"""
+        try:
+            self.win.update_idletasks()
+            sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+            x, y = self.win.winfo_x(), self.win.winfo_y()
+            w, h = self.win.winfo_width(), self.win.winfo_height()
+            nw, nh = min(w, max(420, sw - 40)), min(h, max(360, sh - 80))
+            nx = min(max(x, 0), max(0, sw - 140))       # 至少留出标题栏能抓到
+            ny = min(max(y, 0), max(0, sh - 140))
+            if (nx, ny, nw, nh) != (x, y, w, h):
+                self.win.geometry("%dx%d+%d+%d" % (nw, nh, nx, ny))
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ UI --
 
@@ -346,9 +372,13 @@ class KeyboardSettingsWindow:
     def _on_close(self, save=False):
         _ime_restore(self._ime_old)      # 万一在打字测试中途关窗，别把输入法关联留在摘掉状态
         self._ime_old = None
-        # ⚠️ 先存窗口几何，再存本窗口的配置。
-        # utils.save_window_geometry() 内部是「load_settings → 改 → save_settings」，
-        # 会把后写的人盖掉；放在前面才不会被它覆盖。
+        try:
+            self.win.grab_release()      # 交还 grab，否则父设置窗口会一直点不动
+        except Exception:
+            pass
+        # ⚠️ 先存窗口几何（记住大小与位置），再存本窗口的配置。
+        #    因为 utils.save_window_geometry() 是「load_settings → 改 → save_settings」，
+        #    会把后写的人盖掉；放在前面才不会被它覆盖。
         try:
             import utils
             utils.save_window_geometry(self.win, "keyboard_settings_geometry")
