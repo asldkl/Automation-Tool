@@ -185,6 +185,14 @@ DEFAULT_SETTINGS = {
     "cooldown_run_immediately": False, # 冷却完立即运行
     "cooldown_scheduled_task_enabled": True,  # 冷却到期定时任务兜底（自动启动程序）
     "restart_on_interception_fail": False,  # Interception 失败时尝试重启电脑
+    # 键盘输入后端
+    #   auto（默认）= STM32 外部硬件键盘 → Interception 驱动 → SendInput
+    #   STM32 排在前面：它同样是硬件级输入（游戏认），但不会把系统键盘栈搞挂
+    #   （Interception 是内核键盘类上层筛选器，挂死会让整机键盘失效、只能重启）
+    "keyboard_backend": "auto",       # auto / stm32 / interception / sendinput
+    "stm32_port": "auto",             # auto=按 VID:PID(0483:57A0) 自动查找；也可填 COM5
+    "stm32_interval_ms": 25,          # 固件侧打字间隔（5~500ms），越大越像人
+    "stm32_timeout": 3.0,             # 单条指令等待设备回执的超时（秒）
     # 账号运行分组（分组运行：每 N 个账号一组，组间等待，避免频繁切换账号触发滑块验证）
     "smart_schedule_enabled": False,      # 启用分组运行
     "smart_group_size": 3,                # 每组账号数

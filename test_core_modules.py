@@ -2660,5 +2660,328 @@ class TestCaptureExclusionTruth(unittest.TestCase):
             gui_app._qt_overlay = orig_ov
 
 
+# ==================== STM32 外部硬件键盘 ====================
+class TestStm32Keyboard(unittest.TestCase):
+    """STM32 硬件键盘后端：协议顺序、输入校验、绝不抛异常、日志不泄露内容"""
+
+    def setUp(self):
+        import stm32_keyboard as sk
+        self.sk = sk
+
+    def test_validate_accepts_only_ascii_printable(self):
+        """固件只吃 ASCII 可见字符 + Tab：非法内容必须提前拦下（别把脏数据打进密码框）"""
+        for bad in ("中文账号", "abc\n", "abc\r", "", "passw\x00rd", "a　b"):
+            ok, why = self.sk._validate(bad)
+            self.assertFalse(ok, "%r 不该通过校验" % bad)
+            self.assertTrue(why, "拒绝时要给出原因")
+        for good in ("", "abc123", "P@ssw0rd!_-+=[]{}|;:'\",.<>/?`~", "a\tb", " "):
+            if good == "":
+                continue
+            ok, _ = self.sk._validate(good)
+            self.assertTrue(ok, "%r 应通过校验" % good)
+
+    def test_read_config_defaults_and_invalid(self):
+        cfg = self.sk.read_config({})
+        self.assertIsNone(cfg["port"])                      # auto → None（按 VID/PID 查找）
+        self.assertEqual(cfg["interval_ms"], 25)
+        self.assertEqual(cfg["timeout"], 3.0)
+        # 越界值一律回落默认（用户手填的值不能信）
+        cfg2 = self.sk.read_config({"stm32_interval_ms": 9999, "stm32_timeout": 999})
+        self.assertEqual(cfg2["interval_ms"], 25)
+        self.assertEqual(cfg2["timeout"], 3.0)
+        # 显式端口原样带出
+        self.assertEqual(self.sk.read_config({"stm32_port": "COM7"})["port"], "COM7")
+        for auto in ("auto", "AUTO", "自动", ""):
+            self.assertIsNone(self.sk.read_config({"stm32_port": auto})["port"])
+
+    def test_no_device_returns_false_and_never_raises(self):
+        with patch.object(self.sk, "find_port", return_value=None):
+            self.assertFalse(self.sk.is_available({}))
+            self.assertFalse(self.sk.send_string("abc", settings={}))
+            self.assertFalse(self.sk.send_key("a", settings={}))
+            self.assertIn("未找到", self.sk.last_error())
+
+    def test_protocol_order_and_password_not_logged(self):
+        """命令顺序必须是 PING → TYPE_INTERVAL → TYPE；⚠️ 日志里绝不能出现密码"""
+        sent = []
+
+        class FakeConn:
+            def __init__(self, port, baudrate=None):
+                self.port = port
+                self.closed = False
+
+            def cmd(self, line, timeout=3.0, quiet=False):
+                sent.append(line)
+                return True, "OK"
+
+            def close(self):
+                self.closed = True
+
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with patch.object(self.sk, "find_port", return_value="COM9"), \
+                patch.object(self.sk, "_Conn", FakeConn), \
+                contextlib.redirect_stdout(buf):
+            ok = self.sk.send_string("P@ssw0rd", interval=0.02, settings={})
+        self.assertTrue(ok)
+        self.assertEqual(sent[0], "PING")
+        self.assertEqual(sent[1], "TYPE_INTERVAL 20")
+        self.assertEqual(sent[2], "TYPE P@ssw0rd")
+        self.assertNotIn("P@ssw0rd", buf.getvalue(), "日志里不能出现密码")
+
+    def test_interval_clamped_to_firmware_range(self):
+        sent = []
+
+        class FakeConn:
+            def __init__(self, port, baudrate=None):
+                pass
+
+            def cmd(self, line, timeout=3.0, quiet=False):
+                sent.append(line)
+                return True, "OK"
+
+            def close(self):
+                pass
+
+        for interval, want in ((0.001, 5), (0.02, 20), (9.0, 500)):
+            sent.clear()
+            with patch.object(self.sk, "find_port", return_value="COM9"), \
+                    patch.object(self.sk, "_Conn", FakeConn):
+                self.sk.send_string("ab", interval=interval, settings={})
+            self.assertIn("TYPE_INTERVAL %d" % want, sent[1],
+                          "interval=%s 应夹到 %dms" % (interval, want))
+
+    def test_err_005_does_not_auto_resume(self):
+        """设备处于紧急停止时：报明确原因，且**不自动 RESUME**
+        （那是用户主动按板上 PB1/PB11 触发的安全动作，程序不该替他撤销）"""
+        calls = []
+
+        class FakeConn:
+            def __init__(self, port, baudrate=None):
+                pass
+
+            def cmd(self, line, timeout=3.0, quiet=False):
+                calls.append(line)
+                if line.startswith("PING"):
+                    return True, "OK PONG 1.0"
+                return False, "设备拒绝（ERR 005 设备处于紧急停止状态）"
+
+            def close(self):
+                pass
+
+        with patch.object(self.sk, "find_port", return_value="COM9"), \
+                patch.object(self.sk, "_Conn", FakeConn):
+            self.assertFalse(self.sk.send_string("abc", settings={}))
+        self.assertNotIn("RESUME", calls)
+
+    def test_write_failure_is_swallowed(self):
+        """串口炸了也不能把主流程带崩"""
+        class BoomConn:
+            def __init__(self, port, baudrate=None):
+                raise OSError("端口被占用")
+
+        with patch.object(self.sk, "find_port", return_value="COM9"), \
+                patch.object(self.sk, "_Conn", BoomConn):
+            self.assertFalse(self.sk.send_string("abc", settings={}))
+            self.assertTrue(self.sk.last_error())
+
+
+class TestDriverKeyboardChain(unittest.TestCase):
+    """键盘后端优先级链：STM32 → Interception → SendInput"""
+
+    def setUp(self):
+        import driver_keyboard as dk
+        self.dk = dk
+        self._orig = (dk._settings, dk._CHOSEN)
+
+    def tearDown(self):
+        self.dk._settings, self.dk._CHOSEN = self._orig
+
+    def test_auto_order_prefers_stm32(self):
+        """auto 顺序必须是 STM32 → Interception → SendInput
+        （STM32 同样是硬件级输入，但不会把系统键盘栈搞挂）"""
+        self.dk.set_settings({})
+        self.assertEqual(self.dk._order(), ("stm32", "interception", "sendinput"))
+        self.dk.set_settings({"keyboard_backend": "auto"})
+        self.assertEqual(self.dk._order(), ("stm32", "interception", "sendinput"))
+
+    def test_explicit_backend_restricts_order(self):
+        for name in ("stm32", "interception", "sendinput"):
+            self.dk.set_settings({"keyboard_backend": name})
+            self.assertEqual(self.dk._order(), (name,))
+        self.dk.set_settings({"keyboard_backend": "乱填"})      # 非法值 → 回默认顺序
+        self.assertEqual(self.dk._order(), ("stm32", "interception", "sendinput"))
+
+    def test_pick_uses_first_available(self):
+        with patch.object(self.dk, "_available", side_effect=lambda n: n == "interception"):
+            self.dk.set_settings({})
+            self.assertEqual(self.dk._pick(force=True), "interception")
+        with patch.object(self.dk, "_available", return_value=False):
+            self.dk.set_settings({})
+            self.assertIsNone(self.dk._pick(force=True))
+            self.assertFalse(self.dk.is_available())
+            self.assertEqual(self.dk.get_backend(), "无可用后端")
+
+    def test_no_midway_backend_switch(self):
+        """⚠️ 关键安全断言：某后端输入失败后**不许换后端重打一遍** ——
+        密码类输入若中途换后端，同一个字符串会被打两遍，必然错误。"""
+        used = []
+
+        def fake_stm32(t, i):
+            used.append("stm32")
+            return False
+
+        def fake_inter(t, i):
+            used.append("interception")
+            return True
+
+        with patch.object(self.dk, "_available",
+                          side_effect=lambda n: n in ("stm32", "interception")), \
+                patch.dict(self.dk._SENDERS, {"stm32": fake_stm32, "interception": fake_inter}):
+            self.dk.set_settings({})
+            self.assertFalse(self.dk.send_string("pw"))
+        self.assertEqual(used, ["stm32"], "失败后不该回落到下一个后端")
+
+    def test_backend_exception_is_swallowed(self):
+        def boom(*a, **k):
+            raise RuntimeError("后端炸了")
+
+        with patch.object(self.dk, "_available", side_effect=lambda n: n == "stm32"), \
+                patch.dict(self.dk._SENDERS, {"stm32": boom}):
+            self.dk.set_settings({})
+            self.assertFalse(self.dk.send_string("pw"))      # 不许抛异常
+
+    def test_empty_text_is_noop_success(self):
+        self.dk.set_settings({})
+        self.assertTrue(self.dk.send_string(""))
+
+    def test_backend_report_shape(self):
+        lines, chosen = self.dk.backend_report()
+        self.assertEqual(len(lines), 3)
+        for mark, name, detail in lines:
+            self.assertIn(mark, ("✓", "✗"))
+            self.assertTrue(name)
+            self.assertIsInstance(detail, str)
+        self.assertTrue(lines[0][1].startswith("STM32"), "第一项应是 STM32")
+
+    def test_sendinput_struct_size_matches_win64(self):
+        """x64 下 INPUT 必须是 40 字节 —— 结构体定义错了 SendInput 会全部失败（返回 0）"""
+        import ctypes
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(self.dk._INPUT), 40)
+        self.assertEqual(ctypes.sizeof(self.dk._KEYBDINPUT),
+                         24 if ctypes.sizeof(ctypes.c_void_p) == 8 else 16)
+
+
+class TestKeyboardSettingsWindowUI(unittest.TestCase):
+    """键盘设置窗口：真实构建一次，验证「保存」把配置写进 settings
+    （⚠️ 全程不点测试按钮 —— 那把「打字测试」会真的往焦点窗口敲字）"""
+
+    def test_window_builds_and_saves(self):
+        import types
+        import tkinter as tk
+        import config
+        import driver_keyboard
+        import keyboard_settings as ks
+
+        fake = dict(config.DEFAULT_SETTINGS)
+        saved = {}
+        orig = (config.load_settings, config.save_settings,
+                ks.config.load_settings, ks.config.save_settings,
+                driver_keyboard._settings, driver_keyboard._CHOSEN)
+        def _load():
+            return dict(fake)
+
+        def _save(d):
+            saved.update(d)
+            fake.update(d)      # 模拟真实文件：保存后能被读回
+            #   （utils.save_window_geometry 会「重读→改→写回」，不这样模拟会误判成保存失败）
+
+        config.load_settings = _load
+        config.save_settings = _save
+        ks.config.load_settings = _load
+        ks.config.save_settings = _save
+
+        root = tk.Tk()
+        root.withdraw()
+        app = types.SimpleNamespace(settings=dict(fake))
+        try:
+            win = ks.KeyboardSettingsWindow(root, app)
+            root.update_idletasks()
+            # 三个后端的状态必须已经算出来（不能是空标签）
+            self.assertTrue(win._backend_status.cget("text").strip())
+            self.assertIn("STM32", win._backend_status.cget("text"))
+            # 默认值应当从 settings 带出
+            self.assertEqual(win._backend_var.get(), "auto")
+            self.assertEqual(win._port_var.get(), "auto")
+            # 改配置 → 保存
+            win._backend_var.set("stm32")
+            win._port_var.set("COM99")
+            win._interval_var.set("40")
+            win._timeout_var.set("5")
+            win._on_close(save=True)
+            self.assertEqual(saved.get("keyboard_backend"), "stm32")
+            self.assertEqual(saved.get("stm32_port"), "COM99")
+            self.assertEqual(saved.get("stm32_interval_ms"), 40)
+            self.assertEqual(saved.get("stm32_timeout"), 5.0)
+            self.assertEqual(app.settings.get("keyboard_backend"), "stm32")
+        except tk.TclError as e:
+            self.skipTest("无图形环境，跳过：%s" % e)
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            (config.load_settings, config.save_settings,
+             ks.config.load_settings, ks.config.save_settings,
+             driver_keyboard._settings, driver_keyboard._CHOSEN) = orig
+
+    def test_out_of_range_values_are_clamped(self):
+        """手填越界值必须被夹回合法区间（不能把非法值写进设置）"""
+        import types
+        import tkinter as tk
+        import config
+        import driver_keyboard
+        import keyboard_settings as ks
+
+        fake = dict(config.DEFAULT_SETTINGS)
+        saved = {}
+        orig = (config.load_settings, config.save_settings,
+                ks.config.load_settings, ks.config.save_settings,
+                driver_keyboard._settings, driver_keyboard._CHOSEN)
+        def _load():
+            return dict(fake)
+
+        def _save(d):
+            saved.update(d)
+            fake.update(d)      # 模拟真实文件：保存后能被读回
+            #   （utils.save_window_geometry 会「重读→改→写回」，不这样模拟会误判成保存失败）
+
+        config.load_settings = _load
+        config.save_settings = _save
+        ks.config.load_settings = _load
+        ks.config.save_settings = _save
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            win = ks.KeyboardSettingsWindow(root, types.SimpleNamespace(settings=dict(fake)))
+            win._interval_var.set("99999")
+            win._timeout_var.set("0.01")
+            win._on_close(save=True)
+            self.assertEqual(saved.get("stm32_interval_ms"), 500)
+            self.assertEqual(saved.get("stm32_timeout"), 0.5)
+        except tk.TclError as e:
+            self.skipTest("无图形环境，跳过：%s" % e)
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            (config.load_settings, config.save_settings,
+             ks.config.load_settings, ks.config.save_settings,
+             driver_keyboard._settings, driver_keyboard._CHOSEN) = orig
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

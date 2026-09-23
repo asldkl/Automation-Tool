@@ -580,13 +580,17 @@ def _login_account(app, account_name, i, total, processed_accounts):
         app._last_account_error = msg
         return False
 
+    # 先注入设置再取后端名：后端优先级受 keyboard_backend 配置影响
+    # （auto = STM32 外部硬件 → Interception 驱动 → SendInput）
+    driver_keyboard.set_settings(app.settings)
     kb_backend = driver_keyboard.get_backend()
     print(f"⌨️ 键盘后端: {kb_backend}")
 
-    # 检查 Interception 驱动是否可用，不可用时根据设置决定是否重启
+    # 检查键盘后端是否可用（STM32 / Interception / SendInput 任一可用即可）
+    # 都不行才按设置决定是否重启电脑 —— 有 STM32 或 SendInput 兜底时不该再重启
     if not driver_keyboard.is_available():
         if app.settings.get("restart_on_interception_fail", False):
-            print("❌ Interception 驱动不可用，尝试重新加载驱动服务...")
+            print("❌ 没有任何可用键盘后端，尝试重新加载 Interception 驱动服务...")
             import subprocess
             driver_restored = False
             # 先尝试重启驱动服务（不重启电脑），通常可恢复
@@ -718,7 +722,7 @@ def _login_account(app, account_name, i, total, processed_accounts):
         if app._stop_event.is_set():
             return False
 
-        # Interception 输入密码（确保 WeGame 窗口聚焦）
+        # 输入密码（后端由 driver_keyboard 按优先级挑：STM32 硬件 → Interception → SendInput）
         print("⌨️ 输入密码: ****")
         if not _ensure_wegame_focused():
             print(f"⚠️ WeGame 窗口失去焦点，重试 ({attempt+1}/{max_retries})...")

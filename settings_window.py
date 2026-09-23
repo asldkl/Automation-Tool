@@ -745,12 +745,14 @@ class SettingsWindow:
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_kb, text="测试 Interception 驱动级键盘",
+        ttk.Label(frame_kb, text="测试 Interception / STM32 硬件键盘（详细设置见「键盘设置」）",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         kb_btn_frame = ttk.Frame(frame_kb, style='SettingsInner.TFrame')
         kb_btn_frame.pack(fill=tk.X)
 
+        ttk.Button(kb_btn_frame, text="键盘设置", style='Accent.TButton',
+                   command=self._open_keyboard_settings, width=12).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(kb_btn_frame, text="检测键盘状态", style='TButton',
                    command=self._test_ola_status, width=14).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(kb_btn_frame, text="测试 Interception", style='TButton',
@@ -2147,19 +2149,24 @@ class SettingsWindow:
             win.destroy()
         ))
 
-    def _test_ola_status(self):
-        """测试 Interception 驱动键盘状态"""
+    def _open_keyboard_settings(self):
+        """打开独立的「键盘设置」窗口（后端优先级 + STM32 参数 + 自带的连接/打字测试）"""
         try:
-            import interception_keyboard
-            inter_ok = interception_keyboard.is_available()
-            if inter_ok:
-                self._dev_kb_status.config(
-                    text="Interception ✓ | 驱动可用",
-                    foreground="#27ae60")
-            else:
-                self._dev_kb_status.config(
-                    text="Interception ✗ | 驱动不可用",
-                    foreground="#e74c3c")
+            from keyboard_settings import KeyboardSettingsWindow
+            KeyboardSettingsWindow(self.win, self.app)
+        except Exception as e:
+            messagebox.showerror("错误", f"打开键盘设置失败：{e}")
+
+    def _test_ola_status(self):
+        """检测键盘输入后端状态（STM32 外部硬件 / Interception 驱动 / SendInput）"""
+        try:
+            import driver_keyboard
+            driver_keyboard.set_settings(getattr(self.app, "settings", None) or {})
+            lines, chosen = driver_keyboard.backend_report()
+            text = " | ".join("%s %s" % (mark, name) for mark, name, _d in lines)
+            text += "   → 当前用：%s" % driver_keyboard.get_backend()
+            self._dev_kb_status.config(
+                text=text, foreground="#27ae60" if chosen else "#e74c3c")
         except Exception as e:
             self._dev_kb_status.config(text=f"✗ 检测异常: {e}", foreground="#e74c3c")
 

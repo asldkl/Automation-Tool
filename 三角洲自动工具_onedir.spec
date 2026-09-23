@@ -52,6 +52,11 @@ a = Analysis(
         'smtplib', 'email', 'email.mime', 'email.mime.text', 'email.mime.multipart',
         # 日志遮罩（PyQt6）
         'PyQt6', 'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'PyQt6.sip', 'screen_log_overlay',
+        # 键盘后端：driver_keyboard 会对 stm32_keyboard 做函数内动态 import；
+        # 后者依赖 pyserial（serial / serial.tools.list_ports）—— 全部必须显式声明，
+        # ⚠️ 漏了会「打包后静默失效」（不报错但功能不生效）
+        'driver_keyboard', 'stm32_keyboard', 'interception_keyboard',
+        'serial', 'serial.tools', 'serial.tools.list_ports',
     ] + _rapidocr_hiddenimports + _onnxrt_hiddenimports,
     hookspath=[],
     hooksconfig={},
