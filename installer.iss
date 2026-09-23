@@ -30,7 +30,15 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
+; 自动识别 dist\ 里是哪一种产物（用哪个 spec 打的包）：
+;   · onedir 文件夹在 → 递归打包整个目录（exe + _internal\），**运行时不产生临时文件夹**
+;   · 否则退回单文件 exe（onefile，启动时要解压到 %TEMP%\_MEIxxxxxx）
+; 想强制用单文件版：把 dist\三角洲自动工具\ 这个目录改名或删掉即可。
+#if FileExists(AddBackslash(SourcePath) + "dist\三角洲自动工具\三角洲自动工具.exe")
+Source: "dist\三角洲自动工具\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
 Source: "dist\三角洲自动工具.exe"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 Source: "interception.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "interception.sys"; DestDir: "{app}"; Flags: ignoreversion
 Source: "install_interception.bat"; DestDir: "{app}"; Flags: ignoreversion
