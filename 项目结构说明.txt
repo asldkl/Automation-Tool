@@ -72,7 +72,7 @@ v1.0.0 (2026-05-25)：初始发布版本
 │     - Treeview 四列：账号名称（左对齐+序号）、现有资产、下次运行时间、备注
 │     - Treeview 颜色标签：cooling（蓝色）、runnable（绿色）、paused（红色）
 │     - 双击按列分派（v1.3.6）：现有资产→资产记录、下次运行时间→自定义冷却、名称/备注→账号信息设置（account_manager.double_click_column）；右键菜单移除「自定义冷却时间」「查看资产记录」「账号信息设置」
-│     - 底部提示轮换（v1.3.6）：_HINT_TIPS 9 条提示 + _rotate_hint，每 60 秒切换，前缀「提示：」总长≤30 字
+│     - 底部提示轮换（2026-09-22 改）：_HINT_TIPS 18 条 + 独立定时器 _start_hint_ticker（8 秒一条，与 60 秒列表刷新解耦），前缀「提示：」每条 ≤22 字
 │   - _setup_styles() / _setup_tray()：样式与托盘
 │   - open_settings()：打开设置窗口
 │   - RedirectText.set_log_path()：动态切换日志文件（v1.3.5）
@@ -174,12 +174,13 @@ v1.0.0 (2026-05-25)：初始发布版本
 
 
 │
-├── driver_keyboard.py          # 驱动级键盘输入模块（v1.3.1 重写）
-│   - 统一使用 Interception 驱动（仅用于 WeGame 登录输入账号密码）
-│   - send_string()：通过 Interception 扫描码方式输入字符串
-│   - is_available()：检查驱动是否可用
-│   - get_backend()：获取当前使用的后端名称
-│   - 所有操作委托给 interception_keyboard 模块
+├── driver_keyboard.py          # 键盘输入统一入口（2026-09-23 改为多后端优先级链）
+│   - 仅用于 WeGame 登录输入账号密码；游戏内一律用 pyautogui（SendInput）
+│   - 优先级 auto：STM32 外部硬件键盘 → Interception 驱动（已按用户要求移除 SendInput：
+│     软件模拟的按键目标窗口不认，会出现「以为输入了、其实账号密码没进去」，直接判失败更安全）
+│   - set_settings()：注入配置；_pick()：挑第一个可用后端并缓存
+│   - ⚠️ 绝不「中途换后端」（密码会被打两遍）→ 有单测 test_no_midway_backend_switch 钉住
+│   - backend_report()：给设置界面显示各后端可用性
 │
 ├── interception_keyboard.py    # Interception 驱动级键盘输入模块（v1.2.0 新增）
 │   - 通过 ctypes 调用 interception.dll 实现驱动级键盘模拟（仅用于登录输入账号密码，游戏内不使用）
@@ -191,6 +192,21 @@ v1.0.0 (2026-05-25)：初始发布版本
 │   - set_filter=0：不拦截事件，只用于发送
 │   - DLL 搜索路径：MEIPASS、exe 同级、项目目录、System32、LCA 安装目录
 │   - 驱动伪装为 keyboard.sys，服务名 keyboard
+│
+├── stm32_keyboard.py           # STM32 外部硬件键盘后端（2026-09-23 新增）
+│   - 与 stm32 固件走 USB 复合设备（CDC 虚拟串口 + HID 键盘，VID:PID=0483:57A0，免驱）
+│   - 115200 8N1 文本行协议：PING / INFO / TYPE <文本> / TYPE_INTERVAL <ms> /
+│     STOP / RESUME / HOLD ALL OFF（固件侧按节奏逐字符敲，PC 只发一条命令）
+│   - 调 stm32_keyboard.py 而不依赖固件工程目录；对外只返回 True/False、绝不抛异常
+│   - ⚠️ 日志只打长度不打内容（账号密码不进日志）；串口用完就关（不占端口）
+│   - ⚠️ TYPE 只接受 ASCII 可打印字符 + Tab，非法内容提前拦下（不把脏数据打进密码框）
+│   - probe()：设置界面「检测连接」用（只发 PING/INFO，不按键）
+│
+├── keyboard_settings.py        # 键盘设置窗口（2026-09-23 新增，独立窗口）
+│   - 入口：设置 → 实验功能 → 驱动键盘测试 →「键盘设置」
+│   - 后端单选 + STM32 端口/间隔/超时 + 三后端状态 + 窗口内自带的「检测连接/打字测试」
+│   - 打字测试前用 ImmAssociateContext 摘掉窗口的输入法关联（中文输入法会吃字符/转全角）
+│   - 关闭即自动保存；窗口大小与位置记忆（keyboard_settings_geometry）
 
 ├── custom_ops.py               # 自定义操作模块（v1.3.6 新增）
 │   - 数据存储：%APPDATA%\DeltaAutoTool\custom_ops\（ops.json + images/ + runs.json）
@@ -487,6 +503,10 @@ gui_app.py (入口层)
 | enable_asset_recognition    | 启用资产识别                       | False                        |
 | asset_region                | 资产识别屏幕区域 [x,y,w,h]        | [0, 0, 0, 0]                 |
 | cooldown_scheduled_task_enabled | 冷却到期定时任务兜底           | True                         |
+| keyboard_backend            | 键盘输入后端（auto/stm32/interception） | auto                    |
+| stm32_port                  | STM32 串口（auto=按 VID:PID 自动查找） | auto                    |
+| stm32_interval_ms           | STM32 打字间隔（5~500ms，越大越像人） | 25                       |
+| stm32_timeout               | STM32 单条指令回执超时（秒）        | 3.0                          |
 
 【运行流程】
 
@@ -537,11 +557,26 @@ gui_app.py (入口层)
 
 【技术栈】
 
-Python 3.8+ / Tkinter / OpenCV / RapidOCR (onnxruntime) / PyAutoGUI / psutil / pywin32 / pystray+Pillow / PyInstaller
+Python 3.8+ / Tkinter / OpenCV / RapidOCR (onnxruntime) / PyAutoGUI / psutil / pywin32 / pystray+Pillow /
+pyserial（STM32 硬件键盘后端）/ PyInstaller
 
 服务器端: Python / FastAPI / uvicorn
 
-【Interception 驱动状态】
+【键盘输入后端（STM32 外部硬件 / Interception 驱动）】
+
+程序登录时按优先级自动挑后端（配置项 keyboard_backend，默认 auto）：
+  1. STM32 外部硬件键盘  —— USB 复合设备（CDC 虚拟串口 + HID 键盘），VID:PID = 0483:57A0，免驱；
+     由 stm32_keyboard.py 经串口发文本行协议控制固件打字（详见 stm32_keyboard.py 头部注释）
+  2. Interception 驱动   —— 内核级驱动模拟，见下
+（已按用户要求移除 SendInput：纯软件模拟的按键目标窗口不认，会「以为输入了其实没进去」）
+
+STM32 一侧要点：
+  - 固件工程在本地目录「按键模拟输入/」（Keil 工程，未入库）；程序侧只需要一根 USB 线 + stm32_keyboard.py
+  - 设备自带紧急停止（板上长按 PB1/PB11 0.8 秒）→ 之后拒绝按键指令，需发 RESUME 才恢复；
+    程序**不会自动恢复**（那是用户主动的安全动作）
+  - 测试入口：「键盘设置」窗口里的「检测连接 / 打字测试」
+
+──── Interception 驱动状态 ────
 
 驱动文件：C:\Windows\System32\drivers\interception.sys
 服务名称：interception（内核驱动，手动启动）

@@ -16,7 +16,7 @@
 4.  防滥用保护机制
 5.  机器指纹机制详解
 6.  服务器验证流程
-7.  Interception 驱动级键盘输入
+7.  键盘输入后端（STM32 外部硬件 / Interception 驱动）
 8.  心跳同步机制
 9.  如何管理用户（白名单/有效期）
 10. 打包说明（PyInstaller）
@@ -68,7 +68,13 @@
 │                           # 支持 DLL 搜索路径：MEIPASS→exe目录→LCA安装目录→System32
 │                           # 自动检测键盘设备号（跳过只读 device 1，使用 device 2+）
 │                           # filter=0 不拦截事件，只用于发送
-├── driver_keyboard.py       # 键盘驱动统一入口（委托 interception_keyboard）
+├── driver_keyboard.py       # 键盘输入统一入口：auto = STM32 硬件 → Interception
+│                           # （已移除 SendInput；两者都不可用则直接判失败）
+├── stm32_keyboard.py        # STM32 外部硬件键盘后端（2026-09-23 新增）
+│                           # USB 复合设备（CDC 虚拟串口 + HID 键盘），VID:PID=0483:57A0
+│                           # 文本行协议 PING/TYPE/TYPE_INTERVAL/STOP/RESUME（依赖 pyserial）
+├── keyboard_settings.py     # 键盘设置窗口（2026-09-23 新增）
+│                           # 后端选择 + STM32 端口/间隔/超时 + 自带的连接/打字测试
 ├── custom_ops.py            # 自定义操作模块（v1.3.6 新增）：步骤持久化 + 主流程后自动执行「找图→单击」
 ├── custom_ops_window.py     # 自定义操作配置向导（v1.3.6 新增）：屏幕框选/导入图片，步骤编辑/排序/测试运行
 ├── test_all_features.py     # 全功能测试套件（43 项）
@@ -294,7 +300,7 @@ v1.0.3 采用全新的服务器端验证架构，彻底移除了本地有效期�
     "请联系管理员将此指纹添加到白名单"
 
 ================================================================================
-7. Interception 驱动级键盘输入
+7. 键盘输入后端（STM32 外部硬件 / Interception 驱动）
 ================================================================================
 
 本工具使用 Interception 驱动实现 WeGame 登录界面中账号密码的可靠输入，通过 ctypes 调用
@@ -354,12 +360,62 @@ DLL: interception.dll（项目根目录，打包时嵌入 exe 的根目录）
 7.4 设备号说明
 ----------------------------------------
 
-Interception 驱动中，设备 1 是只读中转设备（send 永远返回 0）。
-真实键盘设备从 2 开始。程序自动扫描 device 2-10，通过硬件 ID 检测
-找到可写入的键盘设备。
+Interception 驱动中，**没有硬件 ID 的设备**才是中转/只读设备（send 返回 0）。
+程序自动扫描 device 2-10，通过硬件 ID 检测找到可写入的键盘设备。
+
+⚠️ 已知问题（2026-09-23 实测，尚未修改）：**设备号并不固定** —— 本机上 device 1 就是
+有硬件 ID 的真键盘（笔记本内置 ACPI\FUJ7401），而 device 2 反而是虚拟输入设备
+（HID\GVInput，厂商 ID 0xFF 未注册）。当前从 2 开始扫，这种情况下会选到虚拟设备。
+建议改为从 1 开始扫 —— 现有「有无硬件 ID」判断本就能自然跳过真正的中转设备。
+（暂未动，避免影响已在正常工作的登录链路；STM32 后端不受此影响。）
 
 验证方式（管理员 CMD）：
     sc query keyboard      # 应显示 RUNNING
+
+----------------------------------------
+7.3 STM32 外部硬件键盘（推荐后端，2026-09-23 新增）
+----------------------------------------
+
+为什么要有它：Interception 是**内核键盘类上层筛选器**，一旦挂死会让整机键盘失效、
+只能重启（有实例）。STM32 是**独立的 USB HID 键盘设备**，PC 侧零驱动，坏了也只是它
+自己不按键；而且对游戏/反作弊来说它同样是「硬件级输入」（没有 SendInput 的注入标记）。
+
+文件：stm32_keyboard.py（约 300 行）
+    - 与固件走 USB 复合设备：CDC 虚拟串口（下命令）+ HID 键盘（打字），VID:PID=0483:57A0，免驱
+    - 串口 115200 8N1，**文本行协议**（\n 结尾）：
+        PING | INFO | TYPE <文本> | TYPE_INTERVAL <ms> | STOP | RESUME | HOLD ALL OFF
+    - 固件侧按 TYPE_INTERVAL 自己逐字符敲，PC 只发一条命令（不用自己 sleep 逐字符）
+    - find_port()：按 VID:PID 自动查找；probe()：只发 PING/INFO（界面「检测连接」用）
+    - ⚠️ 日志只打长度不打内容（账号密码不进日志）；串口**用完就关**（不与上位机控制台抢端口）
+    - ⚠️ TYPE 只接受 ASCII 可打印字符 + Tab → 非法内容**提前拦下**（不把脏数据打进密码框）
+    - ⚠️ 设备有紧急停止（板上长按 PB1/PB11 0.8 秒）→ 之后拒绝按键指令（ERR 005），
+      需 RESUME 才恢复；程序**不会自动恢复**（那是用户主动的安全动作）
+
+文件：keyboard_settings.py（新增，独立窗口）
+    - 入口：设置 → 实验功能 → 驱动键盘测试 →「键盘设置」
+    - 后端单选（auto / stm32 / interception）+ STM32 端口/打字间隔/回执超时 + 后端状态一览
+    - 自带两个测试：「检测连接」（只 PING/INFO，不按键）、「打字测试」
+      （把测试串打进本窗口的输入框再**回读比对**；故意绕过优先级链，确保测的是 STM32 本人）
+    - 「紧急停止 / 恢复」按钮；关闭即自动保存；窗口大小位置记忆
+    - ⚠️ 打字测试前必须用 ImmAssociateContext 摘掉窗口的输入法关联 —— 中文输入法会把硬件
+      键盘的字符吃掉/转全角（实测 Test123!@#aAzZ → Test23！@#），不摘会把输入法干扰
+      误报成「STM32 不能用」
+
+文件：driver_keyboard.py（改为优先级链）
+    - auto 顺序：**STM32 → Interception**；可用 `keyboard_backend` 强制指定
+    - **已移除 SendInput**：纯软件模拟的按键目标窗口不认，会出现「以为输入了、其实账号密码
+      没进去」，比直接失败更糟 → 两者都不可用时 send_string() 直接返回 False（有反向断言钉住）
+    - ⚠️ **绝不「中途换后端」**：密码类输入若在中途换后端，同一串会被打两遍 →
+      单测 test_no_midway_backend_switch 钉死；只在「当前后端整体不可用」时才重挑
+
+配置项：keyboard_backend / stm32_port / stm32_interval_ms / stm32_timeout
+
+⚠️ Tk 子窗口两个坑（踩过，已修）：
+    - 子窗口必须自己 grab_set()（父设置窗口是模态的），关闭时 grab_release() 交还，
+      否则按钮点了没反应、也不能缩放
+    - **绝不能用 win.wait_visibility()**：窗口已可见时它会永久阻塞（tkwait visibility 等的
+      是「下一次可见性变化」）→ __init__ 走不到 grab_set → 该窗口所有按钮全部失灵
+    - 记住窗口几何后要**夹回屏内**（换分辨率/拔显示器后存下的坐标会把窗口丢到屏外）
 
 ================================================================================
 8. 心跳同步机制
@@ -492,6 +548,9 @@ POST /api/v1/heartbeat
     - uac_admin: 请求管理员权限
 
 hiddenimports 包含的模块:
+    ⚠️ **只在函数内动态 import 的模块也必须写进来**（漏了会「打包后静默失效」，不报错但功能不生效）：
+        driver_keyboard, stm32_keyboard, keyboard_settings, screen_log_overlay,
+        serial, serial.tools, serial.tools.list_ports
     config, utils, settings_window, template_capture,
     cooldown_manager, automation, machine_fingerprint, relative_mouse_move,
     email_notifier, account_manager, scheduler, cooldown_watcher,
@@ -703,6 +762,25 @@ __file__ 在编译模块中指向该临时目录，因此 resource_path 能正�
   - 安装包反而更小：90.8MB（单文件版 131.9MB）
   - installer.iss 用 #if FileExists 自动识别两种产物；单文件 spec 降级为「可选」
   - ⚠️ 两份 spec 的 Analysis 段（datas/hiddenimports/excludes）必须同步改
+
+键盘输入后端（STM32 外部硬件键盘）
+- 新增 stm32_keyboard.py：控制 STM32F103 固件（USB 复合设备 CDC+HID，VID:PID=0483:57A0）
+  以「真硬件键盘」身份打字；固件侧按节奏逐字符敲，PC 只发一条 TYPE 命令（依赖 pyserial）
+  · 对外只返回 True/False、绝不抛异常；⚠️ 日志只打长度不打内容（账号密码不进日志）
+  · 串口用完就关（不与上位机控制台抢端口）；TYPE 只吃 ASCII，非法内容提前拦下
+- driver_keyboard 改为优先级链 auto = STM32 → Interception；**按要求移除 SendInput**
+  （纯软件模拟的按键目标窗口不认，会「以为输入了、其实没进去」→ 直接判失败更安全）
+  · ⚠️ 绝不「中途换后端」（密码会被打两遍）→ 单测 test_no_midway_backend_switch 钉住
+  · 顺手补掉原降级分支 from ib_simulator import IbSimulator（该模块项目里不存在、pip 也没有）
+- 新增 keyboard_settings.py：独立设置窗口（设置 → 实验功能 → 驱动键盘测试 →「键盘设置」）：
+  后端单选 + STM32 参数 + 后端状态 + 窗口内自带的「检测连接 / 打字测试」+ 紧急停止/恢复；
+  关闭即自动保存、窗口大小位置记忆（并夹回屏内）
+- ⚠️ 实测坑：**中文输入法会把硬件键盘的字符吃掉/转全角**（Test123!@#aAzZ → Test23！@#）→
+  打字测试前必须摘掉窗口的输入法关联；跑程序前也应把输入法切到英文
+- ⚠️ Tk 坑：子窗口要自己 grab_set()（父设置窗口是模态的）；且**绝不能用 wait_visibility()**
+  （窗口已可见时会永久阻塞 → 该窗口所有按钮失灵）
+- ⚠️ 已知问题（未改）：interception_keyboard 的设备扫描从 2 开始，而本机 device 1 才是真键盘、
+  device 2 是虚拟输入设备；建议改为从 1 开始扫（STM32 后端不受影响）
 
 验证码
 - 「包含文字」类改走**本地字形匹配**（离线零 API）：有把握才点图；没把握**不点任何图**，

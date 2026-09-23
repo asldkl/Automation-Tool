@@ -68,9 +68,22 @@ pip install pyinstaller
 pyinstaller <根目录的 onedir spec>
 ```
 
-## Interception 驱动级键盘输入
+## 键盘输入后端（STM32 外部硬件 / Interception 驱动）
 
-本工具使用 [Interception](https://github.com/oblitum/Interception) 驱动实现 WeGame 登录界面中账号密码的可靠输入。
+本工具在 WeGame 登录界面中自动输入账号密码。输入由「键盘输入后端」完成，程序按优先级自动挑：
+
+1. **STM32 外部硬件键盘**（推荐）—— 插一块专用硬件键盘（USB 复合设备，免驱）。
+   它同样是「真键盘」（游戏认可），但**完全不碰你系统里的键盘**，不会出现键盘失灵类问题。
+2. **[Interception](https://github.com/oblitum/Interception) 驱动** —— 内核级驱动模拟，见下。
+
+> 已刻意**不使用 SendInput** 这类纯软件模拟：按键带注入标记，目标窗口不认，会出现
+> 「以为输入了、其实账号密码没进去」。因此两个硬件后端都不可用时，**直接判输入失败**。
+
+设置与测试入口：**设置 → 实验功能 → 驱动键盘测试 →「键盘设置」**
+（可切换后端、测试连接、让硬件键盘在窗口里打一串字符做回读验证）
+
+> ⚠️ 运行前请把输入法切到**英文状态**：中文输入法会把硬件键盘打出的字符吃掉或转成全角
+> （例如 `!` 变成 `！`），账号密码就会输错。
 
 ### 驱动安装状态
 
@@ -196,6 +209,10 @@ Interception 驱动中设备 1 是只读中转设备，真实键盘设备从 2 �
 | `cooldown_run_immediately` | 冷却完立即运行 |
 | `cooldown_scheduled_task_enabled` | 冷却到期定时任务兜底（默认开启） |
 | `restart_on_interception_fail` | Interception 驱动失败时自动重启电脑（默认关闭） |
+| `keyboard_backend` | 键盘输入后端：`auto`（STM32 → Interception）/ `stm32` / `interception`（默认 `auto`） |
+| `stm32_port` | STM32 硬件键盘串口（`auto`=按 VID:PID `0483:57A0` 自动查找，也可填 `COM5`） |
+| `stm32_interval_ms` | STM32 打字间隔（5~500ms，越大越像人手动打字，默认 25） |
+| `stm32_timeout` | STM32 单条指令回执超时（秒，默认 3.0） |
 | `enable_email_currency` | 启用自动领取邮箱货币 |
 | `post_run_shutdown_delay` | 运行完成后延迟关机（0-5分钟，0=不关机） |
 | `server_url` | 服务器地址（用于机器指纹验证和心跳同步） |
