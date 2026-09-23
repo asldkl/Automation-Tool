@@ -64,7 +64,8 @@ python main.py
 打包为 exe：
 ```bash
 pip install pyinstaller
-pyinstaller 自动化工具.spec
+# 打包配置在项目根目录的 .spec 文件里（默认用 onedir 文件夹版：不产生临时解包目录）
+pyinstaller <根目录的 onedir spec>
 ```
 
 ## Interception 驱动级键盘输入

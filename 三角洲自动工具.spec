@@ -1,4 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+# ⚠️ 单文件版（**可选/遗留**）。默认打包方式请用 `三角洲自动工具_onedir.spec`（文件夹版）。
+#   原因：单文件版每次启动都要把整包解压到 %TEMP%\_MEIxxxxxx，退出时清理失败会弹
+#   「PyInstaller Onefile Hidden Window / Needs to remove its temporary files」；
+#   实测启动到主窗口：单文件 ~24s vs onedir ~0.8s（单文件每次都慢，不存在「跑几次就热了」）。
+#   本文件只在「非要一个 exe」时使用。installer.iss 会自动识别两种产物。
+#
+#   ⚠️ 与 onedir spec 的 Analysis 段（datas / hiddenimports / excludes）必须保持一致 ——
+#      改一处要同步另一处，否则两边打包出来的能力会不一致（漏了会静默失效）。
 from PyInstaller.utils.hooks import collect_all
 
 # 收集 rapidocr_onnxruntime 的所有模块、数据文件和二进制文件

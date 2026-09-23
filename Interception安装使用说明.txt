@@ -172,7 +172,8 @@ Interception 是一个内核级键盘/鼠标拦截驱动，本工具用它实现
 项目相关文件：
   - interception_keyboard.py   — Python 封装模块（ctypes 调用 interception.dll）
   - interception.dll           — Interception 通信 DLL（项目根目录，约 11KB）
-  - 三角洲自动工具.spec         — PyInstaller 配置（已配置嵌入 interception.dll）
+  - 三角洲自动工具_onedir.spec  — PyInstaller 配置（默认，文件夹版；已配置嵌入 interception.dll）
+  - 三角洲自动工具.spec         — PyInstaller 配置（可选，单文件版；已配置嵌入 interception.dll）
 
 interception_keyboard.py 功能：
   - is_available()：检查 Interception 驱动和 DLL 是否可用

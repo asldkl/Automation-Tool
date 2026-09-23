@@ -558,6 +558,14 @@ DLL 依赖：interception.dll（项目目录，打包时嵌入 exe）
 【打包命令】
 
 pip install pyinstaller rapidocr-onnxruntime
-pyinstaller 三角洲自动工具.spec
+pyinstaller 三角洲自动工具_onedir.spec
+
+（默认：文件夹版 onedir —— 不产生 %TEMP% 解包目录，启动快：实测主窗口约 0.8s；
+  单文件版约 24s，且每次启动都要解压到 %TEMP%\_MEIxxxxxx，退出清理失败会弹
+  「PyInstaller Onefile Hidden Window」。可选：pyinstaller 三角洲自动工具.spec → 单文件版）
+
+打完包再用 Inno Setup 生成安装程序：
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+    （installer.iss 会自动识别 dist\ 里是 onedir 文件夹还是单文件 exe）
 
 ================================================================================
