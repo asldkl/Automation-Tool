@@ -86,18 +86,21 @@ class KeyboardSettingsWindow:
 
         self.win = tk.Toplevel(parent)
         self.win.title("键盘输入设置")
-        self.win.transient(parent)
+        # ⚠️ 不使用 transient：父设置窗口会被导航栈 withdraw，transient 子窗口会随之消失
+        #    （验证码设置窗口那里有同样的注释，照项目约定来）
         self.win.resizable(True, True)      # 显式声明可缩放（默认就是，写出来防以后被改）
-        try:
-            geom = str((app.settings or {}).get("keyboard_settings_geometry", "") or "")
-        except Exception:
-            geom = ""
-        self.win.geometry(geom or "640x680")   # 记忆上次的大小与位置
-        self.win.minsize(520, 420)             # 别设太大：先前 560x560 会把用户想缩小的尺寸顶回去
+        self.win.minsize(520, 420)          # 别设太大：先前 560x560 会把用户想缩小的尺寸顶回去
         try:
             self.win.iconbitmap(config.resource_path("picture/icon/icon.ico"))
         except Exception:
             pass
+        # 窗口大小/位置记忆（关闭时保存、下次打开恢复）—— 项目统一用这两个帮手
+        try:
+            import utils
+            utils.restore_window_geometry(self.win, "keyboard_settings_geometry",
+                                          default_size="640x680", min_size=(520, 420))
+        except Exception:
+            self.win.geometry("640x680")
 
         self._backend_var = tk.StringVar(value=str(
             self.app.settings.get("keyboard_backend", "auto") or "auto"))
@@ -115,10 +118,13 @@ class KeyboardSettingsWindow:
         self._refresh_status()
         self._ensure_on_screen()
         # ⚠️ 必须把 grab 从父窗口抢过来：设置窗口自己是模态的（settings_window 里 grab_set），
-        #    不抢的话本窗口收不到鼠标事件 —— 表现为「没法缩放」且「点了不获焦」（实测确认）。
-        #    项目里其它子窗口（验证码/自定义操作等）也都是建完就 grab_set，照这个约定来。
+        #    不抢的话本窗口收不到鼠标事件 —— 表现为「按钮点了没反应 + 不能缩放 + 不获焦」。
+        #    项目里其它子窗口（自定义操作 custom_ops_window.py:75 注释写得很清楚）都是建完就 grab_set。
+        # ⚠️⚠️ **千万别在这里用 wait_visibility()**：窗口一旦已经可见，它会**永久阻塞**
+        #    （`tkwait visibility` 等的是「下一次可见性变化」，不是「当前是否可见」），
+        #    于是 __init__ 走不到 grab_set、主线程卡死 → **本窗口所有按钮全部失灵**。
+        #    2026-09-23 就这么坑过一次，靠「带超时的复现脚本」才定位到。
         try:
-            self.win.wait_visibility()
             self.win.lift()
             self.win.focus_force()
             self.win.grab_set()
@@ -171,7 +177,8 @@ class KeyboardSettingsWindow:
         ttk.Label(r1, text="串口", style='SettingsSmall.TLabel').pack(side=tk.LEFT)
         self._port_combo = ttk.Combobox(r1, textvariable=self._port_var, width=26)
         self._port_combo.pack(side=tk.LEFT, padx=(8, 6))
-        ttk.Button(r1, text="刷新端口", command=self._refresh_ports).pack(side=tk.LEFT)
+        self._btn_refresh = ttk.Button(r1, text="刷新端口", command=self._refresh_ports)
+        self._btn_refresh.pack(side=tk.LEFT)
 
         r2 = ttk.Frame(card2, style='SettingsInner.TFrame')
         r2.pack(fill=tk.X, pady=(0, 6))
@@ -193,14 +200,19 @@ class KeyboardSettingsWindow:
 
         b = ttk.Frame(card3, style='SettingsInner.TFrame')
         b.pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(b, text="检测连接", style='TButton', width=10,
-                   command=self._test_connect).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(b, text="打字测试", style='Accent.TButton', width=10,
-                   command=self._test_type).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(b, text="紧急停止", style='Danger.TButton', width=10,
-                   command=self._emergency_stop).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(b, text="恢复", style='TButton', width=8,
-                   command=self._resume).pack(side=tk.LEFT)
+        # 存成属性：方便自动化测试真的 invoke() 一次（验证「点得动」）
+        self._btn_connect = ttk.Button(b, text="检测连接", style='TButton', width=10,
+                                       command=self._test_connect)
+        self._btn_connect.pack(side=tk.LEFT, padx=(0, 4))
+        self._btn_type = ttk.Button(b, text="打字测试", style='Accent.TButton', width=10,
+                                    command=self._test_type)
+        self._btn_type.pack(side=tk.LEFT, padx=(0, 4))
+        self._btn_stop = ttk.Button(b, text="紧急停止", style='Danger.TButton', width=10,
+                                    command=self._emergency_stop)
+        self._btn_stop.pack(side=tk.LEFT, padx=(0, 4))
+        self._btn_resume = ttk.Button(b, text="恢复", style='TButton', width=8,
+                                      command=self._resume)
+        self._btn_resume.pack(side=tk.LEFT)
 
         ttk.Label(card3, text="打字测试会以 STM32 后端把下面这串打进输入框（不走优先级链，确保测的是 STM32 本人）。\n"
                               "测试时请**不要点到别的窗口** —— 硬件键盘是往当前焦点窗口打字的。",

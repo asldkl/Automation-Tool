@@ -3007,6 +3007,32 @@ class TestKeyboardSettingsOptions(unittest.TestCase):
             self.assertNotIn("SendInput", label + hint)
             self.assertNotIn("SendInput", hint)
 
+    def test_no_blocking_wait_visibility(self):
+        """⚠️ 回归断言：**不许**再用 `win.wait_visibility()`。
+
+        它在窗口**已经可见**时会**永久阻塞**（`tkwait visibility` 等的是「下一次可见性变化」，
+        不是「当前是否可见」）→ `__init__` 走不到 `grab_set()` → 子窗口抢不到 grab
+        → **该窗口所有按钮点了都没反应**。2026-09-23 就这么坑过一次
+        （用户报「刷新/测试连接/打字测试都点不动」），靠带超时的复现脚本才定位到。
+        """
+        import inspect
+        import keyboard_settings as ks
+        src = inspect.getsource(ks)
+        # ⚠️ 只查**代码行**：注释里为了警告后人会提到这个名字，不该被当成违规
+        bad = [l.strip() for l in src.splitlines()
+               if "wait_visibility" in l and not l.strip().startswith("#")]
+        self.assertEqual(bad, [],
+                         "wait_visibility 会阻塞，改用 lift()+focus_force()+grab_set()")
+
+    def test_subwindow_takes_grab_and_releases_it(self):
+        """子窗口必须自己抢 grab（父设置窗口是模态的），关闭时交还"""
+        import inspect
+        import keyboard_settings as ks
+        src = inspect.getsource(ks)
+        self.assertIn("grab_set()", src)
+        self.assertIn("grab_release()", src)
+        self.assertIn("focus_force()", src)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
