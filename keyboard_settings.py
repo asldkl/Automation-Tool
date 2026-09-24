@@ -277,12 +277,18 @@ class KeyboardSettingsWindow:
             pass
 
     def _refresh_status(self):
-        """刷新三个后端的可用性 + 当前会选中谁"""
+        """刷新各后端可用性 + 当前会选中谁。
+
+        ⚠️ 只检测**当前配置允许**的后端：选了「只用 STM32 硬件键盘」时不会去探测
+        Interception（探测会加载 interception.dll 并创建上下文 = 把内核驱动挂上）。
+        """
         try:
             driver_keyboard.set_settings(self._cfg())
             lines, chosen = driver_keyboard.backend_report()
             txt = "\n".join("%s %s —— %s" % (m, n, d) for m, n, d in lines)
             txt += "\n当前会使用：%s" % (driver_keyboard.get_backend() if chosen else "无可用后端")
+            if any(m == "–" for m, _n, _d in lines):
+                txt += "\n（「–」= 当前配置没选它，程序**不会去加载**）"
             self._backend_status.config(text=txt)
         except Exception as e:
             self._backend_status.config(text="状态检测异常：%s" % e)

@@ -63,6 +63,22 @@ def _order():
     return BACKENDS          # auto / 非法值 → 默认顺序
 
 
+def interception_allowed():
+    """当前配置是否允许加载 Interception 驱动。
+
+    `keyboard_backend = stm32`（只用 STM32 硬件键盘）时为 False ——
+    **这时程序不应去加载/探测/重启 Interception 驱动**：探测本身就会
+    `interception_keyboard.is_available()`，那会加载 interception.dll 并创建上下文，
+    等于把那个内核键盘筛选器挂上了（用户选 STM32 正是为了不碰它）。
+    """
+    return "interception" in _order()
+
+
+def configured_order():
+    """当前配置的后端顺序（可读字符串），给日志与提示语用"""
+    return " → ".join(_LABEL.get(n, n) for n in _order())
+
+
 def _pick(force=False):
     """挑一个可用后端并缓存；force=True 时强制重挑"""
     global _CHOSEN
@@ -150,9 +166,20 @@ def send_key(char, interval=0.02):
 
 
 def backend_report():
-    """各后端可用性一览（给设置界面的状态显示用）；返回 (列表, 当前选中后端)"""
+    """各后端可用性一览（给设置界面的状态显示用）；返回 (列表, 当前选中后端)。
+
+    ⚠️ **只检测当前配置允许的后端**：配置「只用 STM32」时**不去探测 Interception** ——
+    探测会调用 `interception_keyboard.is_available()`，那会加载 interception.dll
+    并创建上下文（等于把那个内核驱动挂上了）。用户选 STM32 就是不想碰它。
+    未配置的后端仍会列出来（标成「未检测」），让用户看得见有哪些选项。
+    """
+    allowed = _order()
     lines = []
     for name in BACKENDS:
+        label = _LABEL.get(name, name)
+        if name not in allowed:
+            lines.append(("–", label, "未检测（当前配置未选用它 → 不加载）"))
+            continue
         ok = _available(name)
         if name == "stm32":
             try:
@@ -162,9 +189,7 @@ def backend_report():
                     detail += " / " + (stm32_keyboard.last_error() or "不可用")
             except Exception as e:
                 detail = "模块异常：%s" % e
-        elif name == "interception":
+        else:      # interception
             detail = "驱动可用" if ok else "驱动不可用（未安装或未启动）"
-        else:
-            detail = "始终可用（软件模拟，游戏可能不认）"
-        lines.append(("✓" if ok else "✗", _LABEL.get(name, name), detail))
+        lines.append(("✓" if ok else "✗", label, detail))
     return lines, _pick()

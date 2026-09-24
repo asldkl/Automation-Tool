@@ -2877,14 +2877,64 @@ class TestDriverKeyboardChain(unittest.TestCase):
         self.assertTrue(self.dk.send_string(""))
 
     def test_backend_report_shape(self):
-        lines, chosen = self.dk.backend_report()
+        with patch.object(self.dk, "_available", return_value=False):
+            lines, chosen = self.dk.backend_report()
         self.assertEqual(len(lines), 2)      # 只有 STM32 与 Interception 两个硬件后端
         for mark, name, detail in lines:
-            self.assertIn(mark, ("✓", "✗"))
+            self.assertIn(mark, ("✓", "✗", "–"))
             self.assertTrue(name)
             self.assertIsInstance(detail, str)
         self.assertTrue(lines[0][1].startswith("STM32"), "第一项应是 STM32")
         self.assertTrue(lines[1][1].startswith("Interception"), "第二项应是 Interception")
+
+    def test_interception_allowed_follows_config(self):
+        """interception_allowed() 决定「允不允许碰 Interception 驱动」"""
+        self.dk.set_settings({})
+        self.assertTrue(self.dk.interception_allowed(), "auto 下允许（作为备选）")
+        self.dk.set_settings({"keyboard_backend": "interception"})
+        self.assertTrue(self.dk.interception_allowed())
+        self.dk.set_settings({"keyboard_backend": "stm32"})
+        self.assertFalse(self.dk.interception_allowed(), "只用 STM32 时不允许")
+
+    def test_backend_report_does_not_probe_disabled_backend(self):
+        """⚠️ 关键：配置「只用 STM32 硬件键盘」时**不许去探测 Interception**。
+
+        探测 = 调 interception_keyboard.is_available() → 加载 interception.dll 并创建上下文
+        → 等于把那个内核键盘筛选器挂上。用户选 STM32 正是为了不碰它（2026-09-24 按要求）。
+        """
+        calls = []
+
+        def fake_avail(name):
+            calls.append(name)
+            return name == "stm32"
+
+        with patch.object(self.dk, "_available", side_effect=fake_avail):
+            self.dk.set_settings({"keyboard_backend": "stm32"})
+            lines, chosen = self.dk.backend_report()
+        # ⚠️ 关键断言：一次都没碰 interception（stm32 会被探测两次：backend_report 一次 +
+        #    末尾 _pick() 一次，那是正常的）
+        self.assertNotIn("interception", calls, "不该去碰 Interception，实际探测了 %s" % calls)
+        self.assertIn("stm32", calls)
+        self.assertEqual(chosen, "stm32")
+        # 未配置的后端仍要列出来（让用户看得见选项），但标成「未检测」
+        self.assertEqual(len(lines), 2)
+        by_name = {n: (m, d) for m, n, d in lines}
+        mark, detail = by_name[self.dk._LABEL["interception"]]
+        self.assertEqual(mark, "–")
+        self.assertIn("未检测", detail)
+        # 反面对照：auto 下两个都要探测
+        calls.clear()
+        with patch.object(self.dk, "_available", side_effect=fake_avail):
+            self.dk.set_settings({})
+            self.dk.backend_report()
+        self.assertEqual(set(calls), {"interception", "stm32"}, "auto 下两个都该探测")
+
+    def test_restart_branch_is_gated(self):
+        """⚠️「驱动不可用就重启电脑」那个分支必须被 interception_allowed() 拦住 ——
+        否则选了「只用 STM32」时它照样会去启动 Interception 驱动服务"""
+        import inspect
+        import automation_runner as ar
+        self.assertIn("driver_keyboard.interception_allowed()", inspect.getsource(ar))
 
 
 class TestKeyboardSettingsWindowUI(unittest.TestCase):

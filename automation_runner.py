@@ -586,10 +586,13 @@ def _login_account(app, account_name, i, total, processed_accounts):
     kb_backend = driver_keyboard.get_backend()
     print(f"⌨️ 键盘后端: {kb_backend}")
 
-    # 检查键盘后端是否可用（STM32 / Interception 任一可用即可）
-    # 两个硬件后端都不行才按设置决定是否重启电脑
+    # 检查键盘后端是否可用（按当前配置的顺序挑：STM32 / Interception 任一可用即可）
     if not driver_keyboard.is_available():
-        if app.settings.get("restart_on_interception_fail", False):
+        # ⚠️ 只有当前配置**允许** Interception 时才去重启它的驱动服务 ——
+        #    用户选了「只用 STM32 硬件键盘」时绝不能碰它：那会加载 interception.dll
+        #    并创建上下文，等于把那个内核键盘筛选器挂上（正是用户想避开的）
+        if (app.settings.get("restart_on_interception_fail", False)
+                and driver_keyboard.interception_allowed()):
             print("❌ 没有任何可用键盘后端，尝试重新加载 Interception 驱动服务...")
             import subprocess
             driver_restored = False
@@ -617,8 +620,10 @@ def _login_account(app, account_name, i, total, processed_accounts):
                 return False
             # driver_restored=True 时继续走正常登录流程
         else:
-            print("❌ Interception 驱动不可用，请安装驱动或在设置中开启「Interception 失败时自动重启电脑」")
-            app._last_account_error = "Interception 驱动不可用"
+            print("❌ 没有可用的键盘后端（当前配置：%s）—— 请确认 STM32 板子已插好，"
+                  "或在「设置 → 实验功能 → 键盘设置」里改后端"
+                  % driver_keyboard.configured_order())
+            app._last_account_error = "没有可用的键盘后端"
             return False
 
     max_retries = 3
