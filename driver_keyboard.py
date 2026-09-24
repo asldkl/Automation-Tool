@@ -168,17 +168,28 @@ def send_key(char, interval=0.02):
 def backend_report():
     """各后端可用性一览（给设置界面的状态显示用）；返回 (列表, 当前选中后端)。
 
-    ⚠️ **只检测当前配置允许的后端**：配置「只用 STM32」时**不去探测 Interception** ——
-    探测会调用 `interception_keyboard.is_available()`，那会加载 interception.dll
-    并创建上下文（等于把那个内核驱动挂上了）。用户选 STM32 就是不想碰它。
-    未配置的后端仍会列出来（标成「未检测」），让用户看得见有哪些选项。
+    ⚠️ **探测到「够用」为止**：按配置顺序逐个探测，**一旦某个后端可用就停止探测** ——
+    后面那些反正不会被用到，而探测是有副作用的：探测 Interception 会调用
+    `interception_keyboard.is_available()`，那会加载 interception.dll 并创建上下文
+    （等于把那个内核键盘筛选器挂上）。
+
+      · 配置「只用 STM32」        → 只探测 STM32
+      · auto + 板子插着（STM32 可用）→ **不再探测 Interception**（2026-09-24 按要求）
+      · auto + 没插板子            → STM32 不可用，才去探测 Interception（它是唯一指望）
+
+    没探测到的后端仍会列出来并写明原因，让用户看得见有哪些选项。
     """
-    allowed = _order()
+    order = _order()
+    chosen = None
     lines = []
     for name in BACKENDS:
         label = _LABEL.get(name, name)
-        if name not in allowed:
+        if name not in order:
             lines.append(("–", label, "未检测（当前配置未选用它 → 不加载）"))
+            continue
+        if chosen is not None:
+            lines.append(("–", label, "未检测（已由 %s 接管 → 不加载）"
+                          % _LABEL.get(chosen, chosen)))
             continue
         ok = _available(name)
         if name == "stm32":
@@ -192,4 +203,8 @@ def backend_report():
         else:      # interception
             detail = "驱动可用" if ok else "驱动不可用（未安装或未启动）"
         lines.append(("✓" if ok else "✗", label, detail))
-    return lines, _pick()
+        if ok:
+            chosen = name      # ← 拍到可用的就收工，后面不再探测
+    if chosen is None:
+        chosen = _pick()       # 全都不行 → 交给 _pick（返回 None）
+    return lines, chosen

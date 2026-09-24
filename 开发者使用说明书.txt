@@ -407,11 +407,15 @@ Interception 驱动中，**没有硬件 ID 的设备**才是中转/只读设备�
       没进去」，比直接失败更糟 → 两者都不可用时 send_string() 直接返回 False（有反向断言钉住）
     - ⚠️ **绝不「中途换后端」**：密码类输入若在中途换后端，同一串会被打两遍 →
       单测 test_no_midway_backend_switch 钉死；只在「当前后端整体不可用」时才重挑
-    - ⚠️ **配置「只用 STM32」时不去加载 Interception 驱动**（2026-09-24 按要求）：
-      backend_report() **只检测当前配置允许的后端**（未选用的标成「– 未检测」），
+    - ⚠️ **探测到「够用」为止**（2026-09-24 按要求）：backend_report() 按配置顺序逐个探测，
+      **一旦某个后端可用就停止探测**，未探测的标成「– 未检测（已由 X 接管 → 不加载）」。
       因为探测 interception_keyboard.is_available() 会加载 interception.dll + 创建上下文，
-      等于把那个内核驱动挂上；interception_allowed() 还拦住了 automation_runner 里
-      「驱动不可用就重启 Interception 服务」那个分支（有单测钉住）
+      等于把那个内核驱动挂上，而它反正不会被用到。
+      真值表：stm32 配置 → 只探 STM32；auto + 板子可用 → **不探 Interception**；
+      auto + 板子不可用 → 才探 Interception（那时它是唯一指望）。
+      interception_allowed() 另拦住了 automation_runner 里「驱动不可用就重启服务」那个分支。
+      单测覆盖三种组合（test_auto_stops_probing_once_stm32_works /
+      test_auto_falls_through_when_stm32_missing / test_backend_report_does_not_probe_disabled_backend）
 
 配置项：keyboard_backend / stm32_port / stm32_interval_ms / stm32_timeout
 

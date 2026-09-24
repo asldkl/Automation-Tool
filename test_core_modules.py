@@ -2922,12 +2922,42 @@ class TestDriverKeyboardChain(unittest.TestCase):
         mark, detail = by_name[self.dk._LABEL["interception"]]
         self.assertEqual(mark, "–")
         self.assertIn("未检测", detail)
-        # 反面对照：auto 下两个都要探测
-        calls.clear()
+
+    def test_auto_stops_probing_once_stm32_works(self):
+        """⚠️ auto 下 STM32 已可用时**不再探测 Interception**（2026-09-24 新增规则）——
+        探测会把那个内核键盘筛选器挂上，而它反正不会被用到。"""
+        calls = []
+
+        def fake_avail(name):
+            calls.append(name)
+            return name == "stm32"
+
+        with patch.object(self.dk, "_available", side_effect=fake_avail):
+            self.dk.set_settings({})                      # auto
+            lines, chosen = self.dk.backend_report()
+        self.assertNotIn("interception", calls,
+                         "STM32 可用就不该再探测 Interception，实际探测了 %s" % calls)
+        self.assertEqual(chosen, "stm32")
+        by_name = {n: (m, d) for m, n, d in lines}
+        mark, detail = by_name[self.dk._LABEL["interception"]]
+        self.assertEqual(mark, "–")
+        self.assertIn("不会用到", detail.replace("不加载", "不会用到"))   # 写明原因
+
+    def test_auto_falls_through_when_stm32_missing(self):
+        """没插板子时才去探测 Interception（那时它是唯一指望）"""
+        calls = []
+
+        def fake_avail(name):
+            calls.append(name)
+            return name == "interception"
+
         with patch.object(self.dk, "_available", side_effect=fake_avail):
             self.dk.set_settings({})
-            self.dk.backend_report()
-        self.assertEqual(set(calls), {"interception", "stm32"}, "auto 下两个都该探测")
+            lines, chosen = self.dk.backend_report()
+        self.assertEqual(set(calls), {"interception", "stm32"}, "stm32 不可用就该接着探 Interception")
+        self.assertEqual(chosen, "interception")
+        by_name = {n: (m, d) for m, n, d in lines}
+        self.assertEqual(by_name[self.dk._LABEL["interception"]][0], "✓")
 
     def test_restart_branch_is_gated(self):
         """⚠️「驱动不可用就重启电脑」那个分支必须被 interception_allowed() 拦住 ——

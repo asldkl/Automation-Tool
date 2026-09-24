@@ -288,7 +288,7 @@ class KeyboardSettingsWindow:
             txt = "\n".join("%s %s —— %s" % (m, n, d) for m, n, d in lines)
             txt += "\n当前会使用：%s" % (driver_keyboard.get_backend() if chosen else "无可用后端")
             if any(m == "–" for m, _n, _d in lines):
-                txt += "\n（「–」= 当前配置没选它，程序**不会去加载**）"
+                txt += "\n（「–」= 本次不会用到它，程序**不去加载**）"
             self._backend_status.config(text=txt)
         except Exception as e:
             self._backend_status.config(text="状态检测异常：%s" % e)
