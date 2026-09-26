@@ -475,10 +475,8 @@ class SettingsWindow:
         sc_row.pack(fill=tk.X, pady=(8, 0))
         ttk.Checkbutton(sc_row, text="自纠错（先补「已领取未制造」的空缺）",
                         variable=self.self_correct_var).pack(side=tk.LEFT, padx=5)
-        ttk.Label(ops_frame,
-                  text="开启后进特勤处先扫一遍空缺并补上制造；补过的设施主流程整段跳过。"
-                       "需先在模板上传向导截取第 33 项「制造空缺」，没截则自动不生效",
-                  style='SettingsSmall.TLabel', justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(2, 0))
+        ttk.Label(ops_frame, text="需先在向导截取第 33 项「制造空缺」",
+                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(2, 0))
 
         # ----- 自定义操作 -----
         frame_custom = ttk.LabelFrame(parent, text="  自定义操作  ", style='SettingsCard.TLabelframe', padding=10)
