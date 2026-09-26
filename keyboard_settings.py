@@ -155,6 +155,14 @@ class KeyboardSettingsWindow:
         outer = ttk.Frame(self.win, style='Settings.TFrame', padding=12)
         outer.pack(fill=tk.BOTH, expand=True)
 
+        # ⚠️ 底部按钮栏**必须最先创建**并用 side=BOTTOM 占位：
+        #    Tk 的 pack 按调用顺序分配空间 —— 放最后的话，一旦内容（后端状态有好几行文字）
+        #    把窗口高度占满，它就先被裁到可视区外，表现成「保存并关闭」点不到。
+        bottom = ttk.Frame(outer, style='SettingsInner.TFrame')
+        bottom.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Button(bottom, text="保存并关闭", style='Success.TButton',
+                   command=lambda: self._on_close(save=True)).pack(side=tk.RIGHT)
+
         ttk.Label(outer, text="键盘输入后端", style='Header.TLabel').pack(anchor=tk.W)
         ttk.Label(outer,
                   text="登录时输入账号密码走哪个后端。默认「自动」即可 —— 插上 STM32 就自动用它。",
@@ -241,12 +249,6 @@ class KeyboardSettingsWindow:
         self._backend_status = ttk.Label(card4, text="", style='SettingsSmall.TLabel',
                                          justify=tk.LEFT, wraplength=560)
         self._backend_status.pack(anchor=tk.W)
-
-        # ----- 底部 -----
-        bottom = ttk.Frame(outer, style='SettingsInner.TFrame')
-        bottom.pack(fill=tk.X)
-        ttk.Button(bottom, text="保存并关闭", style='Success.TButton',
-                   command=lambda: self._on_close(save=True)).pack(side=tk.RIGHT)
 
     # --------------------------------------------------------------- 小工具 --
 

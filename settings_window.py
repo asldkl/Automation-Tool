@@ -55,6 +55,8 @@ class SettingsWindow:
         self.op_bench = tk.BooleanVar(value="tool_bench" in selected)
         self.op_armor = tk.BooleanVar(value="armor_station" in selected)
         self.op_pharmacy = tk.BooleanVar(value="pharmacy_station" in selected)
+        # 自纠错（进特勤处先补「已领取未制造」的空缺；需第 33 项模板）
+        self.self_correct_var = tk.BooleanVar(value=bool(app.settings.get("self_correct_enabled", False)))
 
 
         # 邮件通知变量
@@ -468,6 +470,16 @@ class SettingsWindow:
         ttk.Checkbutton(ops_inner, text="防具台", variable=self.op_armor).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Checkbutton(ops_inner, text="制药台", variable=self.op_pharmacy).pack(side=tk.LEFT)
 
+        # 自纠错：进特勤处后先补「已领取但未制造」的空缺（需第 33 项模板）
+        sc_row = ttk.Frame(ops_frame, style='SettingsInner.TFrame')
+        sc_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Checkbutton(sc_row, text="自纠错（先补「已领取未制造」的空缺）",
+                        variable=self.self_correct_var).pack(side=tk.LEFT, padx=5)
+        ttk.Label(ops_frame,
+                  text="开启后进特勤处先扫一遍空缺并补上制造；补过的设施主流程整段跳过。"
+                       "需先在模板上传向导截取第 33 项「制造空缺」，没截则自动不生效",
+                  style='SettingsSmall.TLabel', justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(2, 0))
+
         # ----- 自定义操作 -----
         frame_custom = ttk.LabelFrame(parent, text="  自定义操作  ", style='SettingsCard.TLabelframe', padding=10)
         frame_custom.pack(fill=tk.X, pady=(8, 0))
@@ -735,7 +747,7 @@ class SettingsWindow:
         frame_kb = ttk.LabelFrame(parent, text="  驱动键盘测试  ", style='SettingsCard.TLabelframe', padding=12)
         frame_kb.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frame_kb, text="测试 Interception / STM32 硬件键盘（详细设置见「键盘设置」）",
+        ttk.Label(frame_kb, text="测试键盘输入（走「键盘设置」里选定的后端）",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 8))
 
         kb_btn_frame = ttk.Frame(frame_kb, style='SettingsInner.TFrame')
@@ -745,8 +757,8 @@ class SettingsWindow:
                    command=self._open_keyboard_settings, width=12).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(kb_btn_frame, text="检测键盘状态", style='TButton',
                    command=self._test_ola_status, width=14).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(kb_btn_frame, text="测试 Interception", style='TButton',
-                   command=self._test_interception_input, width=16).pack(side=tk.LEFT, padx=(0, 4))
+        # 「测试 Interception」已删除（2026-09-26）：与「测试输入」重复，且它会绕过
+        # 后端选择直接测 Interception。现在统一由「测试输入」按键盘设置里选的后端走。
         ttk.Button(kb_btn_frame, text="测试输入", style='TButton',
                    command=self._test_keyboard_input, width=10).pack(side=tk.LEFT)
 
@@ -2161,58 +2173,41 @@ class SettingsWindow:
             self._dev_kb_status.config(text=f"✗ 检测异常: {e}", foreground="#e74c3c")
 
     def _test_keyboard_input(self):
-        """测试键盘输入"""
-        self._dev_kb_status.config(text="正在测试键盘输入...", foreground="#3498db")
+        """测试键盘输入：走 driver_keyboard 的后端优先级链（与登录时同一条路）
+
+        ⚠️ 以前这里直接 pyautogui.typewrite —— 那是纯软件模拟（按键带注入标记），
+        项目早已把这类后端删掉（目标窗口不认，会出现「以为输入了其实没进去」），
+        测通了也说明不了登录能不能用；也正因如此它和「测试 Interception」看着重复。
+        现在统一走 driver_keyboard：**键盘设置里选哪个后端，这里就测哪个**。
+        """
+        import driver_keyboard
+        import threading
+        try:
+            backend = driver_keyboard.get_backend()
+        except Exception as e:
+            self._dev_kb_status.config(text=f"✗ 后端检测异常: {e}", foreground="#e74c3c")
+            return
+        self._dev_kb_status.config(
+            text=f"当前后端：{backend}｜3 秒后开始输入，请把焦点放到目标窗口（如记事本）...",
+            foreground="#3498db")
         self.win.update()
 
-        import threading
+        test_text = "test123abc"
+
         def _run_test():
+            time.sleep(3)
             try:
-                import interception_keyboard
-                import pyautogui
-                # 提示用户将焦点放到目标窗口
-                self.win.after(0, lambda: self._dev_kb_status.config(
-                    text="3秒后开始输入测试，请将焦点放到目标窗口...", foreground="#3498db"))
-                time.sleep(3)
-                pyautogui.typewrite("test123", interval=0.05)
-                self.win.after(0, lambda: self._dev_kb_status.config(
-                    text="✓ 键盘输入测试完成", foreground="#27ae60"))
+                ok = bool(driver_keyboard.send_string(test_text, interval=0.03))
+                if ok:
+                    msg, colour = f"✓ 输入完成（后端：{backend}）: '{test_text}'", "#27ae60"
+                else:
+                    msg, colour = (f"✗ 输入失败（后端：{backend}）—— 具体原因已打到日志；"
+                                   f"请到「键盘设置」检查连接与后端选择"), "#e74c3c"
             except Exception as e:
-                self.win.after(0, lambda: self._dev_kb_status.config(
-                    text=f"✗ 测试异常: {e}", foreground="#e74c3c"))
+                msg, colour = f"✗ 测试异常: {e}", "#e74c3c"
+            self.win.after(0, lambda: self._dev_kb_status.config(text=msg, foreground=colour))
 
         threading.Thread(target=_run_test, daemon=True).start()
-
-    def _test_interception_input(self):
-        """测试 Interception 驱动级键盘输入"""
-        import interception_keyboard
-        if not interception_keyboard.is_available():
-            self._dev_kb_status.config(
-                text="✗ Interception 不可用，请安装 Interception 驱动并确保驱动正常运行",
-                foreground="#e74c3c")
-            return
-
-        self._dev_kb_status.config(text="请在3秒内将焦点放到目标窗口（如记事本）...", foreground="#3498db")
-
-        def _do_test():
-            try:
-                self._dev_kb_status.config(text="正在发送 Interception 按键...", foreground="#3498db")
-                self.win.update()
-
-                test_text = "test123abc"
-                result = interception_keyboard.send_string(test_text, interval=0.03)
-                if result:
-                    self._dev_kb_status.config(
-                        text=f"✓ Interception 输入完成: '{test_text}'", foreground="#27ae60")
-                else:
-                    self._dev_kb_status.config(
-                        text="✗ Interception 输入失败", foreground="#e74c3c")
-            except Exception as e:
-                self._dev_kb_status.config(
-                    text=f"✗ 测试异常: {e}", foreground="#e74c3c")
-
-        # 3秒后执行测试（在主线程上，避免 threading + after 的兼容性问题）
-        self.win.after(3000, _do_test)
 
     def _build_sell_tab(self, parent):
         """售卖物品选项卡内容"""
@@ -2861,6 +2856,7 @@ class SettingsWindow:
         if self.op_armor.get(): ops.append("armor_station")
         if self.op_pharmacy.get(): ops.append("pharmacy_station")
         fresh["selected_operations"] = ops
+        fresh["self_correct_enabled"] = self.self_correct_var.get()
 
         # 自动关机
         fresh["auto_shutdown_enabled"] = self.shutdown_enable_var.get()

@@ -156,6 +156,9 @@ DEFAULT_SETTINGS = {
     "account_backup_retention_days": 3,  # 账号数据备份保留天数（0=不清理，默认3，定期自动清理过期备份）
     "log_retention_days": 3,          # 日志/截图保留天数（0=不清理，默认3）
     "selected_operations": ["tech_center", "tool_bench", "armor_station", "pharmacy_station"],
+    # 自纠错：进特勤处后先补「已领取未制造」的空缺（需先截取第 33 项「制造空缺」模板；
+    # 没截图则该功能自动不生效，不影响主流程）
+    "self_correct_enabled": False,
     # 自动关机
     "auto_shutdown_enabled": False,   # 是否启用自动关机
     "auto_shutdown_time": "22:00",    # 关机时间 (HH:MM)
@@ -473,6 +476,8 @@ Produce             = resource_path("picture/Crafting_Controls/Produce.png")
 Collect             = resource_path("picture/Crafting_Controls/Collect.png")
 Auto_fill           = resource_path("picture/Crafting_Controls/Auto_fill.png")
 COIN_GAME           = resource_path("picture/Crafting_Controls/coin_game.png")
+# 自纠错用：特勤处里「已领取但未制造」的空缺标志（4 个设施共用同一张图）
+Manufacture_Vacancy = resource_path("picture/Crafting_Controls/manufacture_vacancy.png")
 
 # ==================== 邮箱货币图片 ====================
 EMAIL_MAIL              = resource_path("picture/email/mail.png")
@@ -575,4 +580,8 @@ TEMPLATE_CAPTURE_LIST = [
     ("Max_Quantity",        "picture/One_Click_Sell/Max Quantity.png",    "最大数量按钮", "已改为固定坐标点击"),
     ("Discount",            "picture/One_Click_Sell/Discount.png",        "降价按钮",     "在上架界面，截取「降价」按钮"),
     ("Confirm_Listing",     "picture/One_Click_Sell/Confirm Listing.png", "确认上架按钮", "在上架界面，截取「确认上架」按钮"),
+    # ===== 自纠错（可选件：没截图就不启用自纠错，不影响主流程）=====
+    # ⚠️ 一律追加在末尾：本列表是 1-based 编号（「N 号模板」），插在中间会让所有编号位移
+    # 提示文案务必短：向导行宽由最长一行决定，写长了会把右侧「模板设置」按钮挤出去
+    ("Manufacture_Vacancy", "picture/Crafting_Controls/manufacture_vacancy.png", "制造空缺", "特勤处「未制造」的空缺标志"),
 ]

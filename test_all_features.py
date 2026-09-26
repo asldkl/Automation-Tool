@@ -926,6 +926,236 @@ class TestFailureEmailNote(unittest.TestCase):
         self.assertIn("acc1", got["subject"])
 
 
+class _NeverStop:
+    """给自纠错测试用的停止信号替身"""
+    def is_set(self):
+        return False
+
+
+class TestFindImagePos(unittest.TestCase):
+    """自纠错用的「只识别不点击」找图：utils.find_image_pos
+
+    ⚠️ 两个方向都要测：只识别**不能**点/移鼠标；同一个 stub 环境下 find_and_click
+    必须真的点 —— 否则「没点击」可能只是探针没跑通。
+    """
+
+    def _patchers(self):
+        import numpy as np
+        import utils
+        dummy = np.zeros((10, 10), dtype=np.uint8)
+        return [
+            patch.object(utils, "human_reaction_delay", lambda *a, **k: None),
+            patch.object(utils, "human_click_delay", lambda *a, **k: None),
+            patch.object(utils, "_cache_get", return_value=dummy),
+            patch.object(utils, "_screenshot_gray",
+                         return_value=np.zeros((60, 60), dtype=np.uint8)),
+            patch.object(utils, "_match_template",
+                         return_value=(True, 0.95, (20, 20), (10, 10))),
+            patch.object(utils, "_template_cn", return_value="制造空缺"),
+            patch.object(utils.pyautogui, "size", return_value=(1920, 1080)),
+            patch.object(utils, "_avoid_overlay_for_point", lambda *a, **k: None),
+            patch.object(utils, "_restore_overlay_after_click", lambda *a, **k: None),
+            patch.object(utils, "smooth_move_to", side_effect=lambda *a, **k: None),
+            patch.dict(sys.modules, {"template_click_coords": MagicMock()}),
+        ]
+
+    def _enter(self, extra):
+        for p in self._patchers() + list(extra):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_find_image_pos_never_clicks_or_moves(self):
+        import utils
+        moved, clicked = [], []
+        self._enter([
+            patch.object(utils, "smooth_move_to",
+                         side_effect=lambda *a, **k: moved.append(a)),
+            patch.object(utils.pyautogui, "click",
+                         side_effect=lambda *a, **k: clicked.append(1)),
+        ])
+        ok, pos = utils.find_image_pos("manufacture_vacancy.png", timeout=1)
+        self.assertTrue(ok, "stub 下应该能匹配到")
+        self.assertEqual(pos, (25, 25))
+        self.assertEqual(moved, [], "只识别不该移动鼠标")
+        self.assertEqual(clicked, [], "只识别不该点击")
+
+    def test_find_and_click_still_clicks_control(self):
+        """反面对照：同一 stub 环境下 find_and_click 必须真的点一次"""
+        import utils
+        clicked = []
+        self._enter([
+            patch.object(utils, "smooth_move_to", lambda *a, **k: None),
+            patch.object(utils.pyautogui, "click",
+                         side_effect=lambda *a, **k: clicked.append(1)),
+        ])
+        self.assertTrue(utils.find_and_click("manufacture_vacancy.png", timeout=1))
+        self.assertEqual(len(clicked), 1, "find_and_click 必须真的点（证明上面那条断言有判别力）")
+
+
+class TestSelfCorrectVacancies(unittest.TestCase):
+    """自纠错 _self_correct_vacancies：4 步循环 + 3 个收手出口"""
+
+    @staticmethod
+    def _facilities():
+        return [
+            ("tech_center", "tc.png", "p_tc.png", "技术中心", "Tech_Center", "Produce_TechCenter"),
+            ("tool_bench", "tb.png", "p_tb.png", "工作台", "Tool_Bench", "Produce_ToolBench"),
+        ]
+
+    def _run(self, vacancy_seq, prod_hit=None, tail_result="", template_exists=True):
+        import automation
+        prod_hit = prod_hit if prod_hit is not None else {"p_tc.png": True}
+        calls = {"vacancy": 0, "craft": []}
+
+        def fake_find(img, timeout=None, region=None, confidence=None, stop_event=None):
+            base = os.path.basename(str(img))
+            if base == "manufacture_vacancy.png":
+                i = calls["vacancy"]
+                calls["vacancy"] += 1
+                v = vacancy_seq[i] if i < len(vacancy_seq) else False
+                return (v, (100, 200) if v else None)
+            return (bool(prod_hit.get(base)), (300, 400))
+
+        def fake_craft(name, stop_event, run_insert=None):
+            calls["craft"].append(name)
+            return tail_result
+
+        for p in [
+            patch.object(automation.utils, "find_image_pos", side_effect=fake_find),
+            patch.object(automation, "_craft_tail", side_effect=fake_craft),
+            patch.object(automation, "_ensure_game_focused", lambda: True),
+            patch.object(automation.utils, "smooth_move_to", lambda *a, **k: None),
+            patch.object(automation.utils, "human_click_delay", lambda *a, **k: None),
+            patch.object(automation.utils, "human_pause", lambda *a, **k: None),
+            patch.object(automation.pyautogui, "click", lambda *a, **k: None),
+            patch.object(automation.pyautogui, "press", lambda *a, **k: None),
+            patch.object(automation.config, "resolve_template_path",
+                         side_effect=lambda p: "manufacture_vacancy.png"),
+            patch.object(automation.os.path, "exists", return_value=template_exists),
+        ]:
+            p.start()
+            self.addCleanup(p.stop)
+        done, note = automation._self_correct_vacancies(
+            self._facilities(), _NeverStop(), lambda t: None)
+        return done, note, calls
+
+    def test_normal_path(self):
+        """第 1 圈找到空缺 → 认出技术中心 → 补制造成功；第 2 圈没空缺 → 结束"""
+        done, note, calls = self._run(vacancy_seq=[True, False])
+        self.assertEqual(done, {"tech_center": "技术中心"})
+        self.assertEqual(calls["craft"], ["技术中心"])
+        self.assertIn("已补「技术中心」", note)
+
+    def test_no_vacancy(self):
+        """没空缺 → 一圈都不补，也不动制造流程"""
+        done, note, calls = self._run(vacancy_seq=[False])
+        self.assertEqual(done, {})
+        self.assertEqual(calls["craft"], [])
+        self.assertIn("未发现制造空缺", note)
+
+    def test_cannot_identify_facility(self):
+        """4 个产出项一个都没命中 → 收手，不乱补"""
+        done, note, calls = self._run(vacancy_seq=[True], prod_hit={})
+        self.assertEqual(done, {})
+        self.assertEqual(calls["craft"], [])
+        self.assertIn("认不出设施", note)
+
+    def test_craft_failed_stops(self):
+        """补制造失败 → 立即收手，且不算已补"""
+        done, note, calls = self._run(vacancy_seq=[True], tail_result="未制造")
+        self.assertEqual(done, {}, "失败了就不能记成已补")
+        self.assertEqual(calls["craft"], ["技术中心"])
+        self.assertIn("补制造失败", note)
+
+    def test_duplicate_facility_stops(self):
+        """同一设施被认出两次 → 第二圈收手（防死循环），只补一次"""
+        done, note, calls = self._run(vacancy_seq=[True, True, True])
+        self.assertEqual(calls["craft"], ["技术中心"], "同一个设施只该补一次")
+        self.assertIn("重复认出", note)
+
+    def test_missing_template_disables_feature(self):
+        """没截第 33 项模板 → 直接不生效，连扫都不扫（也不报错）"""
+        done, note, calls = self._run(vacancy_seq=[True], template_exists=False)
+        self.assertEqual(done, {})
+        self.assertEqual(calls["vacancy"], 0, "缺模板时不该去扫空缺")
+        self.assertIn("未截取", note)
+
+
+class TestSelfCorrectWiring(unittest.TestCase):
+    """自纠错的配置项、模板条目与两条链路共用"""
+
+    def test_template_33_appended(self):
+        import config
+        self.assertEqual(len(config.TEMPLATE_CAPTURE_LIST), 33)
+        var, path, name, _hint = config.TEMPLATE_CAPTURE_LIST[32]
+        self.assertEqual(var, "Manufacture_Vacancy")
+        self.assertEqual(name, "制造空缺")
+        self.assertIn("manufacture_vacancy.png", path)
+        self.assertTrue(config.Manufacture_Vacancy.endswith("manufacture_vacancy.png"))
+
+    def test_config_default_off(self):
+        import config
+        self.assertIn("self_correct_enabled", config.DEFAULT_SETTINGS)
+        self.assertFalse(config.DEFAULT_SETTINGS["self_correct_enabled"],
+                         "自纠错默认必须是关的（用户自己启用）")
+
+    def test_craft_tail_shared_by_both_paths(self):
+        """制造后半段必须两条路共用，不能各写一遍（否则迟早走偏）"""
+        src = _read_src("automation.py")
+        self.assertIn("def _craft_tail(", src)
+        # handle_facility 里调用一次、_self_correct_vacancies 里调用一次
+        self.assertEqual(src.count("_craft_tail(facility_name, stop_event, run_insert)"), 1)
+        self.assertEqual(src.count("_craft_tail(hit_name, stop_event, run_insert)"), 1)
+
+    def test_untouched_cursor_not_len(self):
+        """⚠️ 「未执行」游标不能用 len(fac_results)：自纠错跳过的设施也会写进 fac_results"""
+        src = _read_src("automation.py")
+        self.assertNotIn("facilities[len(fac_results):]", src)
+        self.assertIn("facilities[_processed:]", src)
+
+    def test_game_operations_calls_self_correct_before_loop(self):
+        src = _read_src("automation.py")
+        self.assertIn("_self_correct_vacancies(facilities, stop_event,", src)
+        self.assertIn('settings.get("self_correct_enabled", False)', src)
+        self.assertIn("已在自纠错里补过制造，整段跳过", src)
+
+    def test_settings_checkbox(self):
+        src = _read_src("settings_window.py")
+        self.assertIn("self_correct_var", src)
+        self.assertIn('fresh["self_correct_enabled"]', src)
+
+
+class TestKeyboardUIAndDevTestUI(unittest.TestCase):
+    """键盘设置底部按钮 + 实验功能测试按钮合并"""
+
+    def test_save_button_pinned_to_bottom(self):
+        """底部按钮必须**先**用 side=BOTTOM 占位，否则窗口一小就被挤出可视区"""
+        src = _read_src("keyboard_settings.py")
+        self.assertIn("bottom.pack(side=tk.BOTTOM, fill=tk.X)", src)
+        i_bottom = src.index("bottom.pack(side=tk.BOTTOM")
+        i_card = src.index("card1 = ttk.LabelFrame")
+        self.assertLess(i_bottom, i_card, "底部按钮栏必须先于卡片创建")
+        # 不能又留一份追加在末尾的写法（那正是被裁掉的原因）
+        self.assertNotIn("bottom.pack(fill=tk.X)", src)
+
+    def test_interception_test_button_removed(self):
+        import settings_window as sw  # noqa: F401  （确保能导入）
+        src = _read_src("settings_window.py")
+        self.assertNotIn("_test_interception_input", src)
+        self.assertIn("测试输入", src)
+
+    def test_test_input_goes_through_backend_chain(self):
+        """「测试输入」必须走 driver_keyboard（键盘设置里选哪个就用哪个），
+        不能再是 pyautogui.typewrite（那是项目已删除的纯软件模拟）
+
+        ⚠️ 用「pyautogui.typewrite(」带左括号来判断**调用**：注释里提到这个名字是允许的
+        （代码里正好留了一句「以前是 pyautogui.typewrite，已废弃」的说明）。"""
+        src = _read_src("settings_window.py")
+        self.assertIn("driver_keyboard.send_string", src)
+        self.assertNotIn("pyautogui.typewrite(", src)
+        self.assertIn("driver_keyboard.get_backend()", src)
+
+
 # ==================== 运行所有测试 ====================
 if __name__ == "__main__":
     print("=" * 60)

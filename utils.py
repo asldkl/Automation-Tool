@@ -486,12 +486,16 @@ def _restore_overlay_after_click(token):
 
 def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
                          clicks=1, x_offset=0, y_offset=0,
-                         multiscale=False, return_pos=False, stop_event=None):
+                         multiscale=False, return_pos=False, stop_event=None,
+                         do_click=True):
     """
     统一的图像识别+点击函数。
     multiscale: True 使用多尺度边缘+灰度匹配，False 使用标准灰度匹配
     return_pos: True 返回 (success, (x,y)), False 返回 success
     stop_event: 可选线程停止事件，置位时立即返回 False（不等待当前超时窗口走完）
+    do_click: False = **只识别不点击**（找到就返回坐标：不移动鼠标、不加拟人抖动、
+              不记录点击坐标）。给「先确认真有目标、再去点」的两段式场景用，
+              见 find_image_pos()。
     """
     # 识别前的'反应时间'随机延时（拟人化思考后再动作）
     human_reaction_delay()
@@ -549,6 +553,12 @@ def _find_and_click_core(img_path, timeout=20, region=None, confidence=None,
 
             if multiscale and max_val >= threshold:
                 print(f"🔍 复合匹配成功：置信度 {max_val:.3f}")
+            # 只识别不点击：拿到坐标立刻返回（不抖动、不移动鼠标、不记点击坐标）
+            if not do_click:
+                _cn = _template_cn(resolved)
+                _lbl = _cn if _cn else os.path.splitext(os.path.basename(str(img_path)))[0]
+                print(f"👀 找到 {_lbl}（{x},{y}）—— 只识别不点击")
+                return (True, (x, y)) if return_pos else True
             # 拟人抖动：启用时对点击坐标加圆内随机偏移（≤max_px）
             if _click_jitter_enabled and _click_jitter_max > 0:
                 angle = random.uniform(0, 2 * math.pi)
@@ -616,6 +626,18 @@ def find_and_click(img_path, timeout=20, region=None, confidence=None, clicks=1,
     return _find_and_click_core(img_path, timeout, region, confidence,
                                 clicks, x_offset, y_offset, multiscale=False, return_pos=False,
                                 stop_event=stop_event)
+
+
+def find_image_pos(img_path, timeout=8, region=None, confidence=None, stop_event=None):
+    """**只识别不点击**：找到返回 (True, (x, y))，没找到返回 (False, None)
+
+    用于「先确认真有目标、再去点」的两段式场景（自纠错判断特勤处有没有制造空缺）：
+    与 find_and_click 共用同一套匹配逻辑，但不移动鼠标、不点击、不加拟人抖动。
+    坐标由调用方自己决定要不要点（点了也不会再叠抖动）。
+    """
+    return _find_and_click_core(img_path, timeout=timeout, region=region,
+                                confidence=confidence, return_pos=True,
+                                stop_event=stop_event, do_click=False)
 
 
 def _match_template_multiscale(gray_screen, template, threshold, scales=None):

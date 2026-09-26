@@ -39,6 +39,46 @@ def _click(run_insert, var_name, img_path, timeout=15, **kw):
     return True
 
 
+def _craft_tail(facility_name, stop_event, run_insert=None):
+    """制造流程的后半段：#21 一键补齐 → #22 游戏币购买 → #23 产出
+
+    正常流程（handle_facility）与自纠错（_self_correct_vacancies）**共用这一段**，
+    保证两条路点的是同一批按钮、同样夹插入步骤（插入步骤可能正是「让按钮可点」的前提，
+    所以自纠错也必须执行，不能省）。
+
+    返回 ""=成功；"未制造"=点产出失败；"中断"=收到停止信号
+    """
+    # 一键补齐（可选模板）：未找到/插入失败均按「材料已足够」继续
+    if not _hook(run_insert, "Auto_fill", "before"):
+        print("ℹ️ 一键补齐 插入步骤(点击前)失败，按材料足够处理")
+    elif utils.find_and_click_smart(config.Auto_fill, timeout=8):
+        print(f"🔧 一键补齐材料 ({facility_name})")
+        _hook(run_insert, "Auto_fill", "after")   # 失败仅记录，不中断
+    else:
+        print(f"ℹ️ 材料已足够，无需补齐 ({facility_name})")
+    utils.human_pause()
+
+    # 游戏币购买（while 循环按钮）：整个购买块前/后各触发一次插入步骤
+    _hook(run_insert, "COIN_GAME", "before")
+    buy_attempts = 0
+    while utils.find_and_click_smart(config.COIN_GAME, timeout=5):
+        if stop_event.is_set():
+            return "中断"
+        print(f"💰 购买材料 ({buy_attempts + 1}/5)")
+        utils.human_pause()
+        buy_attempts += 1
+        if buy_attempts >= 5:
+            print("⚠️ 购买尝试已达上限，可能价格波动频繁")
+            break
+    if buy_attempts > 0:
+        _hook(run_insert, "COIN_GAME", "after")
+
+    if _click(run_insert, "Produce", config.Produce, 15) is not True:
+        return "未制造"
+    utils.human_pause()
+    return ""
+
+
 def handle_facility(facility_img, produce_item_img, facility_name, stop_event, set_operation,
                     update_ui_callback=None, fac_var="", prod_var="", run_insert=None,
                     stage_sink=None):
@@ -79,34 +119,12 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
         return _fail("未找到产出项")
     utils.human_pause()
 
-    # 一键补齐（可选模板）：未找到/插入失败均按「材料已足够」继续
-    if not _hook(run_insert, "Auto_fill", "before"):
-        print("ℹ️ 一键补齐 插入步骤(点击前)失败，按材料足够处理")
-    elif utils.find_and_click_smart(config.Auto_fill, timeout=8):
-        print(f"🔧 一键补齐材料 ({facility_name})")
-        _hook(run_insert, "Auto_fill", "after")   # 失败仅记录，不中断
-    else:
-        print(f"ℹ️ 材料已足够，无需补齐 ({facility_name})")
-    utils.human_pause()
-
-    # 游戏币购买（while 循环按钮）：整个购买块前/后各触发一次插入步骤
-    _hook(run_insert, "COIN_GAME", "before")
-    buy_attempts = 0
-    while utils.find_and_click_smart(config.COIN_GAME, timeout=5):
-        if stop_event.is_set():
-            return False
-        print(f"💰 购买材料 ({buy_attempts + 1}/5)")
-        utils.human_pause()
-        buy_attempts += 1
-        if buy_attempts >= 5:
-            print("⚠️ 购买尝试已达上限，可能价格波动频繁")
-            break
-    if buy_attempts > 0:
-        _hook(run_insert, "COIN_GAME", "after")
-
-    if _click(run_insert, "Produce", config.Produce, 15) is not True:
-        return _fail("未制造")
-    utils.human_pause()
+    # 制造后半段（#21 一键补齐 → #22 游戏币 → #23 产出）与自纠错共用，见 _craft_tail
+    _tail = _craft_tail(facility_name, stop_event, run_insert)
+    if _tail == "中断":
+        return False          # 停止信号：与原来一致，不写 stage
+    if _tail:
+        return _fail(_tail)
 
     pyautogui.press("esc")
     utils.human_pause()
@@ -114,6 +132,91 @@ def handle_facility(facility_img, produce_item_img, facility_name, stop_event, s
     if update_ui_callback:
         update_ui_callback()
     return True
+
+
+def _self_correct_vacancies(facilities, stop_event, set_operation, run_insert=None):
+    """自纠错：进特勤处后先把「已领取但未制造」的空缺补掉（开关 self_correct_enabled）
+
+    一圈做 4 步：
+      1. 只识别「制造空缺」#33（**不点击**）—— 拿到坐标就停手；没找到 → 结束预扫描
+      2. 点它 → 进该设施，再只识别 4 个产出项 → 反认是哪个设施
+      3. 点 #21 一键补齐 → #22 游戏币 → #23 产出（与正常流程共用 _craft_tail）
+      4. Esc 回特勤处，记下「已补」→ 回到第 1 步（最多 4 圈，对应 4 个设施）
+
+    ⚠️ 任何一步失败 / 认出重复设施 → **立即收手，不中断账号**（自纠错是加分项，不是必需项）。
+    ⚠️ 缺第 33 项模板时直接返回空 dict（当作没开），不报错、不影响主流程。
+
+    facilities: 完整元组列表 [(key, fac_img, prod_img, fac_name, fac_var, prod_var), ...]
+    返回 (已补设施 {key: 名称}, 说明文本)
+    """
+    done = {}
+    notes = []
+
+    vacancy_img = config.resolve_template_path(config.Manufacture_Vacancy)
+    if not vacancy_img or not os.path.exists(vacancy_img):
+        return done, "未截取第 33 项「制造空缺」模板 → 自纠错本次不生效"
+
+    max_rounds = max(1, len(facilities))
+    for rnd in range(1, max_rounds + 1):
+        if stop_event.is_set():
+            notes.append("收到停止信号")
+            break
+        set_operation(f"自纠错：扫描制造空缺（{rnd}/{max_rounds}）")
+        _ensure_game_focused()
+
+        # ① 只识别不点击：确认真有空缺，避免往空白处乱点
+        ok, pos = utils.find_image_pos(vacancy_img, timeout=5, stop_event=stop_event)
+        if not ok:
+            print(f"ℹ️ 自纠错：第 {rnd} 圈未识别到制造空缺，结束预扫描")
+            if rnd == 1:
+                notes.append("未发现制造空缺")
+            break
+
+        # ② 点它进设施（find_image_pos 只给坐标，点击由这里做）
+        print(f"🧩 自纠错：发现制造空缺（{pos[0]},{pos[1]}），进入该设施...")
+        utils.smooth_move_to(pos[0], pos[1], duration=0.2)
+        utils.human_click_delay()
+        pyautogui.click()
+        utils.human_pause()
+
+        # 靠 4 个产出项反认是哪个设施（空缺图标 4 设施共用，认不出设施就不敢乱补）
+        hit_key, hit_name = "", ""
+        for _key, _fac_img, _prod_img, _fac_name, _fac_var, _prod_var in facilities:
+            if stop_event.is_set():
+                break
+            _found, _ = utils.find_image_pos(_prod_img, timeout=2, stop_event=stop_event)
+            if _found:
+                hit_key, hit_name = _key, _fac_name
+                break
+        if not hit_key:
+            print("⚠️ 自纠错：4 个产出项都没认出来，无法确定是哪个设施 → 收手")
+            notes.append(f"第 {rnd} 圈认不出设施，收手")
+            pyautogui.press("esc")
+            utils.human_pause()
+            break
+        if hit_key in done:
+            print(f"⚠️ 自纠错：又认出「{hit_name}」（本轮已补过）→ 收手，避免反复点同一个")
+            notes.append(f"第 {rnd} 圈重复认出「{hit_name}」，收手")
+            pyautogui.press("esc")
+            utils.human_pause()
+            break
+
+        # ③ 补制造（与正常流程同一段）
+        print(f"🧩 自纠错：空缺属于「{hit_name}」，补制造流程...")
+        _tail = _craft_tail(hit_name, stop_event, run_insert)
+
+        # ④ Esc 回特勤处，准备下一圈
+        pyautogui.press("esc")
+        utils.human_pause()
+
+        if _tail:
+            print(f"⚠️ 自纠错：「{hit_name}」补制造失败（{_tail}）→ 收手")
+            notes.append(f"「{hit_name}」补制造失败（{_tail}），收手")
+            break
+        done[hit_key] = hit_name
+        notes.append(f"已补「{hit_name}」")
+
+    return done, "；".join(notes)
 
 
 def _in_sell_window(settings):
@@ -425,7 +528,9 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
         ("pharmacy_station", config.Pharmacy_Station, config.Produce_PharmacyStation, "制药台",
          "Pharmacy_Station", "Produce_PharmacyStation"),
     ]
-    facilities = [(f[1], f[2], f[3], f[4], f[5]) for f in all_facilities if f[0] in selected_ops]
+    # ⚠️ 保留完整元组（含设施 key）：自纠错要靠 key 记住「已补过哪个设施」，
+    #    正常流程也要按 key 跳过它。索引：0=key 1=设施图 2=产出项图 3=设施名 4/5=模板 var
+    facilities = [f for f in all_facilities if f[0] in selected_ops]
     if not facilities:
         print("ℹ️ 未选择任何设施操作，跳过游戏内操作")
         return True
@@ -433,17 +538,40 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
     # 4 个设施组（制造+收取等成组）执行顺序随机，降低固定顺序的脚本特征
     random.shuffle(facilities)
     print(f"🔧 将执行：{'、'.join(op_names)}")
+
+    # ----- 自纠错：先把「已领取但未制造」的空缺补掉（默认关，见 self_correct_enabled）-----
+    # 位置：进特勤处之后、正常流程之前；补过的设施在正常流程里整段跳过（连领取也不做）
+    _sc_done = {}
+    if settings.get("self_correct_enabled", False):
+        try:
+            _sc_done, _sc_note = _self_correct_vacancies(facilities, stop_event,
+                                                         set_operation, run_insert)
+            if _sc_note:
+                print(f"🧩 自纠错：{_sc_note}")
+            if _sc_done:
+                print(f"🧩 自纠错：{'、'.join(_sc_done.values())} 在正常流程里整段跳过")
+        except Exception as e:
+            print(f"⚠️ 自纠错异常，按未启用处理（不影响正常流程）：{e}")
+            _sc_done = {}
+
     all_success = True
-    fac_results = []        # [(设施名, 结果)] 结果：✓ / 未领取 / 未制造 / 未进入设施 ...
-    for fac_img, prod_img, fac_name, fac_var, prod_var in facilities:
+    fac_results = []        # [(设施名, 结果)] 结果：✓ / 已补 / 未领取 / 未制造 / 未进入设施 ...
+    _processed = 0          # 已轮到的设施数（含跳过与失败）——用于把剩下的标「未执行」
+    for _idx, (_key, fac_img, prod_img, fac_name, fac_var, prod_var) in enumerate(facilities):
         if stop_event.is_set():
             return False
+        if _key in _sc_done:
+            print(f"⏭️ 「{fac_name}」已在自纠错里补过制造，整段跳过（连领取也不做）")
+            fac_results.append((fac_name, "已补"))
+            _processed = _idx + 1
+            continue
         set_operation(f"处理 {fac_name}")
         _ensure_game_focused()
         _sink = {"stage": ""}
         if not handle_facility(fac_img, prod_img, fac_name, stop_event, set_operation,
                                update_ui_callback, fac_var=fac_var, prod_var=prod_var,
                                run_insert=run_insert, stage_sink=_sink):
+            _processed = _idx + 1
             if not stop_event.is_set():
                 _why = _sink.get("stage") or "失败"
                 print(f"❌ 处理{fac_name}失败（{_why}），终止当前账号")
@@ -453,11 +581,13 @@ def game_operations(settings, stop_event, set_operation, update_ui_callback=None
             fac_results.append((fac_name, "✗中断"))
             break
         fac_results.append((fac_name, "✓"))
+        _processed = _idx + 1
         pyautogui.press("esc")
         utils.human_pause()
     # 因前面失败而没轮到的设施标记为「未执行」
-    for _f in facilities[len(fac_results):]:
-        fac_results.append((_f[2], "未执行"))
+    # ⚠️ 游标不能用 len(fac_results)：自纠错跳过的设施也会写进 fac_results，会整体错位
+    for _f in facilities[_processed:]:
+        fac_results.append((_f[3], "未执行"))
     if fac_results:
         _fac_summary = "  ".join(f"{n}{st}" for n, st in fac_results)
         print(f"📋 设施结果：{_fac_summary}")
