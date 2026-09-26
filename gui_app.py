@@ -1024,27 +1024,13 @@ class App:
         if is_auto_start:
             print("🔄 检测到开机自启动标志 (--auto-start)")
             # 开机静默运行：不显示主窗口，驻留托盘（可从托盘恢复）
+            # ⚠️「开机后立即运行一次任务」选项已按用户要求删除：开机只驻留托盘，
+            #    想立刻跑一轮用托盘菜单/开始按钮，或靠冷却到期自动触发。
+            #    （冷却兜底定时任务走的是单独的 --auto-start，不受此影响）
             self._is_boot_startup = True
             self._hide_to_tray()
-            if self.settings.get("run_on_startup", False) and self.qq_account_images:
-                # 开机自启自动运行：仅在存在真正可运行账号（未冷却/未暂停/未出租）时启动
-                try:
-                    from automation_runner import has_runnable_account as _h
-                    _runable = _h(self)
-                except Exception:
-                    _runable = True
-                if _runable:
-                    print("🔄 开机立即运行已启用，将在 2 秒后自动执行任务...")
-                    self.root.after(2000, self.start)
-                    self._tray_notify("三角洲行动自动化",
-                                      f"开机自启已启动，2 秒后自动运行 {len(self.qq_account_images)} 个账号")
-                else:
-                    print("ℹ️ 开机立即运行：当前无可运行账号（均在冷却/暂停/出租中），本次不自动运行，驻留托盘等待冷却")
-                    self._tray_notify("三角洲行动自动化", "开机自启：当前无就绪账号，已驻留托盘等待冷却")
-            else:
-                print(f"ℹ️ 开机立即运行未启用 (run_on_startup={self.settings.get('run_on_startup', False)}, "
-                      f"账号数={len(self.qq_account_images)})")
-                self._tray_notify("三角洲行动自动化", "已开机后台运行（静默驻留托盘，可从托盘恢复窗口）")
+            print(f"ℹ️ 开机自启：静默驻留托盘（账号数={len(self.qq_account_images)}）")
+            self._tray_notify("三角洲行动自动化", "已开机后台运行（静默驻留托盘，可从托盘恢复窗口）")
 
         # 冷却到期信号文件检查（定时任务兜底机制）
         # 启动时立即检查一次（不等 30 秒），之后每 30 秒检查
@@ -1794,7 +1780,7 @@ class App:
         header = ttk.Frame(self.root, style='Header.TFrame')
         header.pack(fill=tk.X, padx=0, pady=0, ipady=8)
         ttk.Label(header, text="三角洲行动自动化工具", style='Header.TLabel').pack(side=tk.LEFT, padx=(15, 5))
-        ttk.Label(header, text="v6.09.23  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="v6.09.26  |  多账号轮换 · 冷却执行 · 自动化操作", style='HeaderSub.TLabel').pack(side=tk.LEFT, padx=5)
 
         # ===== 主内容区 =====
         main_container = ttk.Frame(self.root, style='TFrame')
@@ -2066,7 +2052,8 @@ def main():
     import utils
     threading.Thread(target=utils.init_ocr_engine, daemon=True).start()
 
-    # 修正已有的开机自启项（把带控制台的 python.exe 改成 pythonw.exe，避免开机闪黑框）
+    # 修正已有的开机自启项：清掉已废弃的 --run-on-startup 参数，
+    # 并把带控制台的 python.exe 换成 pythonw.exe（避免开机闪黑框）
     try:
         utils.fix_autostart_pythonw()
     except Exception:

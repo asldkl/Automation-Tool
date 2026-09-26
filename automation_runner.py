@@ -1131,9 +1131,15 @@ def _wait_game_process_exit(max_wait):
 
 
 def _activate_delta_window():
-    """查找并前台激活三角洲游戏窗口，返回是否成功"""
+    """查找并前台激活三角洲游戏窗口，返回是否成功
+
+    ⚠️ 必须排除本进程自己的窗口：主界面标题「三角洲行动自动化工具」里含「三角洲」，
+    而 DELTA_TITLES 里就有「三角洲」→ 不排除就会**每次都把自己的窗口激活到前台**
+    （用户报的「点了启动游戏，结果激活的是本程序」就是这个）。
+    utils.find_window_by_title 现在默认按 PID 跳过本进程窗口，这里再补一层标题兜底。"""
     for title in DELTA_TITLES:
-        hwnd = utils.find_window_by_title(title, partial_match=True)
+        hwnd = utils.find_window_by_title(title, partial_match=True,
+                                          exclude_titles=["自动化工具"])
         if hwnd:
             try:
                 import win32gui
@@ -1228,6 +1234,55 @@ def _wait_manual_verify(app, timeout_sec):
     return "timeout"
 
 
+def _get_account_note(app, account_name):
+    """取账号备注（账号信息窗口里的「备注」字段）；没有则返回空串"""
+    try:
+        data = app._account_notes.get(account_name, {})
+        if isinstance(data, dict):
+            return str(data.get("game_name", "") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _safe_file_name(name, fallback="账号"):
+    """把账号名/备注清理成合法文件名（去掉 Windows 文件名不允许的字符）"""
+    s = "".join(c for c in str(name or "") if c not in '\\/:*?"<>|').strip().strip(".")
+    return s or fallback
+
+
+def _save_error_screenshot(app, account_name):
+    """账号最终失败时保存一张整屏截图，供后续按截图 OCR 归类错误原因
+
+    存到 <日志/截图保存目录>/<日期>/错误截图/<备注>_<时间>.png（没设备注就用账号名）。
+    ⚠️ 任何异常都吞掉：存图只是辅助诊断，绝不能影响账号流程或中断整轮运行。
+    返回保存路径，失败返回空串。"""
+    try:
+        base_dir = (app.settings.get("log_save_path", "") or "").strip()
+        if not base_dir:
+            print("📷 未设置日志/截图保存目录，跳过错误截图")
+            return ""
+        note = _get_account_note(app, account_name)
+        label = _safe_file_name(note) if note else _safe_file_name(account_name)
+        save_dir = os.path.join(base_dir, utils.date_folder_name(), "错误截图")
+        os.makedirs(save_dir, exist_ok=True)
+        fname = "%s_%s.png" % (label, time.strftime("%Y%m%d_%H%M%S"))
+        path = os.path.join(save_dir, fname)
+        shot = pyautogui.screenshot()
+        try:
+            shot.save(path)
+        finally:
+            try:
+                shot.close()
+            except Exception:
+                pass
+        print(f"📷 错误截图已保存: {path}")
+        return path
+    except Exception as e:
+        print(f"📷 错误截图保存失败: {e}")
+        return ""
+
+
 def _ocr_capture_screen_text():
     """OCR 识别当前屏幕文字并返回格式化文本（账号出错时调用，用于错误诊断）"""
     try:
@@ -1268,6 +1323,8 @@ def _process_account_result(app, account_name, account_failed, account_interrupt
         app.run_stats["fail"] += 1
         processed_accounts.append(f"{account_name} (失败)")
         server_client.update_account_status(app, account_name, "failed")
+        # 先存一张整屏截图（后续按截图 OCR 归类错误原因），再做屏幕文字诊断
+        _save_error_screenshot(app, account_name)
         # OCR 识别屏幕文本，输出到日志用于后续错误关键词分析
         try:
             screen_text = _ocr_capture_screen_text()

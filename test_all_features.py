@@ -591,6 +591,341 @@ class TestBugFixes(unittest.TestCase):
         self.assertNotIn("首次启用", content)
 
 
+# ==================== 2026-09-26 四项改动 ====================
+def _read_src(name):
+    """读源码文本（本文件里做断言用的辅助）"""
+    with open(os.path.join(os.path.dirname(__file__), name), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+class TestWindowSelfExclusion(unittest.TestCase):
+    """需求5：按标题找窗口必须排除本进程自己的窗口
+
+    背景：主界面标题「三角洲行动自动化工具」里含「三角洲」，而 DELTA_TITLES 里就有
+    「三角洲」→ 不排除时 EnumWindows 第一个命中的就是自己（工具在前台时它就在最前面），
+    表现为「点了启动游戏，结果每次把自己的窗口激活到前台」。
+    ⚠️ 每项断言都带反面对照，证明这个断言真能分辨两种行为。
+    """
+
+    _WINDOWS = [(100, "三角洲行动自动化工具"), (200, "三角洲行动")]
+
+    def _patchers(self, own_hwnds):
+        """伪造 EnumWindows：枚举 _WINDOWS 里的两个窗口；own_hwnds 里的算「本进程」"""
+        import utils
+        titles = dict(self._WINDOWS)
+
+        def fake_enum(callback, extra):
+            for hwnd, _t in self._WINDOWS:
+                if callback(hwnd, extra) is False:
+                    break
+            return True
+
+        return [
+            patch.object(utils.win32gui, "EnumWindows", side_effect=fake_enum),
+            patch.object(utils.win32gui, "IsWindowVisible", return_value=True),
+            patch.object(utils.win32gui, "GetWindowText", side_effect=lambda h: titles.get(h, "")),
+            patch.object(utils, "is_own_window", side_effect=lambda h: h in own_hwnds),
+            patch.object(utils, "throttled_print", lambda *a, **k: None),
+        ]
+
+    def _enter(self, own_hwnds, extra=None):
+        for p in self._patchers(own_hwnds) + list(extra or []):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_helpers_exist(self):
+        import utils
+        for name in ("_own_pid", "window_pid", "is_own_window"):
+            self.assertTrue(callable(getattr(utils, name, None)), "utils 缺少 %s" % name)
+
+    def test_is_own_window_matches_pid(self):
+        import utils
+        mine = utils._own_pid()
+        with patch.object(utils, "window_pid", return_value=mine):
+            self.assertTrue(utils.is_own_window(1))
+        with patch.object(utils, "window_pid", return_value=mine + 9999):
+            self.assertFalse(utils.is_own_window(1))
+        # PID 取不到（0）时不能误判成「自己的窗口」，否则会漏掉真窗口
+        with patch.object(utils, "window_pid", return_value=0):
+            self.assertFalse(utils.is_own_window(1))
+
+    def test_find_window_skips_own_window(self):
+        """正向挑中游戏窗口；反面对照：关掉排除就会挑中自己"""
+        import utils
+        self._enter(own_hwnds={100})
+        self.assertEqual(utils.find_window_by_title("三角洲"), 200)
+        self.assertEqual(utils.find_window_by_title("三角洲", skip_own_process=False), 100)
+
+    def test_close_window_skips_own_window(self):
+        """⚠️ 不能给自己发 WM_CLOSE —— 否则工具会把自己关掉"""
+        import utils
+        sent = []
+        self._enter(own_hwnds={100}, extra=[
+            patch.object(utils.win32gui, "PostMessage",
+                         side_effect=lambda h, *a: sent.append(h))])
+        self.assertTrue(utils.close_window_by_title("三角洲"))
+        self.assertEqual(sent, [200])
+
+    def test_activate_window_skips_own_window(self):
+        import utils
+        raised = []
+        self._enter(own_hwnds={100}, extra=[
+            patch.object(utils.win32gui, "IsIconic", return_value=False),
+            patch.object(utils.win32gui, "SetForegroundWindow",
+                         side_effect=lambda h: raised.append(h))])
+        self.assertTrue(utils.activate_window_by_title("三角洲"))
+        self.assertEqual(raised, [200])
+
+    def test_activate_delta_window_also_excludes_by_title(self):
+        """_activate_delta_window 除 PID 排除外，还要显式排除「自动化工具」标题"""
+        import automation_runner as ar
+        calls = []
+
+        def fake_find(title, **kw):
+            calls.append((title, kw))
+            return None
+
+        with patch.object(ar.utils, "find_window_by_title", side_effect=fake_find):
+            self.assertFalse(ar._activate_delta_window())
+        self.assertTrue(calls, "没有调用 find_window_by_title")
+        self.assertEqual(calls[0][1].get("exclude_titles"), ["自动化工具"])
+
+
+class TestAutostartImmediateRunRemoved(unittest.TestCase):
+    """需求3a：删除「开机后立即运行一次任务」
+
+    ⚠️ 关键点：冷却兜底定时任务用的是单独的 --auto-start（utils.create_cooldown_scheduled_task），
+    与这个选项无关 → 删掉它不影响冷却运行。
+    """
+
+    def test_config_default_removed(self):
+        import config
+        self.assertNotIn("run_on_startup", config.DEFAULT_SETTINGS)
+
+    def test_autostart_cmd_drops_legacy_flag(self):
+        import utils
+        self.assertEqual(utils._autostart_cmd.__code__.co_argcount, 0,
+                         "_autostart_cmd 不应再接收参数")
+        with patch.object(sys, "frozen", True, create=True):
+            cmd = utils._autostart_cmd()
+        self.assertIsNotNone(cmd)
+        self.assertIn("--auto-start", cmd)
+        self.assertNotIn("--run-on-startup", cmd)
+
+    def test_cooldown_task_still_uses_auto_start(self):
+        """反面对照：冷却兜底任务命令行里没有被动到"""
+        src = _read_src("utils.py")
+        self.assertIn('--auto-start\\n', src)
+
+    def _run_fix(self, value, frozen=True):
+        """跑一遍 fix_autostart_pythonw，返回 (最终注册表值, 写入过的值列表)"""
+        import utils
+        store = {"DeltaAutoTool": value}
+        wrote = []
+
+        def _query(key, name):
+            if name not in store:
+                raise FileNotFoundError(name)
+            return (store[name], 1)
+
+        # ⚠️ winreg.SetValueEx(key, 值名, 保留, 类型, 数据) 是 **5 个**参数，
+        #    少写一个就会 TypeError —— 而这个异常会被 fix_autostart_pythonw 自己的
+        #    except 吞掉，表现成「没生效」，排查时极易误判成产品代码有问题。
+        def _set(key, name, reserved, rtype, data):
+            store[name] = data
+            wrote.append(data)
+
+        fake = MagicMock()
+        fake.HKEY_CURRENT_USER = 1
+        fake.KEY_READ = 1
+        fake.KEY_SET_VALUE = 2
+        fake.REG_SZ = 1
+        fake.OpenKey.return_value = object()
+        fake.QueryValueEx.side_effect = _query
+        fake.SetValueEx.side_effect = _set
+        with patch.dict(sys.modules, {"winreg": fake}), \
+             patch.object(sys, "frozen", frozen, create=True):
+            utils.fix_autostart_pythonw()
+        return store["DeltaAutoTool"], wrote
+
+    def test_strips_legacy_flag_in_exe_mode(self):
+        """打包成 exe 时旧参数同样要清掉（以前 frozen 会直接 return，根本清不到）"""
+        final, wrote = self._run_fix('"C:\\x\\main.exe" --auto-start --run-on-startup',
+                                     frozen=True)
+        self.assertEqual(final, '"C:\\x\\main.exe" --auto-start')
+        self.assertEqual(len(wrote), 1, "应该重写过一次")
+
+    def test_strips_legacy_flag_in_source_mode(self):
+        final, _w = self._run_fix(
+            '"C:\\x\\pythonw.exe" "C:\\x\\main.py" --auto-start --run-on-startup',
+            frozen=False)
+        self.assertEqual(final, '"C:\\x\\pythonw.exe" "C:\\x\\main.py" --auto-start')
+
+    def test_untouched_when_no_legacy_flag(self):
+        """反面对照：本来就没有旧参数 → 一个字都不改（别把启动项改坏）"""
+        original = '"C:\\x\\main.exe" --auto-start'
+        final, wrote = self._run_fix(original, frozen=True)
+        self.assertEqual(final, original)
+        self.assertEqual(wrote, [])
+
+
+class TestKeyboardRestartOptionMoved(unittest.TestCase):
+    """需求3b：驱动失败重启选项搬到键盘设置 + 与后端联动置灰"""
+
+    def test_removed_from_settings_window(self):
+        src = _read_src("settings_window.py")
+        self.assertNotIn("Interception 驱动失败时自动重启电脑", src)
+        self.assertNotIn("restart_on_interception_fail_var", src)
+
+    def test_moved_into_keyboard_settings(self):
+        src = _read_src("keyboard_settings.py")
+        self.assertIn("restart_on_interception_fail", src)
+        self.assertIn("_refresh_restart_option", src)
+        self.assertIn("interception_allowed", src)
+
+    def test_grey_follows_backend(self):
+        """只用 STM32 → 置灰；会用到 Interception → 恢复可用"""
+        import keyboard_settings as ks
+        import driver_keyboard
+        stub = MagicMock()
+        fn = ks.KeyboardSettingsWindow._refresh_restart_option
+        with patch.object(driver_keyboard, "interception_allowed", return_value=False):
+            fn(stub)
+        stub._chk_restart.state.assert_called_with(["disabled"])
+        with patch.object(driver_keyboard, "interception_allowed", return_value=True):
+            fn(stub)
+        stub._chk_restart.state.assert_called_with(["!disabled"])
+        stub._restart_hint.config.assert_called()
+
+    def test_runner_branch_still_gated(self):
+        """automation_runner 里「重启服务」那段仍然被 interception_allowed() 拦着"""
+        src = _read_src("automation_runner.py")
+        self.assertIn("interception_allowed()", src)
+
+
+class TestErrorScreenshot(unittest.TestCase):
+    """需求1：账号最终失败时把整屏截图存到 <日志目录>/<日期>/错误截图/"""
+
+    def _app(self, base_dir, notes=None):
+        app = MagicMock()
+        app.settings = {"log_save_path": base_dir}
+        app._account_notes = notes if notes is not None else {}
+        return app
+
+    def _fake_shot(self):
+        img = MagicMock()
+        img.save.side_effect = lambda p: open(p, "wb").write(b"\x89PNG")
+        return img
+
+    def _tmp(self):
+        d = tempfile.mkdtemp(prefix="errshot_")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def test_safe_file_name(self):
+        import automation_runner as ar
+        self.assertEqual(ar._safe_file_name('a/b\\c:d*e?f"g<h>i|j'), "abcdefghij")
+        self.assertEqual(ar._safe_file_name("老王 的号"), "老王 的号")
+        self.assertEqual(ar._safe_file_name("   "), "账号")
+        self.assertEqual(ar._safe_file_name(None), "账号")
+
+    def test_get_account_note(self):
+        import automation_runner as ar
+        app = self._app("", {"a": {"game_name": " 老王 "}, "b": {}, "c": "坏了", "d": None})
+        self.assertEqual(ar._get_account_note(app, "a"), "老王")
+        self.assertEqual(ar._get_account_note(app, "b"), "")
+        self.assertEqual(ar._get_account_note(app, "c"), "")
+        self.assertEqual(ar._get_account_note(app, "d"), "")
+        self.assertEqual(ar._get_account_note(app, "不存在的号"), "")
+
+    def test_saved_with_note_name(self):
+        import automation_runner as ar
+        import utils
+        tmp = self._tmp()
+        app = self._app(tmp, {"acc1": {"game_name": "老王"}})
+        with patch.object(ar.pyautogui, "screenshot", return_value=self._fake_shot()):
+            path = ar._save_error_screenshot(app, "acc1")
+        self.assertTrue(path, "应该返回保存路径")
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(os.path.dirname(path),
+                         os.path.join(tmp, utils.date_folder_name(), "错误截图"))
+        self.assertTrue(os.path.basename(path).startswith("老王_"))
+        self.assertTrue(path.endswith(".png"))
+
+    def test_falls_back_to_account_name(self):
+        """没设备注 → 用账号名（不能出现 None_xxx.png 这种名字）"""
+        import automation_runner as ar
+        tmp = self._tmp()
+        app = self._app(tmp, {})
+        with patch.object(ar.pyautogui, "screenshot", return_value=self._fake_shot()):
+            path = ar._save_error_screenshot(app, "acc1")
+        self.assertTrue(os.path.basename(path).startswith("acc1_"))
+
+    def test_no_base_dir_is_safe(self):
+        import automation_runner as ar
+        app = self._app("")
+        with patch.object(ar.pyautogui, "screenshot") as shot:
+            self.assertEqual(ar._save_error_screenshot(app, "acc1"), "")
+        shot.assert_not_called()
+
+    def test_exception_is_swallowed(self):
+        """存图失败绝不能把账号流程带崩"""
+        import automation_runner as ar
+        tmp = self._tmp()
+        app = self._app(tmp)
+        with patch.object(ar.pyautogui, "screenshot", side_effect=RuntimeError("boom")):
+            self.assertEqual(ar._save_error_screenshot(app, "acc1"), "")
+
+    def test_called_in_failure_branch(self):
+        src = _read_src("automation_runner.py")
+        self.assertIn("_save_error_screenshot(app, account_name)", src)
+
+
+class TestFailureEmailNote(unittest.TestCase):
+    """需求2：失败通知邮件里带账号备注，用于分辨账号"""
+
+    def _capture(self, notes, account="acc1"):
+        import email_notifier
+        app = MagicMock()
+        app.settings = {"email_enabled": True, "smtp_code": "code",
+                        "sender_email": "s@x.com", "receiver_email": "r@x.com"}
+        app._account_notes = notes
+        got = {}
+
+        def fake_send(code, sender, receiver, subject, body):
+            got["subject"] = subject
+            got["body"] = body
+            return True, "ok"
+
+        class _SyncThread:
+            def __init__(self, target=None, daemon=None, **kw):
+                self._target = target
+
+            def start(self):
+                if self._target:
+                    self._target()
+
+        with patch.object(email_notifier.utils, "send_email_notification",
+                          side_effect=fake_send), \
+             patch.object(email_notifier.threading, "Thread", _SyncThread):
+            email_notifier.send_account_failure_email(app, account, "已冷却", None,
+                                                      "账号或密码错误")
+        return got
+
+    def test_note_in_body_and_subject(self):
+        got = self._capture({"acc1": {"game_name": "老王"}})
+        self.assertIn("老王", got["body"])
+        self.assertIn("acc1", got["body"])
+        self.assertIn("老王", got["subject"])
+
+    def test_no_note_control(self):
+        """反面对照：没设备注时不能凭空冒出备注，账号名照旧"""
+        got = self._capture({})
+        self.assertIn("acc1", got["body"])
+        self.assertNotIn("老王", got["body"])
+        self.assertIn("acc1", got["subject"])
+
+
 # ==================== 运行所有测试 ====================
 if __name__ == "__main__":
     print("=" * 60)

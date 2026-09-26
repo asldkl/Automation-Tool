@@ -34,7 +34,7 @@ class SettingsWindow:
         self.confidence_var = tk.DoubleVar(value=float(app.settings.get("confidence", 0.7)))
         self.log_var = tk.StringVar(value=app.settings.get("log_save_path", ""))
         self.autostart_var = tk.BooleanVar(value=self._get_autostart_state())
-        self.run_on_startup_var = tk.BooleanVar(value=app.settings.get("run_on_startup", False))
+        # ⚠️ run_on_startup（开机后立即运行一次任务）已按用户要求删除，不再有对应变量
         # 启动网络等待（校园网认证）
         self.network_wait_var = tk.BooleanVar(value=app.settings.get("network_wait_on_startup", True))
         try:
@@ -46,7 +46,8 @@ class SettingsWindow:
         # 自动任务设置变量
         self.cooldown_run_immediately_var = tk.BooleanVar(value=app.settings.get("cooldown_run_immediately", False))
         self.cooldown_scheduled_task_var = tk.BooleanVar(value=app.settings.get("cooldown_scheduled_task_enabled", True))
-        self.restart_on_interception_fail_var = tk.BooleanVar(value=app.settings.get("restart_on_interception_fail", False))
+        # ⚠️ restart_on_interception_fail（驱动失败时自动重启电脑）已移到「键盘设置」窗口
+        #    —— 它与键盘后端选择强相关，放在冷却执行区里不合适。
 
         # 操作选择变量
         selected = app.settings.get("selected_operations", [])
@@ -404,13 +405,6 @@ class SettingsWindow:
         ttk.Label(cooldown_frame, text="开启后程序未运行也会自动启动执行",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
-        cd_row5 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
-        cd_row5.pack(fill=tk.X, pady=(4, 4))
-        ttk.Checkbutton(cd_row5, text="Interception 驱动失败时自动重启电脑",
-                       variable=self.restart_on_interception_fail_var).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Label(cooldown_frame, text="驱动不可用时自动重启电脑重新加载",
-                 style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
-
         cd_row6 = ttk.Frame(cooldown_frame, style='SettingsInner.TFrame')
         cd_row6.pack(fill=tk.X, padx=5, pady=(4, 0))
         ttk.Label(cd_row6, text="冷却检测等待(分钟)：", style='Settings.TLabel').pack(side=tk.LEFT, padx=(0, 4))
@@ -449,11 +443,7 @@ class SettingsWindow:
         as_row1.pack(fill=tk.X, pady=(0, 4))
         ttk.Checkbutton(as_row1, text="开机自启动（登录 Windows 时自动运行）",
                        variable=self.autostart_var).pack(side=tk.LEFT, padx=5, pady=5)
-        as_row2 = ttk.Frame(autostart_frame, style='SettingsInner.TFrame')
-        as_row2.pack(fill=tk.X, pady=(0, 4))
-        ttk.Checkbutton(as_row2, text="开机后立即运行一次任务（需先开启开机自启动）",
-                       variable=self.run_on_startup_var).pack(side=tk.LEFT, padx=5, pady=(0, 5))
-        ttk.Label(autostart_frame, text="开启后程序随系统启动时将自动执行一次任务，无需手动操作",
+        ttk.Label(autostart_frame, text="开机后静默驻留托盘，不自动执行任务（冷却到期仍会自动运行）",
                  style='SettingsSmall.TLabel').pack(anchor=tk.W, padx=5, pady=(0, 2))
 
         net_row = ttk.Frame(autostart_frame, style='SettingsInner.TFrame')
@@ -2822,11 +2812,11 @@ class SettingsWindow:
         except (FileNotFoundError, PermissionError, OSError):
             return False
 
-    def _set_autostart(self, enable, run_on_startup=False):
+    def _set_autostart(self, enable):
         """写入/删除 开机自启（HKCU Run）；源码方式优先 pythonw 避免开机闪黑框。
         具体实现见 utils.set_autostart_registry"""
         try:
-            utils.set_autostart_registry(enable, run_on_startup)
+            utils.set_autostart_registry(enable)
         except Exception:
             pass
 
@@ -2844,8 +2834,7 @@ class SettingsWindow:
         fresh["wegame_path"] = self.wegame_var.get()
         fresh["confidence"] = round(self.confidence_var.get(), 2)
         fresh["log_save_path"] = self.log_var.get()
-        self._set_autostart(self.autostart_var.get(), self.run_on_startup_var.get())
-        fresh["run_on_startup"] = self.run_on_startup_var.get()
+        self._set_autostart(self.autostart_var.get())
         # 启动网络等待（校园网认证）
         fresh["network_wait_on_startup"] = self.network_wait_var.get()
         try:
@@ -2856,7 +2845,7 @@ class SettingsWindow:
         # 冷却执行设置
         fresh["cooldown_run_immediately"] = self.cooldown_run_immediately_var.get()
         fresh["cooldown_scheduled_task_enabled"] = self.cooldown_scheduled_task_var.get()
-        fresh["restart_on_interception_fail"] = self.restart_on_interception_fail_var.get()
+        # restart_on_interception_fail 由「键盘设置」窗口自己保存（已从本窗口移走）
 
         # 如果关闭了定时任务兜底，删除已有的定时任务
         if not self.cooldown_scheduled_task_var.get():

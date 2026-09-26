@@ -166,7 +166,6 @@ DEFAULT_SETTINGS = {
     "receiver_email": "",             # 接收者邮箱
     # 游戏启动等待
     "game_launch_wait": 0,            # 启动游戏后额外等待时间（秒，0-120）
-    "run_on_startup": False,          # 开机立即运行一次程序
     # 一键出售
     "enable_sell_after_run": False,   # 主流程完成后执行一键售卖
     "sell_confidence": 0.55,          # 出售物品匹配置信度（0.40-0.80）

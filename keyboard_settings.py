@@ -110,6 +110,9 @@ class KeyboardSettingsWindow:
             self.app.settings.get("stm32_interval_ms", 25) or 25))
         self._timeout_var = tk.StringVar(value=str(
             self.app.settings.get("stm32_timeout", 3.0) or 3.0))
+        # 驱动失败时的处理（2026-09-26 从「设置 → 冷却执行」搬过来：它与后端选择强相关）
+        self._restart_var = tk.BooleanVar(value=bool(
+            self.app.settings.get("restart_on_interception_fail", False)))
 
         self._build()
         # 关闭时**自动保存**（含窗口大小/位置记忆）—— 与验证码设置窗口同一约定：
@@ -194,11 +197,21 @@ class KeyboardSettingsWindow:
                   style='SettingsSmall.TLabel', justify=tk.LEFT).pack(anchor=tk.W, padx=2, pady=(2, 0))
         self._refresh_ports()
 
-        # ----- 3. 测试 -----
-        card3 = ttk.LabelFrame(outer, text="  测试  ", style='SettingsCard.TLabelframe', padding=10)
-        card3.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        # ----- 3. 驱动失败时的处理 -----
+        card3 = ttk.LabelFrame(outer, text="  驱动失败时的处理  ", style='SettingsCard.TLabelframe', padding=10)
+        card3.pack(fill=tk.X, pady=(0, 8))
+        self._chk_restart = ttk.Checkbutton(
+            card3, text="Interception 驱动不可用时自动重启电脑", variable=self._restart_var)
+        self._chk_restart.pack(anchor=tk.W)
+        self._restart_hint = ttk.Label(card3, text="", style='SettingsSmall.TLabel',
+                                       justify=tk.LEFT, wraplength=560)
+        self._restart_hint.pack(anchor=tk.W, padx=2, pady=(2, 0))
 
-        b = ttk.Frame(card3, style='SettingsInner.TFrame')
+        # ----- 4. 测试 -----
+        card4 = ttk.LabelFrame(outer, text="  测试  ", style='SettingsCard.TLabelframe', padding=10)
+        card4.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        b = ttk.Frame(card4, style='SettingsInner.TFrame')
         b.pack(fill=tk.X, pady=(0, 8))
         # 存成属性：方便自动化测试真的 invoke() 一次（验证「点得动」）
         self._btn_connect = ttk.Button(b, text="检测连接", style='TButton', width=10,
@@ -214,18 +227,18 @@ class KeyboardSettingsWindow:
                                       command=self._resume)
         self._btn_resume.pack(side=tk.LEFT)
 
-        ttk.Label(card3, text="打字测试会以 STM32 后端把下面这串打进输入框（不走优先级链，确保测的是 STM32 本人）。\n"
+        ttk.Label(card4, text="打字测试会以 STM32 后端把下面这串打进输入框（不走优先级链，确保测的是 STM32 本人）。\n"
                               "测试时请**不要点到别的窗口** —— 硬件键盘是往当前焦点窗口打字的。",
                   style='SettingsSmall.TLabel', justify=tk.LEFT).pack(anchor=tk.W)
 
-        self._test_entry = ttk.Entry(card3, font=("Consolas", 11))
+        self._test_entry = ttk.Entry(card4, font=("Consolas", 11))
         self._test_entry.pack(fill=tk.X, pady=(6, 6))
 
-        self._status_label = ttk.Label(card3, text="", style='SettingsSmall.TLabel',
+        self._status_label = ttk.Label(card4, text="", style='SettingsSmall.TLabel',
                                        justify=tk.LEFT, wraplength=560)
         self._status_label.pack(anchor=tk.W, pady=(2, 6))
 
-        self._backend_status = ttk.Label(card3, text="", style='SettingsSmall.TLabel',
+        self._backend_status = ttk.Label(card4, text="", style='SettingsSmall.TLabel',
                                          justify=tk.LEFT, wraplength=560)
         self._backend_status.pack(anchor=tk.W)
 
@@ -292,6 +305,31 @@ class KeyboardSettingsWindow:
             self._backend_status.config(text=txt)
         except Exception as e:
             self._backend_status.config(text="状态检测异常：%s" % e)
+        # 「驱动失败自动重启电脑」有没有意义，取决于当前后端会不会用到 Interception
+        self._refresh_restart_option()
+
+    def _refresh_restart_option(self):
+        """「驱动失败自动重启电脑」只在会用到 Interception 时才有意义：
+        选了「只用 STM32」→ 程序根本不会加载那个驱动 → 置灰并说明原因。
+
+        ⚠️ 依赖 _refresh_status 里已经调过的 driver_keyboard.set_settings(self._cfg())，
+        所以只从 _refresh_status 末尾调用（不要在别处单独调）。"""
+        try:
+            allowed = bool(driver_keyboard.interception_allowed())
+        except Exception:
+            allowed = True
+        try:
+            if allowed:
+                self._chk_restart.state(["!disabled"])
+                self._restart_hint.config(
+                    text="驱动不可用时先尝试重启驱动服务，仍失败则 10 秒后重启电脑重新加载驱动。")
+            else:
+                self._chk_restart.state(["disabled"])
+                self._restart_hint.config(
+                    text="当前后端不含 Interception（程序完全不会加载该驱动），此选项不生效；"
+                         "想用它请改成「自动」或「仅 Interception」。")
+        except Exception:
+            pass
 
     # ----------------------------------------------------------- 测试动作 --
 
@@ -415,6 +453,8 @@ class KeyboardSettingsWindow:
                     target["stm32_timeout"] = max(0.5, min(30.0, float(self._timeout_var.get())))
                 except Exception:
                     target["stm32_timeout"] = 3.0
+                # 驱动失败时的处理（本窗口自己的设置，与后端选择一起保存）
+                target["restart_on_interception_fail"] = bool(self._restart_var.get())
                 config.save_settings(target)
                 self.app.settings.update(target)
                 # 立即生效：让正在运行的程序按新后端走（不必重启）

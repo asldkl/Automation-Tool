@@ -143,9 +143,42 @@ def start_app(exe_path, app_name, wait_time=5):
         print(f"❌ 启动 {app_name} 失败：{e}")
         return False
 
-def activate_window_by_title(title_contains, partial_match=True, exclude_titles=None):
+# ==================== 自身进程窗口排除 ====================
+# ⚠️ 主界面标题是「三角洲行动自动化工具」，而游戏窗口关键词列表(automation_runner.DELTA_TITLES)
+#    里就有「三角洲」—— 按标题**模糊匹配**时会先命中自己的窗口（工具在前台时它就是 Z 序第一个），
+#    表现为「点了启动游戏，结果每次都把自己激活到前台」。日志遮罩同样是本进程窗口。
+#    所以按标题找窗口的地方一律先按 PID 把本进程窗口排除掉，别只靠 exclude_titles 关键词硬编码。
+
+
+def _own_pid():
+    """本进程 PID（取不到返回 0）"""
+    try:
+        return int(ctypes.windll.kernel32.GetCurrentProcessId())
+    except Exception:
+        return 0
+
+
+def window_pid(hwnd):
+    """取窗口所属进程的 PID（取不到返回 0）"""
+    try:
+        pid = ctypes.c_ulong(0)
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:
+        return 0
+
+
+def is_own_window(hwnd):
+    """窗口是否属于本进程（自己的主界面 / 日志遮罩等）"""
+    pid = window_pid(hwnd)
+    return pid != 0 and pid == _own_pid()
+
+
+def activate_window_by_title(title_contains, partial_match=True, exclude_titles=None,
+                             skip_own_process=True):
     """
     按标题激活窗口（支持部分匹配、排除关键词）
+    skip_own_process=True 时按 PID 跳过本进程自己的窗口（见上方说明）
     返回是否成功激活
     """
     if exclude_titles is None:
@@ -153,6 +186,8 @@ def activate_window_by_title(title_contains, partial_match=True, exclude_titles=
 
     def enum_callback(hwnd, windows):
         if win32gui.IsWindowVisible(hwnd):
+            if skip_own_process and is_own_window(hwnd):
+                return True
             window_title = win32gui.GetWindowText(hwnd)
             if partial_match and title_contains.lower() in window_title.lower():
                 for ex in exclude_titles:
@@ -186,13 +221,19 @@ def activate_window_by_title(title_contains, partial_match=True, exclude_titles=
         print(f"❌ 激活失败: {e}")
         return False
 
-def find_window_by_title(title_contains, partial_match=True, exclude_titles=None):
-    """按标题查找窗口，返回窗口句柄(hwnd)，未找到返回 None"""
+def find_window_by_title(title_contains, partial_match=True, exclude_titles=None,
+                         skip_own_process=True):
+    """按标题查找窗口，返回窗口句柄(hwnd)，未找到返回 None
+
+    skip_own_process=True 时按 PID 跳过本进程自己的窗口（见文件上方说明）——
+    否则「三角洲行动自动化工具」会被当成游戏窗口。"""
     if exclude_titles is None:
         exclude_titles = []
 
     def enum_callback(hwnd, windows):
         if win32gui.IsWindowVisible(hwnd):
+            if skip_own_process and is_own_window(hwnd):
+                return True
             window_title = win32gui.GetWindowText(hwnd)
             if partial_match and title_contains.lower() in window_title.lower():
                 for ex in exclude_titles:
@@ -674,12 +715,17 @@ def kill_process(process_name, wait_exit=True, max_wait=30):
         return False
     return True
 # 在原有 utils.py 末尾添加：
-def close_window_by_title(title_contains, partial_match=True):
-    """通过窗口标题查找窗口并发送 WM_CLOSE 消息"""
+def close_window_by_title(title_contains, partial_match=True, skip_own_process=True):
+    """通过窗口标题查找窗口并发送 WM_CLOSE 消息
+
+    ⚠️ skip_own_process 默认 True：主界面标题「三角洲行动自动化工具」也含「三角洲」，
+    不排除的话会给**自己**发 WM_CLOSE 把工具关掉。"""
     hwnd_target = None
     def enum_callback(hwnd, _):
         nonlocal hwnd_target
         if win32gui.IsWindowVisible(hwnd):
+            if skip_own_process and is_own_window(hwnd):
+                return True
             wt = win32gui.GetWindowText(hwnd)
             if partial_match and title_contains.lower() in wt.lower():
                 hwnd_target = hwnd
@@ -1153,11 +1199,14 @@ _AUTOSTART_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _AUTOSTART_VALUE = "DeltaAutoTool"
 
 
-def _autostart_cmd(run_on_startup=False):
+def _autostart_cmd():
     """构造自启命令行；源码方式优先 pythonw.exe（无控制台窗口，避免开机闪黑框）。
-    无法构造出有效命令（如脚本路径不存在）时返回 None（调用方应放弃写入，避免改坏启动项）"""
+    无法构造出有效命令（如脚本路径不存在）时返回 None（调用方应放弃写入，避免改坏启动项）
+
+    ⚠️ 「开机后立即运行一次任务」选项已按用户要求删除 → 命令里只剩 --auto-start。
+    （冷却兜底定时任务用的也是 --auto-start，与那个选项无关。）"""
     import sys as _sys
-    flags = "--auto-start" + (" --run-on-startup" if run_on_startup else "")
+    flags = "--auto-start"
     if getattr(_sys, 'frozen', False):
         if _sys.executable and os.path.exists(_sys.executable):
             return f'"{_sys.executable}" {flags}'
@@ -1177,7 +1226,7 @@ def _autostart_cmd(run_on_startup=False):
     return f'"{py}" "{script}" {flags}'
 
 
-def set_autostart_registry(enable, run_on_startup=False):
+def set_autostart_registry(enable):
     """写入/删除 开机自启注册表项。返回是否成功"""
     try:
         import winreg
@@ -1190,7 +1239,7 @@ def set_autostart_registry(enable, run_on_startup=False):
         return False
     try:
         if enable:
-            cmd = _autostart_cmd(run_on_startup)
+            cmd = _autostart_cmd()
             if not cmd:
                 print("⚠️ 无法构造有效的开机自启命令（脚本/exe 路径不存在），已跳过写入")
                 return False
@@ -1211,13 +1260,14 @@ def set_autostart_registry(enable, run_on_startup=False):
 
 
 def fix_autostart_pythonw():
-    """把已有的开机自启项里带控制台的 python.exe 改成 pythonw.exe（避免开机闪黑框）。
-    仅源码运行时需要；无该项或已是 pythonw 则不动"""
+    """修正已有的开机自启项（无该项则不动）：
+      ① 去掉已废弃的 --run-on-startup 参数（「开机后立即运行一次任务」选项已删除）
+      ② 源码方式把带控制台的 python.exe 换成 pythonw.exe（避免开机闪黑框）
+    ⚠️ ①在任何运行方式下都要做 —— 打包成 exe 时旧参数同样会残留在注册表里，
+    所以不再像以前那样遇到 frozen 就直接返回。"""
     try:
         import sys as _sys
         import winreg
-        if getattr(_sys, 'frozen', False):
-            return
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_RUN_KEY, 0,
                              winreg.KEY_READ | winreg.KEY_SET_VALUE)
     except Exception:
@@ -1228,16 +1278,24 @@ def fix_autostart_pythonw():
         except FileNotFoundError:
             return
         v = str(val or "")
-        if "python.exe" not in v.lower():
-            return   # 已经是 pythonw 或 exe：不动
-        run_on_startup = "--run-on-startup" in v
-        new_cmd = _autostart_cmd(run_on_startup)
-        # 仅在能构造出有效命令、且确实改用 pythonw 时才覆盖；否则保持原值（不破坏启动项）
-        if not new_cmd or "pythonw" not in new_cmd.lower():
-            print("⏭️ 无法构造有效启动命令，保持原开机自启项不变")
-            return
-        winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ, new_cmd)
-        print("🔧 已把开机自启项修正为 pythonw（无控制台窗口）")
+        new_v = v
+        # ① 纯字符串剔除废弃参数：按空白切分再拼回，带空格的引号路径原样保留
+        if "--run-on-startup" in new_v:
+            stripped = " ".join(t for t in new_v.split() if t != "--run-on-startup")
+            if stripped.strip():
+                new_v = stripped
+                print("🔧 已从开机自启项移除已废弃的 --run-on-startup 参数")
+        # ② 源码方式换 pythonw（打包成 exe 时不需要）
+        if not getattr(_sys, 'frozen', False) and "python.exe" in new_v.lower():
+            cmd = _autostart_cmd()
+            # 仅在能构造出有效命令、且确实改用 pythonw 时才覆盖；否则保持原值（不破坏启动项）
+            if cmd and "pythonw" in cmd.lower():
+                new_v = cmd
+                print("🔧 已把开机自启项修正为 pythonw（无控制台窗口）")
+            else:
+                print("⏭️ 无法构造有效启动命令，保持原开机自启项不变")
+        if new_v != v:
+            winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ, new_v)
     except Exception:
         pass
     finally:

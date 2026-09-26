@@ -44,18 +44,28 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     safe_name = html.escape(account_name)
+    # 账号备注（账号信息窗口的「备注」字段）—— 用来区分同一台机器上的多个账号，
+    # 与运行报告邮件（build_accounts_html）保持同一口径：备注在前、账号名在后
+    note = ""
+    try:
+        nd = app._account_notes.get(account_name, {})
+        if isinstance(nd, dict):
+            note = str(nd.get("game_name", "") or "").strip()
+    except Exception:
+        note = ""
+    account_display = f"{html.escape(note)}　{safe_name}" if note else safe_name
     safe_error = html.escape(error_msg) if error_msg else "未知错误"
     machine_name = _get_machine_name()
 
     body = f"""<div style="font-family:Microsoft YaHei,sans-serif;padding:20px;max-width:600px;margin:0 auto;">
 <h2 style="color:#e74c3c;border-bottom:2px solid #e74c3c;padding-bottom:10px;">{machine_name}—账号运行失败</h2>
 <table style="border-collapse:collapse;width:100%;margin:15px 0;">
-<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">账号名称</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;font-weight:bold;">{safe_name}</td></tr>
+<tr style="background:#f0f2f5;"><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;width:120px;">账号名称</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;font-weight:bold;">{account_display}</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">失败时间</td><td style="padding:8px 10px;border:1px solid #dcdde1;">{now_str}</td></tr>
 <tr><td style="padding:8px 10px;border:1px solid #dcdde1;font-weight:bold;">错误原因</td><td style="padding:8px 10px;border:1px solid #dcdde1;color:#e74c3c;">{safe_error}</td></tr>
 </table>
 <div style="text-align:center;padding:10px;margin-top:10px;border-radius:5px;background:#e74c3c15;border:1px solid #e74c3c40;">
-<span style="font-size:16px;font-weight:bold;color:#e74c3c;">账号 {safe_name} 运行失败，后续账号将继续执行</span>
+<span style="font-size:16px;font-weight:bold;color:#e74c3c;">账号 {account_display} 运行失败，后续账号将继续执行</span>
 </div>
 <p style="color:#7f8c8d;font-size:12px;text-align:center;margin-top:15px;">此邮件由三角洲行动自动化工具自动发送</p>
 </div>"""
@@ -63,7 +73,7 @@ def send_account_failure_email(app, account_name, next_run_str, processed_accoun
     def _send():
         success, msg = utils.send_email_notification(
             smtp_code, sender, receiver,
-            f"{machine_name}—账号失败通知 ({account_name})", body
+            f"{machine_name}—账号失败通知 ({note or account_name})", body
         )
         if success:
             print(f"📧 账号 {account_name} 失败通知邮件已发送")
